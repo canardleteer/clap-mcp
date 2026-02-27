@@ -24,7 +24,7 @@ own self-generated mess.
 - Provide a way to express structured logging information (if available) as part
   of the response if requested.
 
-Overall, the more you design your service around a service pattern, the more
+Overall, the more you design your CLI around a service pattern, the more
 naturally this crate will behave as an MCP server, and modern CLIs often do
 that. At the same time, we shouldn't force CLIs that don't do that, out of the
 ecosystem.
