@@ -3,8 +3,8 @@ use rust_mcp_sdk::{
     error::SdkResult,
     mcp_client::{client_runtime, ClientHandler, McpClientOptions},
     schema::{
-        ClientCapabilities, Implementation, InitializeRequestParams, ListResourcesResult,
-        ReadResourceRequestParams, LATEST_PROTOCOL_VERSION,
+        CallToolRequestParams, ClientCapabilities, Implementation, InitializeRequestParams,
+        ListResourcesResult, ReadResourceRequestParams, LATEST_PROTOCOL_VERSION,
     },
     McpClient, StdioTransport, ToMcpClientHandler, TransportOptions,
 };
@@ -76,6 +76,69 @@ async fn main() -> SdkResult<()> {
     println!("\nclap://schema contents (truncated):");
     if let Some(first) = read.contents.first() {
         println!("{first:?}");
+    }
+
+    // List tools (one per command/subcommand)
+    let tools_result = client.request_tool_list(None).await?;
+    println!("\nTools:");
+    for t in &tools_result.tools {
+        println!("  {}: {}", t.name, t.description.as_deref().unwrap_or(""));
+    }
+
+    // Call the "greet" tool with a name
+    let mut greet_args = serde_json::Map::new();
+    greet_args.insert("name".into(), serde_json::json!("Rust"));
+    let greet_result = client
+        .request_tool_call(CallToolRequestParams {
+            name: "greet".into(),
+            arguments: Some(greet_args),
+            meta: None,
+            task: None,
+        })
+        .await?;
+    println!("\nCall tool 'greet' with name=\"Rust\":");
+    for block in &greet_result.content {
+        if let Ok(t) = block.as_text_content() {
+            println!("  {}", t.text);
+        }
+    }
+
+    // Call the "add" tool
+    let mut args = serde_json::Map::new();
+    args.insert("a".into(), serde_json::json!(2));
+    args.insert("b".into(), serde_json::json!(3));
+    let call_result = client
+        .request_tool_call(CallToolRequestParams {
+            name: "add".into(),
+            arguments: Some(args),
+            meta: None,
+            task: None,
+        })
+        .await?;
+    println!("\nCall tool 'add' with a=2, b=3:");
+    for block in &call_result.content {
+        if let Ok(t) = block.as_text_content() {
+            println!("  {}", t.text);
+        }
+    }
+
+    // Call the "sub" tool with 10 and 5
+    let mut sub_args = serde_json::Map::new();
+    sub_args.insert("a".into(), serde_json::json!(10));
+    sub_args.insert("b".into(), serde_json::json!(5));
+    let sub_result = client
+        .request_tool_call(CallToolRequestParams {
+            name: "sub".into(),
+            arguments: Some(sub_args),
+            meta: None,
+            task: None,
+        })
+        .await?;
+    println!("\nCall tool 'sub' with a=10, b=5:");
+    for block in &sub_result.content {
+        if let Ok(t) = block.as_text_content() {
+            println!("  {}", t.text);
+        }
     }
 
     client.shut_down().await?;

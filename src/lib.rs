@@ -7,12 +7,17 @@ use rust_mcp_sdk::{
         Implementation, InitializeResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
         ReadResourceContent, ReadResourceRequestParams, ReadResourceResult, Resource, RpcError,
         ServerCapabilities, ServerCapabilitiesResources, ServerCapabilitiesTools, TextResourceContents,
-        Tool, LATEST_PROTOCOL_VERSION,
+        Tool, ToolInputSchema, LATEST_PROTOCOL_VERSION,
     },
     McpServer, StdioTransport, TransportOptions,
 };
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 
 pub const MCP_FLAG_LONG: &str = "mcp";
 pub const MCP_RESOURCE_URI_SCHEMA: &str = "clap://schema";
@@ -25,6 +30,31 @@ pub enum ClapMcpError {
     Transport(#[from] rust_mcp_sdk::TransportError),
     #[error("MCP runtime error: {0}")]
     McpSdk(#[from] rust_mcp_sdk::error::McpSdkError),
+}
+
+/// Configuration for execution safety when exposing a CLI over MCP.
+///
+/// Use this to declare whether your CLI tool can be safely invoked multiple times
+/// and whether it can run in parallel with other tool calls.
+#[derive(Debug, Clone)]
+pub struct ClapMcpConfig {
+    /// If true, the CLI can be invoked multiple times without tearing down the process.
+    /// When false (default), each tool call spawns a fresh subprocess.
+    /// When true, reserves future in-process execution; for now still spawns but annotates tools.
+    pub reinvocation_safe: bool,
+
+    /// If true, tool calls may run concurrently. When false, calls are serialized.
+    /// Default is true for backward compatibility (preserves current behavior).
+    pub parallel_safe: bool,
+}
+
+impl Default for ClapMcpConfig {
+    fn default() -> Self {
+        Self {
+            reinvocation_safe: false,
+            parallel_safe: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +83,96 @@ impl ClapCommand {
         }
         walk(self, &mut out);
         out
+    }
+}
+
+/// Arg IDs that are omitted from MCP tool arguments (built-in / default options).
+fn is_builtin_arg(id: &str) -> bool {
+    matches!(id, "help" | "version" | MCP_FLAG_LONG)
+}
+
+/// Builds MCP tools from a clap schema: one tool per command (root + every subcommand).
+/// Tool names match command names; descriptions use the same text as `--help`;
+/// each tool's input schema lists the command's arguments (excluding help/version/mcp).
+pub fn tools_from_schema(schema: &ClapSchema) -> Vec<Tool> {
+    tools_from_schema_with_config(schema, &ClapMcpConfig::default())
+}
+
+/// Builds MCP tools from a clap schema with execution safety annotations.
+///
+/// Tools include `meta.clapMcp` with `reinvocationSafe` and `parallelSafe` hints.
+pub fn tools_from_schema_with_config(schema: &ClapSchema, config: &ClapMcpConfig) -> Vec<Tool> {
+    schema
+        .root
+        .all_commands()
+        .into_iter()
+        .map(|cmd| command_to_tool_with_config(cmd, config))
+        .collect()
+}
+
+fn command_to_tool_with_config(cmd: &ClapCommand, config: &ClapMcpConfig) -> Tool {
+    let args: Vec<&ClapArg> = cmd
+        .args
+        .iter()
+        .filter(|a| !is_builtin_arg(a.id.as_str()))
+        .collect();
+
+    let mut properties: HashMap<String, serde_json::Map<String, serde_json::Value>> =
+        HashMap::new();
+    for arg in &args {
+        let mut prop = serde_json::Map::new();
+        prop.insert(
+            "type".to_string(),
+            serde_json::Value::String("string".to_string()),
+        );
+        let desc = arg
+            .long_help
+            .as_deref()
+            .or(arg.help.as_deref())
+            .map(String::from);
+        if let Some(d) = desc {
+            prop.insert("description".to_string(), serde_json::Value::String(d));
+        }
+        properties.insert(arg.id.clone(), prop);
+    }
+
+    let required: Vec<String> = args
+        .iter()
+        .filter(|a| a.required)
+        .map(|a| a.id.clone())
+        .collect();
+
+    let input_schema = ToolInputSchema::new(required, Some(properties), None);
+
+    let description = cmd
+        .long_about
+        .as_deref()
+        .or(cmd.about.as_deref())
+        .map(String::from);
+    let title = cmd.about.as_ref().map(String::from);
+
+    let meta = {
+        let mut m = serde_json::Map::new();
+        m.insert(
+            "clapMcp".into(),
+            serde_json::json!({
+                "reinvocationSafe": config.reinvocation_safe,
+                "parallelSafe": config.parallel_safe,
+            }),
+        );
+        Some(m)
+    };
+
+    Tool {
+        name: cmd.name.clone(),
+        title,
+        description,
+        input_schema,
+        annotations: None,
+        execution: None,
+        icons: vec![],
+        meta,
+        output_schema: None,
     }
 }
 
@@ -109,6 +229,17 @@ pub fn schema_from_command(cmd: &Command) -> ClapSchema {
 /// - If `--mcp` is present, starts an MCP stdio server and exits the process
 /// - Otherwise, returns `ArgMatches` for normal app execution
 pub fn get_matches_or_serve_mcp(cmd: Command) -> clap::ArgMatches {
+    get_matches_or_serve_mcp_with_config(cmd, ClapMcpConfig::default())
+}
+
+/// Imperative clap entrypoint with execution safety configuration.
+///
+/// See [`get_matches_or_serve_mcp`] for behavior. Use `config` to declare
+/// reinvocation and parallel execution safety.
+pub fn get_matches_or_serve_mcp_with_config(
+    cmd: Command,
+    config: ClapMcpConfig,
+) -> clap::ArgMatches {
     let schema = schema_from_command(&cmd);
     let cmd = command_with_mcp_flag(cmd);
 
@@ -116,7 +247,8 @@ pub fn get_matches_or_serve_mcp(cmd: Command) -> clap::ArgMatches {
     if matches.get_flag(MCP_FLAG_LONG) {
         let schema_json =
             serde_json::to_string_pretty(&schema).expect("schema JSON must serialize");
-        serve_schema_json_over_stdio_blocking(schema_json).expect("MCP server must start");
+        serve_schema_json_over_stdio_blocking(schema_json, None, config)
+            .expect("MCP server must start");
         std::process::exit(0);
     }
 
@@ -132,6 +264,17 @@ pub fn parse_or_serve_mcp<T>() -> T
 where
     T: clap::Parser + clap::CommandFactory + clap::FromArgMatches,
 {
+    parse_or_serve_mcp_with_config::<T>(ClapMcpConfig::default())
+}
+
+/// High-level helper for `clap` derive-based CLIs with execution safety configuration.
+///
+/// See [`parse_or_serve_mcp`] for behavior. Use `config` to declare reinvocation
+/// and parallel execution safety.
+pub fn parse_or_serve_mcp_with_config<T>(config: ClapMcpConfig) -> T
+where
+    T: clap::Parser + clap::CommandFactory + clap::FromArgMatches,
+{
     let mut cmd = T::command();
     cmd = command_with_mcp_flag(cmd);
 
@@ -143,7 +286,9 @@ where
         let schema = schema_from_command(&base_cmd);
         let schema_json =
             serde_json::to_string_pretty(&schema).expect("schema JSON must serialize");
-        serve_schema_json_over_stdio_blocking(schema_json).expect("MCP server must start");
+        let exe = std::env::current_exe().ok();
+        serve_schema_json_over_stdio_blocking(schema_json, exe, config)
+            .expect("MCP server must start");
 
         std::process::exit(0);
     }
@@ -198,14 +343,96 @@ fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
     }
 }
 
+/// Builds argv for the executable from the schema and tool arguments.
+/// Positional args (no long form) are passed in index order; optional args as `--long value`.
+fn build_tool_argv(
+    schema: &ClapSchema,
+    command_name: &str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+) -> Vec<String> {
+    let cmd = schema
+        .root
+        .all_commands()
+        .into_iter()
+        .find(|c| c.name == command_name);
+    let Some(cmd) = cmd else {
+        return Vec::new();
+    };
+
+    let args: Vec<&ClapArg> = cmd
+        .args
+        .iter()
+        .filter(|a| !is_builtin_arg(a.id.as_str()))
+        .collect();
+
+    let mut positionals: Vec<&ClapArg> = args.iter().filter(|a| a.long.is_none()).copied().collect();
+    positionals.sort_by_key(|a| a.index.unwrap_or(0));
+    let optionals: Vec<&ClapArg> = args.iter().filter(|a| a.long.is_some()).copied().collect();
+
+    let mut out = Vec::new();
+
+    for arg in positionals {
+        if let Some(v) = arguments.get(&arg.id)
+            && let Some(s) = value_to_string(v)
+        {
+            out.push(s);
+        }
+    }
+    for arg in optionals {
+        if let Some(long) = &arg.long
+            && let Some(v) = arguments.get(&arg.id)
+            && let Some(s) = value_to_string(v)
+        {
+            out.push(format!("--{long}"));
+            out.push(s);
+        }
+    }
+
+    out
+}
+
+fn value_to_string(v: &serde_json::Value) -> Option<String> {
+    if v.is_null() {
+        return None;
+    }
+    Some(match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        other => other.to_string(),
+    })
+}
+
 /// Starts an MCP server over stdio exposing `clap://schema` with the provided JSON payload.
+///
+/// If `executable_path` is `Some`, tool calls run that executable with the tool name
+/// (as subcommand) and the given arguments (e.g. `exe add --a 2 --b 3`), and return its
+/// stdout as the tool result. If `None`, tool calls return a placeholder message.
+///
+/// Use `config` to declare reinvocation and parallel execution safety. When
+/// `parallel_safe` is false, tool calls are serialized.
 pub async fn serve_schema_json_over_stdio(
     schema_json: String,
+    executable_path: Option<PathBuf>,
+    config: ClapMcpConfig,
 ) -> std::result::Result<(), ClapMcpError> {
-    #[derive(Default)]
+    let schema: ClapSchema = serde_json::from_str(&schema_json)?;
+    let tools = tools_from_schema_with_config(&schema, &config);
+    let root_name = schema.root.name.clone();
+
+    let tool_execution_lock: Option<Arc<tokio::sync::Mutex<()>>> =
+        if config.parallel_safe {
+            None
+        } else {
+            Some(Arc::new(tokio::sync::Mutex::new(())))
+        };
+
     struct Handler {
         schema_json: String,
         tools: Vec<Tool>,
+        executable_path: Option<PathBuf>,
+        root_name: String,
+        tool_execution_lock: Option<Arc<tokio::sync::Mutex<()>>>,
     }
 
     #[async_trait]
@@ -270,13 +497,72 @@ pub async fn serve_schema_json_over_stdio(
             params: CallToolRequestParams,
             _runtime: Arc<dyn rust_mcp_sdk::McpServer>,
         ) -> std::result::Result<CallToolResult, CallToolError> {
-            // Execution pipeline is out of scope for now; echo back the intended clap subcommand.
+            let known = self.tools.iter().any(|t| t.name == params.name);
+            if !known {
+                return Err(CallToolError::unknown_tool(params.name.clone()));
+            }
+
+            let _guard = if let Some(ref lock) = self.tool_execution_lock {
+                Some(lock.lock().await)
+            } else {
+                None
+            };
+
+            if let Some(ref exe) = self.executable_path {
+                let args_map = params.arguments.unwrap_or_default();
+                let schema: ClapSchema = match serde_json::from_str(&self.schema_json) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        return Ok(CallToolResult {
+                            content: vec![ContentBlock::text_content(
+                                "Failed to parse schema".into(),
+                            )],
+                            is_error: Some(true),
+                            meta: None,
+                            structured_content: None,
+                        });
+                    }
+                };
+                let args = build_tool_argv(&schema, &params.name, args_map);
+                let mut cmd = std::process::Command::new(exe);
+                if params.name != self.root_name {
+                    cmd.arg(params.name.as_str());
+                }
+                for arg in &args {
+                    cmd.arg(arg);
+                }
+                match cmd.output() {
+                    Ok(output) => {
+                        let out = String::from_utf8_lossy(&output.stdout);
+                        let err = String::from_utf8_lossy(&output.stderr);
+                        let text = if err.is_empty() {
+                            out.trim().to_string()
+                        } else {
+                            format!("{}\nstderr:\n{}", out.trim(), err.trim())
+                        };
+                        return Ok(CallToolResult::from_content(vec![
+                            ContentBlock::text_content(text),
+                        ]));
+                    }
+                    Err(e) => {
+                        return Ok(CallToolResult {
+                            content: vec![ContentBlock::text_content(format!(
+                                "Failed to run command: {}",
+                                e
+                            ))],
+                            is_error: Some(true),
+                            meta: None,
+                            structured_content: None,
+                        });
+                    }
+                }
+            }
+
             let name = params.name;
             let args_json = serde_json::Value::Object(params.arguments.unwrap_or_default());
             let text = format!(
-                "Would invoke clap subcommand '{name}' with arguments: {args_json:?}"
+                "Would invoke clap command '{name}' with arguments: {args_json:?}"
             );
-
             Ok(CallToolResult::from_content(vec![
                 ContentBlock::text_content(text),
             ]))
@@ -314,10 +600,14 @@ pub async fn serve_schema_json_over_stdio(
     // For server-side stdio transport, use the ClientMessage dispatcher direction expected by ServerRuntime.
     let transport = StdioTransport::<schema_utils::ClientMessage>::new(transport_options)?;
 
-    // TODO: accept a precomputed Vec<Tool> once we expose a tool-extraction API
-    let tools = Vec::new();
-
-    let handler = Handler { schema_json, tools }.to_mcp_server_handler();
+    let handler = Handler {
+        schema_json,
+        tools,
+        executable_path,
+        root_name,
+        tool_execution_lock,
+    }
+    .to_mcp_server_handler();
     let server = server_runtime::create_server(McpServerOptions {
         server_details,
         transport,
@@ -333,11 +623,13 @@ pub async fn serve_schema_json_over_stdio(
 /// Convenience wrapper for `serve_schema_json_over_stdio` that does not require an async main.
 pub fn serve_schema_json_over_stdio_blocking(
     schema_json: String,
+    executable_path: Option<PathBuf>,
+    config: ClapMcpConfig,
 ) -> std::result::Result<(), ClapMcpError> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("tokio runtime must build");
-    rt.block_on(serve_schema_json_over_stdio(schema_json))
+    rt.block_on(serve_schema_json_over_stdio(schema_json, executable_path, config))
 }
 
