@@ -18,7 +18,7 @@ documentation = "https://docs.rs/clap-mcp"
 chrono = "0.4"
 
 [dependencies]
-clap-mcp-macros = { version = "0.0.1-rc.1", path = "clap-mcp-macros" }
+clap-mcp-macros = { version = "0.0.1-rc.2", path = "clap-mcp-macros" }
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 rust-mcp-sdk = { version = "0.8.3", default-features = false, features = ["server", "client", "stdio"] }
