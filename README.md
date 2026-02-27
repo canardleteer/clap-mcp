@@ -33,17 +33,38 @@ ecosystem.
 
 CLIs may differ in how safely they can be invoked over MCP:
 
-- **Reinvocation safety**: Some CLIs can be called multiple times without tearing down the process; others require a fresh process per call (the default).
-- **Parallel safety**: Some CLIs use lock files or shared state and must not run concurrently with other tool calls.
+- **Reinvocation safety**: When `false` (default), each tool call spawns a fresh subprocess. When `true`, uses in-process execution (no subprocess).
+- **Parallel safety**: When `false` (default), tool calls are serialized. When `true`, they may run concurrently.
+
+### Attribute-based config (recommended)
+
+Use `#[derive(ClapMcp)]` and `#[clap_mcp(...)]` on your CLI type:
+
+```rust
+#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[clap_mcp(parallel_safe = false, reinvocation_safe)]
+#[command(...)]
+enum Cli {
+    #[clap_mcp_output = "format!(\"{}\", a + b)"]
+    Add { a: i32, b: i32 },
+    // ...
+}
+
+let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+```
+
+When `reinvocation_safe` is true, add `#[clap_mcp_output = "expr"]` on variants to specify the output string for in-process execution. Omitted variants default to `format!("{:?}", self)`.
+
+### Runtime config
 
 Use `ClapMcpConfig` with `parse_or_serve_mcp_with_config` or `get_matches_or_serve_mcp_with_config`:
 
 ```rust
 clap_mcp::parse_or_serve_mcp_with_config::<Cli>(clap_mcp::ClapMcpConfig {
-    reinvocation_safe: true,   // reserves future in-process execution
-    parallel_safe: false,      // serialize tool calls (e.g. for lock files)
+    reinvocation_safe: true,   // in-process execution
+    parallel_safe: false,      // serialize tool calls (default)
     ..Default::default()
 })
 ```
 
-When `parallel_safe` is false, tool calls are serialized. Tools include `meta.clapMcp` with these hints for clients.
+Tools include `meta.clapMcp` with these hints for clients.

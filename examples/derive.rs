@@ -5,7 +5,11 @@ use clap::Parser;
 /// Try:
 /// - `cargo run --example derive -- --help`
 /// - `cargo run --example derive -- --mcp`
-#[derive(Debug, Parser)]
+///
+/// This CLI is both parallel_safe and reinvocation_safe, but we configure the harder case
+/// (parallel_safe=false, reinvocation_safe=false) to demonstrate subprocess-based execution.
+#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[clap_mcp(parallel_safe = false, reinvocation_safe = false)]
 #[command(
     name = "clap-mcp-derive-example",
     about = "Example CLI that exposes its clap schema and subcommands over MCP stdio via --mcp",
@@ -13,12 +17,14 @@ use clap::Parser;
 )]
 enum Cli {
     /// Greet someone (or the world) once.
+    #[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
     Greet {
         /// Optional name to greet.
         #[arg(long)]
         name: Option<String>,
     },
     /// Add two integers together.
+    #[clap_mcp_output = "format!(\"{}\", a + b)"]
     Add {
         /// First addend.
         #[arg(long)]
@@ -28,6 +34,7 @@ enum Cli {
         b: i32,
     },
     /// Subtract the second integer from the first.
+    #[clap_mcp_output = "format!(\"{}\", a - b)"]
     Sub {
         /// Minuend.
         a: i32,
@@ -37,16 +44,8 @@ enum Cli {
 }
 
 fn main() {
-    // This will start the MCP stdio server and exit if `--mcp` is present;
-    // otherwise it returns the parsed `Cli` value as usual.
-    //
-    // For execution safety configuration (reinvocation/parallel safety), use:
-    //   clap_mcp::parse_or_serve_mcp_with_config::<Cli>(clap_mcp::ClapMcpConfig {
-    //       reinvocation_safe: true,
-    //       parallel_safe: false,  // serialize tool calls
-    //       ..Default::default()
-    //   })
-    let cli = clap_mcp::parse_or_serve_mcp::<Cli>();
+    // Uses config from #[clap_mcp(...)]: parallel_safe=false (serialize), reinvocation_safe=false (subprocess).
+    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
 
     match cli {
         Cli::Greet { name } => {

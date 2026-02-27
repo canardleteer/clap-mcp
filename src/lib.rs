@@ -19,8 +19,23 @@ use std::{
     time::Duration,
 };
 
+pub use clap_mcp_macros::ClapMcp;
+
 pub const MCP_FLAG_LONG: &str = "mcp";
 pub const MCP_RESOURCE_URI_SCHEMA: &str = "clap://schema";
+
+/// Provides MCP execution safety configuration from `#[clap_mcp(...)]` attributes.
+/// Implemented by the `#[derive(ClapMcp)]` macro.
+pub trait ClapMcpConfigProvider {
+    fn clap_mcp_config() -> ClapMcpConfig;
+}
+
+/// Produces the output string for a parsed CLI value.
+/// Used for in-process MCP tool execution when `reinvocation_safe` is true.
+/// Implemented by the `#[derive(ClapMcp)]` macro.
+pub trait ClapMcpRunnable {
+    fn run(self) -> String;
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClapMcpError {
@@ -40,11 +55,11 @@ pub enum ClapMcpError {
 pub struct ClapMcpConfig {
     /// If true, the CLI can be invoked multiple times without tearing down the process.
     /// When false (default), each tool call spawns a fresh subprocess.
-    /// When true, reserves future in-process execution; for now still spawns but annotates tools.
+    /// When true, uses in-process execution (no subprocess).
     pub reinvocation_safe: bool,
 
     /// If true, tool calls may run concurrently. When false, calls are serialized.
-    /// Default is true for backward compatibility (preserves current behavior).
+    /// Default is false (serialize by default) for safety.
     pub parallel_safe: bool,
 }
 
@@ -52,7 +67,7 @@ impl Default for ClapMcpConfig {
     fn default() -> Self {
         Self {
             reinvocation_safe: false,
-            parallel_safe: true,
+            parallel_safe: false,
         }
     }
 }
@@ -247,7 +262,7 @@ pub fn get_matches_or_serve_mcp_with_config(
     if matches.get_flag(MCP_FLAG_LONG) {
         let schema_json =
             serde_json::to_string_pretty(&schema).expect("schema JSON must serialize");
-        serve_schema_json_over_stdio_blocking(schema_json, None, config)
+        serve_schema_json_over_stdio_blocking(schema_json, None, config, None)
             .expect("MCP server must start");
         std::process::exit(0);
     }
@@ -262,18 +277,30 @@ pub fn get_matches_or_serve_mcp_with_config(
 /// - Otherwise, returns the parsed CLI type
 pub fn parse_or_serve_mcp<T>() -> T
 where
-    T: clap::Parser + clap::CommandFactory + clap::FromArgMatches,
+    T: ClapMcpRunnable + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
 {
     parse_or_serve_mcp_with_config::<T>(ClapMcpConfig::default())
+}
+
+/// High-level helper for `clap` derive-based CLIs with config from `#[clap_mcp(...)]` attributes.
+///
+/// Use `#[derive(ClapMcp)]` and `#[clap_mcp(parallel_safe = false, reinvocation_safe)]` on your CLI type,
+/// then call this instead of `parse_or_serve_mcp`.
+pub fn parse_or_serve_mcp_attr<T>() -> T
+where
+    T: ClapMcpConfigProvider + ClapMcpRunnable + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
+{
+    parse_or_serve_mcp_with_config::<T>(T::clap_mcp_config())
 }
 
 /// High-level helper for `clap` derive-based CLIs with execution safety configuration.
 ///
 /// See [`parse_or_serve_mcp`] for behavior. Use `config` to declare reinvocation
-/// and parallel execution safety.
+/// and parallel execution safety. When `reinvocation_safe` is true, uses in-process
+/// execution; requires `T: ClapMcpRunnable`.
 pub fn parse_or_serve_mcp_with_config<T>(config: ClapMcpConfig) -> T
 where
-    T: clap::Parser + clap::CommandFactory + clap::FromArgMatches,
+    T: ClapMcpRunnable + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
 {
     let mut cmd = T::command();
     cmd = command_with_mcp_flag(cmd);
@@ -287,8 +314,26 @@ where
         let schema_json =
             serde_json::to_string_pretty(&schema).expect("schema JSON must serialize");
         let exe = std::env::current_exe().ok();
-        serve_schema_json_over_stdio_blocking(schema_json, exe, config)
-            .expect("MCP server must start");
+
+        let in_process_handler = if config.reinvocation_safe {
+            let schema = schema.clone();
+            Some(Arc::new(move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
+                let argv = build_argv_for_clap(&schema, cmd, args);
+                let matches = T::command().get_matches_from(&argv);
+                let cli = T::from_arg_matches(&matches).map_err(|e| e.to_string())?;
+                Ok(<T as ClapMcpRunnable>::run(cli))
+            }) as InProcessToolHandler)
+        } else {
+            None
+        };
+
+        serve_schema_json_over_stdio_blocking(
+            schema_json,
+            if config.reinvocation_safe { None } else { exe },
+            config,
+            in_process_handler,
+        )
+        .expect("MCP server must start");
 
         std::process::exit(0);
     }
@@ -343,6 +388,22 @@ fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
     }
 }
 
+/// Builds full argv for clap's get_matches_from (program name + subcommand + args).
+fn build_argv_for_clap(
+    schema: &ClapSchema,
+    command_name: &str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+) -> Vec<String> {
+    let root_name = schema.root.name.clone();
+    let args = build_tool_argv(schema, command_name, arguments);
+    let mut argv = vec!["cli".to_string()]; // program name for parsing
+    if command_name != root_name {
+        argv.push(command_name.to_string());
+    }
+    argv.extend(args);
+    argv
+}
+
 /// Builds argv for the executable from the schema and tool arguments.
 /// Positional args (no long form) are passed in index order; optional args as `--long value`.
 fn build_tool_argv(
@@ -391,6 +452,13 @@ fn build_tool_argv(
     out
 }
 
+/// Type for in-process tool execution handler. Called with (command_name, arguments).
+pub type InProcessToolHandler = Arc<
+    dyn Fn(&str, serde_json::Map<String, serde_json::Value>) -> Result<String, String>
+        + Send
+        + Sync,
+>;
+
 fn value_to_string(v: &serde_json::Value) -> Option<String> {
     if v.is_null() {
         return None;
@@ -405,9 +473,9 @@ fn value_to_string(v: &serde_json::Value) -> Option<String> {
 
 /// Starts an MCP server over stdio exposing `clap://schema` with the provided JSON payload.
 ///
-/// If `executable_path` is `Some`, tool calls run that executable with the tool name
-/// (as subcommand) and the given arguments (e.g. `exe add --a 2 --b 3`), and return its
-/// stdout as the tool result. If `None`, tool calls return a placeholder message.
+/// When `in_process_handler` is `Some`, tool calls use it instead of spawning a subprocess.
+/// When `None`, if `executable_path` is `Some`, tool calls run that executable; otherwise
+/// return a placeholder message.
 ///
 /// Use `config` to declare reinvocation and parallel execution safety. When
 /// `parallel_safe` is false, tool calls are serialized.
@@ -415,6 +483,7 @@ pub async fn serve_schema_json_over_stdio(
     schema_json: String,
     executable_path: Option<PathBuf>,
     config: ClapMcpConfig,
+    in_process_handler: Option<InProcessToolHandler>,
 ) -> std::result::Result<(), ClapMcpError> {
     let schema: ClapSchema = serde_json::from_str(&schema_json)?;
     let tools = tools_from_schema_with_config(&schema, &config);
@@ -431,6 +500,7 @@ pub async fn serve_schema_json_over_stdio(
         schema_json: String,
         tools: Vec<Tool>,
         executable_path: Option<PathBuf>,
+        in_process_handler: Option<InProcessToolHandler>,
         root_name: String,
         tool_execution_lock: Option<Arc<tokio::sync::Mutex<()>>>,
     }
@@ -508,6 +578,25 @@ pub async fn serve_schema_json_over_stdio(
                 None
             };
 
+            if let Some(ref handler) = self.in_process_handler {
+                let args_map = params.arguments.unwrap_or_default();
+                match handler(&params.name, args_map) {
+                    Ok(text) => {
+                        return Ok(CallToolResult::from_content(vec![
+                            ContentBlock::text_content(text),
+                        ]));
+                    }
+                    Err(e) => {
+                        return Ok(CallToolResult {
+                            content: vec![ContentBlock::text_content(e)],
+                            is_error: Some(true),
+                            meta: None,
+                            structured_content: None,
+                        });
+                    }
+                }
+            }
+
             if let Some(ref exe) = self.executable_path {
                 let args_map = params.arguments.unwrap_or_default();
                 let schema: ClapSchema = match serde_json::from_str(&self.schema_json) {
@@ -569,6 +658,19 @@ pub async fn serve_schema_json_over_stdio(
         }
     }
 
+    let meta = {
+        let mut m = serde_json::Map::new();
+        m.insert(
+            "clapMcp".into(),
+            serde_json::json!({
+                "version": env!("CARGO_PKG_VERSION"),
+                "commit": env!("CLAP_MCP_GIT_COMMIT"),
+                "buildDate": env!("CLAP_MCP_BUILD_DATE"),
+            }),
+        );
+        Some(m)
+    };
+
     let server_details = InitializeResult {
         server_info: Implementation {
             name: "clap-mcp".into(),
@@ -590,7 +692,7 @@ pub async fn serve_schema_json_over_stdio(
         },
         protocol_version: LATEST_PROTOCOL_VERSION.into(),
         instructions: None,
-        meta: None,
+        meta,
     };
 
     // Conservative timeout; mostly irrelevant for server-side stdio.
@@ -604,6 +706,7 @@ pub async fn serve_schema_json_over_stdio(
         schema_json,
         tools,
         executable_path,
+        in_process_handler,
         root_name,
         tool_execution_lock,
     }
@@ -625,11 +728,17 @@ pub fn serve_schema_json_over_stdio_blocking(
     schema_json: String,
     executable_path: Option<PathBuf>,
     config: ClapMcpConfig,
+    in_process_handler: Option<InProcessToolHandler>,
 ) -> std::result::Result<(), ClapMcpError> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("tokio runtime must build");
-    rt.block_on(serve_schema_json_over_stdio(schema_json, executable_path, config))
+    rt.block_on(serve_schema_json_over_stdio(
+        schema_json,
+        executable_path,
+        config,
+        in_process_handler,
+    ))
 }
 

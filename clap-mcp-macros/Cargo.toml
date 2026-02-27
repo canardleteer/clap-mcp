@@ -1,0 +1,16 @@
+[package]
+name = "clap-mcp-macros"
+version.workspace = true
+edition = "2024"
+license = "MIT"
+description = "Procedural macros for clap-mcp"
+repository = "https://github.com/canardleteer/clap-mcp"
+documentation = "https://docs.rs/clap-mcp-macros"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["parsing", "extra-traits"] }
