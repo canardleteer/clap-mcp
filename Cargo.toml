@@ -1,6 +1,6 @@
 [package]
 name = "clap-mcp"
-version = "0.0.1"
+version = "0.0.1-rc.1"
 edition = "2024"
 license = "MIT"
 description = "Enrich your CLI with MCP capabilities"
