@@ -2,7 +2,12 @@
 members = [".", "clap-mcp-macros"]
 
 [workspace.package]
-version = "0.0.1-rc.4"
+# NOTE(canardleteer): For now, this needs to be duplicated for our dependency on
+#                     clap-mcp-macros below.
+version = "0.0.1-rc.5"
+
+[workspace.dependencies]
+clap-mcp-macros = { path = "clap-mcp-macros", version = "0.0.1-rc.5" }
 
 [package]
 name = "clap-mcp"
@@ -58,7 +63,7 @@ name = "client"
 required-features = ["tracing"]
 
 [dependencies]
-clap-mcp-macros = { version = "0.0.1-rc.3", path = "clap-mcp-macros" }
+clap-mcp-macros = { workspace = true }
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 rust-mcp-sdk = { version = "0.8.3", default-features = false, features = ["server", "client", "stdio"] }
