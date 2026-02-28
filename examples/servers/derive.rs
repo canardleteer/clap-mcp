@@ -1,4 +1,5 @@
 use clap::Parser;
+use serde::Serialize;
 
 /// Simple example CLI using clap-mcp with the derive API.
 ///
@@ -27,20 +28,26 @@ enum Cli {
     #[clap_mcp_output = "format!(\"{}\", a + b)"]
     Add {
         /// First addend.
-        #[arg(long)]
         a: i32,
         /// Second addend.
-        #[arg(long)]
         b: i32,
     },
-    /// Subtract the second integer from the first.
-    #[clap_mcp_output = "format!(\"{}\", a - b)"]
+    /// Subtract the second integer from the first (returns structured output).
+    #[clap_mcp_output_type = "SubResult"]
+    #[clap_mcp_output = "SubResult { difference: a - b, minuend: a, subtrahend: b }"]
     Sub {
         /// Minuend.
         a: i32,
         /// Subtrahend.
         b: i32,
     },
+}
+
+#[derive(Debug, Serialize)]
+struct SubResult {
+    difference: i32,
+    minuend: i32,
+    subtrahend: i32,
 }
 
 fn main() {
@@ -60,4 +67,3 @@ fn main() {
         }
     }
 }
-

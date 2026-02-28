@@ -1,12 +1,41 @@
+//! # clap-mcp
+//!
+//! Expose your [clap](https://docs.rs/clap) CLI as an MCP (Model Context Protocol) server over stdio.
+//!
+//! ## Quick start
+//!
+//! ```rust,ignore
+//! use clap::Parser;
+//!
+//! #[derive(Parser, clap_mcp::ClapMcp)]
+//! #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+//! enum Cli {
+//!     #[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
+//!     Greet { #[arg(long)] name: Option<String> },
+//! }
+//!
+//! fn main() {
+//!     let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+//!     match cli {
+//!         Cli::Greet { name } => println!("Hello, {}!", name.as_deref().unwrap_or("world")),
+//!     }
+//! }
+//! ```
+//!
+//! Run with `--mcp` to start the MCP server instead of executing the CLI.
+
 use async_trait::async_trait;
 use clap::{Arg, ArgAction, Command};
 use rust_mcp_sdk::{
     mcp_server::{server_runtime, McpServerOptions, ServerHandler, ToMcpServerHandler},
     schema::{
         schema_utils, CallToolError, CallToolRequestParams, CallToolResult, ContentBlock,
-        Implementation, InitializeResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
-        ReadResourceContent, ReadResourceRequestParams, ReadResourceResult, Resource, RpcError,
-        ServerCapabilities, ServerCapabilitiesResources, ServerCapabilitiesTools, TextResourceContents,
+        GetPromptRequestParams, GetPromptResult, Implementation, InitializeResult,
+        ListPromptsResult, ListResourcesResult, ListToolsResult, LoggingLevel,
+        LoggingMessageNotificationParams, PaginatedRequestParams, Prompt, PromptMessage,
+        ReadResourceContent, ReadResourceRequestParams, ReadResourceResult,
+        Resource, Role, RpcError, ServerCapabilities, ServerCapabilitiesPrompts,
+        ServerCapabilitiesResources, ServerCapabilitiesTools, TextResourceContents,
         Tool, ToolInputSchema, LATEST_PROTOCOL_VERSION,
     },
     McpServer, StdioTransport, TransportOptions,
@@ -19,24 +48,145 @@ use std::{
     time::Duration,
 };
 
+/// Derive macro for `ClapMcpConfigProvider` and `ClapMcpToolExecutor`.
+///
+/// Use with `#[derive(ClapMcp)]` on your clap enum. Supports attributes:
+/// `#[clap_mcp(...)]`, `#[clap_mcp_output = "..."]`, `#[clap_mcp_output_type = "TypeName"]`.
 pub use clap_mcp_macros::ClapMcp;
 
+#[cfg(any(feature = "tracing", feature = "log"))]
+pub mod logging;
+
+/// Long flag that triggers MCP server mode. Add to your CLI via [`command_with_mcp_flag`].
 pub const MCP_FLAG_LONG: &str = "mcp";
+
+/// URI for the clap schema resource exposed by the MCP server.
 pub const MCP_RESOURCE_URI_SCHEMA: &str = "clap://schema";
 
 /// Provides MCP execution safety configuration from `#[clap_mcp(...)]` attributes.
 /// Implemented by the `#[derive(ClapMcp)]` macro.
+///
+/// # Example
+///
+/// ```rust
+/// use clap::Parser;
+/// use clap_mcp::ClapMcpConfigProvider;
+///
+/// #[derive(Debug, Parser, clap_mcp::ClapMcp)]
+/// #[clap_mcp(parallel_safe = false, reinvocation_safe)]
+/// enum MyCli { Foo }
+///
+/// let config = MyCli::clap_mcp_config();
+/// assert!(config.reinvocation_safe);
+/// assert!(!config.parallel_safe);
+/// ```
 pub trait ClapMcpConfigProvider {
     fn clap_mcp_config() -> ClapMcpConfig;
 }
 
 /// Produces the output string for a parsed CLI value.
 /// Used for in-process MCP tool execution when `reinvocation_safe` is true.
-/// Implemented by the `#[derive(ClapMcp)]` macro.
+/// Implemented by the `#[derive(ClapMcp)]` macro via the blanket impl for `ClapMcpToolExecutor`.
 pub trait ClapMcpRunnable {
     fn run(self) -> String;
 }
 
+/// Output produced by a CLI command for MCP tool results.
+///
+/// Use `Text` for plain string output; use `Structured` for serializable JSON
+/// (when using `#[clap_mcp_output_type = "TypeName"]`).
+///
+/// # Example
+///
+/// ```
+/// use clap_mcp::ClapMcpToolOutput;
+///
+/// let text = ClapMcpToolOutput::Text("hello".into());
+/// assert_eq!(text.into_string(), "hello");
+///
+/// let structured = ClapMcpToolOutput::Structured(serde_json::json!({"x": 1}));
+/// assert!(structured.as_structured().unwrap().get("x").is_some());
+/// ```
+#[derive(Debug, Clone)]
+pub enum ClapMcpToolOutput {
+    /// Plain text output (stdout-style).
+    Text(String),
+    /// Structured JSON output for machine consumption.
+    Structured(serde_json::Value),
+}
+
+impl ClapMcpToolOutput {
+    /// Returns the text content if this is `Text`, or the JSON string if `Structured`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use clap_mcp::ClapMcpToolOutput;
+    ///
+    /// assert_eq!(ClapMcpToolOutput::Text("hi".into()).into_string(), "hi");
+    /// assert!(ClapMcpToolOutput::Structured(serde_json::json!({"a":1})).into_string().contains("a"));
+    /// ```
+    pub fn into_string(self) -> String {
+        match self {
+            ClapMcpToolOutput::Text(s) => s,
+            ClapMcpToolOutput::Structured(v) => {
+                serde_json::to_string(&v).unwrap_or_else(|_| v.to_string())
+            }
+        }
+    }
+
+    /// Returns `Some(&str)` for `Text`, `None` for `Structured`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use clap_mcp::ClapMcpToolOutput;
+    ///
+    /// assert_eq!(ClapMcpToolOutput::Text("hi".into()).as_text(), Some("hi"));
+    /// assert!(ClapMcpToolOutput::Structured(serde_json::json!(1)).as_text().is_none());
+    /// ```
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            ClapMcpToolOutput::Text(s) => Some(s),
+            ClapMcpToolOutput::Structured(_) => None,
+        }
+    }
+
+    /// Returns `Some(&Value)` for `Structured`, `None` for `Text`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use clap_mcp::ClapMcpToolOutput;
+    ///
+    /// let v = serde_json::json!({"sum": 10});
+    /// assert_eq!(ClapMcpToolOutput::Structured(v.clone()).as_structured(), Some(&v));
+    /// assert!(ClapMcpToolOutput::Text("x".into()).as_structured().is_none());
+    /// ```
+    pub fn as_structured(&self) -> Option<&serde_json::Value> {
+        match self {
+            ClapMcpToolOutput::Text(_) => None,
+            ClapMcpToolOutput::Structured(v) => Some(v),
+        }
+    }
+}
+
+/// Produces MCP tool output (text or structured) for a parsed CLI value.
+///
+/// Implemented by the `#[derive(ClapMcp)]` macro. Used for in-process execution.
+/// Use `#[clap_mcp_output = "expr"]` for text output, or `#[clap_mcp_output_type = "TypeName"]`
+/// with `#[clap_mcp_output = "expr"]` for structured JSON output.
+pub trait ClapMcpToolExecutor {
+    fn execute_for_mcp(self) -> ClapMcpToolOutput;
+}
+
+impl<T: ClapMcpToolExecutor> ClapMcpRunnable for T {
+    fn run(self) -> String {
+        self.execute_for_mcp().into_string()
+    }
+}
+
+/// Errors that can occur when running the MCP server.
 #[derive(Debug, thiserror::Error)]
 pub enum ClapMcpError {
     #[error("failed to serialize clap schema to JSON: {0}")]
@@ -51,7 +201,22 @@ pub enum ClapMcpError {
 ///
 /// Use this to declare whether your CLI tool can be safely invoked multiple times
 /// and whether it can run in parallel with other tool calls.
-#[derive(Debug, Clone)]
+///
+/// # Example
+///
+/// ```
+/// use clap_mcp::ClapMcpConfig;
+///
+/// // Default: subprocess per call, serialized
+/// let config = ClapMcpConfig::default();
+///
+/// // In-process, parallel-safe
+/// let config = ClapMcpConfig {
+///     reinvocation_safe: true,
+///     parallel_safe: true,
+/// };
+/// ```
+#[derive(Debug, Clone, Default)]
 pub struct ClapMcpConfig {
     /// If true, the CLI can be invoked multiple times without tearing down the process.
     /// When false (default), each tool call spawns a fresh subprocess.
@@ -63,20 +228,63 @@ pub struct ClapMcpConfig {
     pub parallel_safe: bool,
 }
 
-impl Default for ClapMcpConfig {
-    fn default() -> Self {
-        Self {
-            reinvocation_safe: false,
-            parallel_safe: false,
-        }
-    }
+/// Optional configuration for MCP serve behavior (logging, etc.).
+///
+/// Pass to [`serve_schema_json_over_stdio`] or [`serve_schema_json_over_stdio_blocking`].
+/// When `log_rx` is set, enables the logging capability and forwards messages to the MCP client.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use clap_mcp::{ClapMcpServeOptions, logging::log_channel};
+///
+/// let (log_tx, log_rx) = log_channel(32);
+/// let mut opts = ClapMcpServeOptions::default();
+/// opts.log_rx = Some(log_rx);
+/// // Pass opts to parse_or_serve_mcp_with_config_and_options or serve_schema_json_over_stdio_blocking
+/// ```
+#[derive(Debug, Default)]
+pub struct ClapMcpServeOptions {
+    /// When set, log messages received on this channel are forwarded to the MCP client
+    /// via `notifications/message`. Enables the logging capability and instructions.
+    pub log_rx: Option<tokio::sync::mpsc::Receiver<LoggingMessageNotificationParams>>,
 }
 
+/// Log interpretation hint for MCP clients (included in `instructions` when logging is enabled).
+///
+/// When changing logging behavior (logger names in `logging`, subprocess stderr handling below),
+/// update this and [`LOGGING_GUIDE_CONTENT`].
+pub const LOG_INTERPRETATION_INSTRUCTIONS: &str = r#"When this server emits log messages (notifications/message), the `logger` field indicates the source:
+- "stderr": Subprocess stderr (CLI tools run as subprocesses)
+- "app": In-process application logs
+- Other: Application-defined logger names"#;
+
+/// Name of the logging guide prompt.
+pub const PROMPT_LOGGING_GUIDE: &str = "clap-mcp-logging-guide";
+
+/// Full content for the logging guide prompt (returned when clients request `PROMPT_LOGGING_GUIDE`).
+///
+/// When changing logging behavior (logger names in `logging`, subprocess stderr handling below),
+/// update this and [`LOG_INTERPRETATION_INSTRUCTIONS`].
+pub const LOGGING_GUIDE_CONTENT: &str = r#"# clap-mcp Logging Guide
+
+When this server emits log messages (notifications/message), use the `logger` field to interpret the source:
+
+- **"stderr"**: Output from subprocess stderr (CLI tools run as subprocesses). The `meta` field may include `tool` for the command name.
+- **"app"**: In-process application logs.
+- **Other**: Application-defined logger names.
+
+The `level` field uses RFC 5424 syslog severity: debug, info, notice, warning, error, critical, alert, emergency.
+The `data` field contains the message (string or JSON object)."#;
+
+/// Serializable schema extracted from a clap `Command`.
+/// Used to build MCP tools and invoke the CLI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClapSchema {
     pub root: ClapCommand,
 }
 
+/// A command or subcommand in the schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClapCommand {
     pub name: String,
@@ -88,6 +296,7 @@ pub struct ClapCommand {
 }
 
 impl ClapCommand {
+    /// Returns this command and all subcommands in depth-first order.
     pub fn all_commands(&self) -> Vec<&ClapCommand> {
         let mut out = Vec::new();
         fn walk<'a>(cmd: &'a ClapCommand, acc: &mut Vec<&'a ClapCommand>) {
@@ -106,16 +315,50 @@ fn is_builtin_arg(id: &str) -> bool {
     matches!(id, "help" | "version" | MCP_FLAG_LONG)
 }
 
-/// Builds MCP tools from a clap schema: one tool per command (root + every subcommand).
-/// Tool names match command names; descriptions use the same text as `--help`;
-/// each tool's input schema lists the command's arguments (excluding help/version/mcp).
+/// Builds MCP tools from a clap schema.
+///
+/// One tool per command (root + every subcommand). Tool names match command names;
+/// descriptions use the same text as `--help`; each tool's input schema lists the
+/// command's arguments (excluding help/version/mcp).
+///
+/// # Example
+///
+/// ```rust
+/// use clap::{CommandFactory, Parser};
+/// use clap_mcp::{schema_from_command, tools_from_schema};
+///
+/// #[derive(Parser)]
+/// #[command(name = "mycli")]
+/// enum Cli { Foo }
+///
+/// let cmd = Cli::command();
+/// let schema = schema_from_command(&cmd);
+/// let tools = tools_from_schema(&schema);
+/// assert!(!tools.is_empty());
+/// ```
 pub fn tools_from_schema(schema: &ClapSchema) -> Vec<Tool> {
     tools_from_schema_with_config(schema, &ClapMcpConfig::default())
 }
 
 /// Builds MCP tools from a clap schema with execution safety annotations.
 ///
-/// Tools include `meta.clapMcp` with `reinvocationSafe` and `parallelSafe` hints.
+/// Tools include `meta.clapMcp` with `reinvocationSafe` and `parallelSafe` hints
+/// for MCP clients to make informed execution decisions.
+///
+/// # Example
+///
+/// ```rust
+/// use clap::{CommandFactory, Parser};
+/// use clap_mcp::{schema_from_command, tools_from_schema_with_config, ClapMcpConfig};
+///
+/// #[derive(Parser)]
+/// #[command(name = "mycli")]
+/// enum Cli { Foo }
+///
+/// let schema = schema_from_command(&Cli::command());
+/// let config = ClapMcpConfig { reinvocation_safe: true, parallel_safe: false };
+/// let tools = tools_from_schema_with_config(&schema, &config);
+/// ```
 pub fn tools_from_schema_with_config(schema: &ClapSchema, config: &ClapMcpConfig) -> Vec<Tool> {
     schema
         .root
@@ -191,6 +434,7 @@ fn command_to_tool_with_config(cmd: &ClapCommand, config: &ClapMcpConfig) -> Too
     }
 }
 
+/// Serializable representation of a clap argument.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClapArg {
     pub id: String,
@@ -208,7 +452,19 @@ pub struct ClapArg {
 
 /// Adds a root-level `--mcp` flag to a `clap::Command` (imperative clap usage).
 ///
+/// When present, the CLI should start an MCP server instead of normal execution.
 /// If an arg with `--mcp` already exists, this is a no-op.
+///
+/// # Example
+///
+/// ```rust
+/// use clap::Command;
+/// use clap_mcp::command_with_mcp_flag;
+///
+/// let cmd = Command::new("myapp");
+/// let cmd = command_with_mcp_flag(cmd);
+/// assert!(cmd.get_arguments().any(|a| a.get_long() == Some("mcp")));
+/// ```
 pub fn command_with_mcp_flag(mut cmd: Command) -> Command {
     let already = cmd
         .get_arguments()
@@ -230,8 +486,22 @@ pub fn command_with_mcp_flag(mut cmd: Command) -> Command {
 
 /// Extracts a serializable schema from a `clap::Command` (imperative clap usage).
 ///
-/// Note: this function intentionally ignores any `--mcp` flag added via `command_with_mcp_flag`,
-/// so the schema reflects the CLI as defined by the application.
+/// The schema reflects the CLI as defined by the application. Any `--mcp` flag
+/// added via [`command_with_mcp_flag`] is intentionally omitted.
+///
+/// # Example
+///
+/// ```rust
+/// use clap::{CommandFactory, Parser};
+/// use clap_mcp::schema_from_command;
+///
+/// #[derive(Parser)]
+/// #[command(name = "mycli")]
+/// enum Cli { Foo }
+///
+/// let schema = schema_from_command(&Cli::command());
+/// assert_eq!(schema.root.name, "mycli");
+/// ```
 pub fn schema_from_command(cmd: &Command) -> ClapSchema {
     ClapSchema {
         root: command_to_schema(cmd),
@@ -240,9 +510,20 @@ pub fn schema_from_command(cmd: &Command) -> ClapSchema {
 
 /// Imperative clap entrypoint.
 ///
-/// - Ensures `--mcp` appears in `--help`
+/// - Adds `--mcp` to the command (if not already present)
 /// - If `--mcp` is present, starts an MCP stdio server and exits the process
 /// - Otherwise, returns `ArgMatches` for normal app execution
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use clap::Command;
+/// use clap_mcp::{command_with_mcp_flag, get_matches_or_serve_mcp};
+///
+/// let cmd = command_with_mcp_flag(Command::new("myapp"));
+/// let matches = get_matches_or_serve_mcp(cmd);
+/// // If we get here, --mcp was not passed
+/// ```
 pub fn get_matches_or_serve_mcp(cmd: Command) -> clap::ArgMatches {
     get_matches_or_serve_mcp_with_config(cmd, ClapMcpConfig::default())
 }
@@ -250,7 +531,7 @@ pub fn get_matches_or_serve_mcp(cmd: Command) -> clap::ArgMatches {
 /// Imperative clap entrypoint with execution safety configuration.
 ///
 /// See [`get_matches_or_serve_mcp`] for behavior. Use `config` to declare
-/// reinvocation and parallel execution safety.
+/// reinvocation and parallel execution safety for tool execution.
 pub fn get_matches_or_serve_mcp_with_config(
     cmd: Command,
     config: ClapMcpConfig,
@@ -262,8 +543,14 @@ pub fn get_matches_or_serve_mcp_with_config(
     if matches.get_flag(MCP_FLAG_LONG) {
         let schema_json =
             serde_json::to_string_pretty(&schema).expect("schema JSON must serialize");
-        serve_schema_json_over_stdio_blocking(schema_json, None, config, None)
-            .expect("MCP server must start");
+        serve_schema_json_over_stdio_blocking(
+            schema_json,
+            None,
+            config,
+            None,
+            ClapMcpServeOptions::default(),
+        )
+        .expect("MCP server must start");
         std::process::exit(0);
     }
 
@@ -272,12 +559,29 @@ pub fn get_matches_or_serve_mcp_with_config(
 
 /// High-level helper for `clap` derive-based CLIs.
 ///
-/// - Ensures `--mcp` appears in `--help`
+/// - Adds `--mcp` to the command
 /// - If `--mcp` is present, starts an MCP stdio server and exits the process
 /// - Otherwise, returns the parsed CLI type
+///
+/// Uses default [`ClapMcpConfig`]. For config from `#[clap_mcp(...)]` attributes,
+/// use [`parse_or_serve_mcp_attr`].
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use clap::Parser;
+///
+/// #[derive(Parser, clap_mcp::ClapMcp)]
+/// enum Cli { Foo }
+///
+/// fn main() {
+///     let cli = clap_mcp::parse_or_serve_mcp::<Cli>();
+///     // If we get here, --mcp was not passed
+/// }
+/// ```
 pub fn parse_or_serve_mcp<T>() -> T
 where
-    T: ClapMcpRunnable + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
+    T: ClapMcpToolExecutor + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
 {
     parse_or_serve_mcp_with_config::<T>(ClapMcpConfig::default())
 }
@@ -285,10 +589,28 @@ where
 /// High-level helper for `clap` derive-based CLIs with config from `#[clap_mcp(...)]` attributes.
 ///
 /// Use `#[derive(ClapMcp)]` and `#[clap_mcp(parallel_safe = false, reinvocation_safe)]` on your CLI type,
-/// then call this instead of `parse_or_serve_mcp`.
+/// then call this instead of [`parse_or_serve_mcp`]. Config is taken from `T::clap_mcp_config()`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use clap::Parser;
+///
+/// #[derive(Parser, clap_mcp::ClapMcp)]
+/// #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+/// enum Cli {
+///     #[clap_mcp_output = "format!(\"done\")"]
+///     Foo,
+/// }
+///
+/// fn main() {
+///     let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+///     match cli { Cli::Foo => println!("done") }
+/// }
+/// ```
 pub fn parse_or_serve_mcp_attr<T>() -> T
 where
-    T: ClapMcpConfigProvider + ClapMcpRunnable + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
+    T: ClapMcpConfigProvider + ClapMcpToolExecutor + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
 {
     parse_or_serve_mcp_with_config::<T>(T::clap_mcp_config())
 }
@@ -297,10 +619,24 @@ where
 ///
 /// See [`parse_or_serve_mcp`] for behavior. Use `config` to declare reinvocation
 /// and parallel execution safety. When `reinvocation_safe` is true, uses in-process
-/// execution; requires `T: ClapMcpRunnable`.
+/// execution; requires `T: ClapMcpToolExecutor`.
 pub fn parse_or_serve_mcp_with_config<T>(config: ClapMcpConfig) -> T
 where
-    T: ClapMcpRunnable + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
+    T: ClapMcpToolExecutor + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
+{
+    parse_or_serve_mcp_with_config_and_options::<T>(config, ClapMcpServeOptions::default())
+}
+
+/// Like [`parse_or_serve_mcp_with_config`] but with custom serve options (e.g. logging).
+///
+/// Use `serve_options.log_rx` to forward log messages to the MCP client.
+/// See [`ClapMcpServeOptions`] and the `logging` module.
+pub fn parse_or_serve_mcp_with_config_and_options<T>(
+    config: ClapMcpConfig,
+    serve_options: ClapMcpServeOptions,
+) -> T
+where
+    T: ClapMcpToolExecutor + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
 {
     let mut cmd = T::command();
     cmd = command_with_mcp_flag(cmd);
@@ -321,7 +657,7 @@ where
                 let argv = build_argv_for_clap(&schema, cmd, args);
                 let matches = T::command().get_matches_from(&argv);
                 let cli = T::from_arg_matches(&matches).map_err(|e| e.to_string())?;
-                Ok(<T as ClapMcpRunnable>::run(cli))
+                Ok(<T as ClapMcpToolExecutor>::execute_for_mcp(cli))
             }) as InProcessToolHandler)
         } else {
             None
@@ -332,6 +668,7 @@ where
             if config.reinvocation_safe { None } else { exe },
             config,
             in_process_handler,
+            serve_options,
         )
         .expect("MCP server must start");
 
@@ -388,7 +725,7 @@ fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
     }
 }
 
-/// Builds full argv for clap's get_matches_from (program name + subcommand + args).
+/// Builds full argv for clap's `get_matches_from` (program name + subcommand + args).
 fn build_argv_for_clap(
     schema: &ClapSchema,
     command_name: &str,
@@ -405,6 +742,7 @@ fn build_argv_for_clap(
 }
 
 /// Builds argv for the executable from the schema and tool arguments.
+///
 /// Positional args (no long form) are passed in index order; optional args as `--long value`.
 fn build_tool_argv(
     schema: &ClapSchema,
@@ -452,9 +790,12 @@ fn build_tool_argv(
     out
 }
 
-/// Type for in-process tool execution handler. Called with (command_name, arguments).
+/// Type for in-process tool execution handler.
+///
+/// Called with `(command_name, arguments)` and returns `Result<ClapMcpToolOutput, String>`.
+/// Used when `reinvocation_safe` is true to avoid spawning subprocesses.
 pub type InProcessToolHandler = Arc<
-    dyn Fn(&str, serde_json::Map<String, serde_json::Value>) -> Result<String, String>
+    dyn Fn(&str, serde_json::Map<String, serde_json::Value>) -> Result<ClapMcpToolOutput, String>
         + Send
         + Sync,
 >;
@@ -473,17 +814,33 @@ fn value_to_string(v: &serde_json::Value) -> Option<String> {
 
 /// Starts an MCP server over stdio exposing `clap://schema` with the provided JSON payload.
 ///
-/// When `in_process_handler` is `Some`, tool calls use it instead of spawning a subprocess.
-/// When `None`, if `executable_path` is `Some`, tool calls run that executable; otherwise
-/// return a placeholder message.
+/// - When `in_process_handler` is `Some`, tool calls use it instead of spawning a subprocess.
+/// - When `None` and `executable_path` is `Some`, tool calls run that executable.
+/// - When both are `None`, returns a placeholder message for unknown tools.
 ///
 /// Use `config` to declare reinvocation and parallel execution safety. When
 /// `parallel_safe` is false, tool calls are serialized.
+///
+/// Use `serve_options.log_rx` to forward log messages to the MCP client.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let schema_json = serde_json::to_string(&schema)?;
+/// clap_mcp::serve_schema_json_over_stdio(
+///     schema_json,
+///     Some(std::env::current_exe()?),
+///     clap_mcp::ClapMcpConfig::default(),
+///     None,
+///     clap_mcp::ClapMcpServeOptions::default(),
+/// ).await?;
+/// ```
 pub async fn serve_schema_json_over_stdio(
     schema_json: String,
     executable_path: Option<PathBuf>,
     config: ClapMcpConfig,
     in_process_handler: Option<InProcessToolHandler>,
+    serve_options: ClapMcpServeOptions,
 ) -> std::result::Result<(), ClapMcpError> {
     let schema: ClapSchema = serde_json::from_str(&schema_json)?;
     let tools = tools_from_schema_with_config(&schema, &config);
@@ -496,6 +853,29 @@ pub async fn serve_schema_json_over_stdio(
             Some(Arc::new(tokio::sync::Mutex::new(())))
         };
 
+    let logging_enabled = serve_options.log_rx.is_some();
+    let (runtime_tx, runtime_rx) = if logging_enabled {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Arc<dyn rust_mcp_sdk::McpServer>>();
+        (Some(std::sync::Arc::new(std::sync::Mutex::new(Some(tx)))), Some(rx))
+    } else {
+        (None, None)
+    };
+
+    if let (Some(mut log_rx), Some(runtime_rx)) = (serve_options.log_rx, runtime_rx) {
+        tokio::spawn(async move {
+            let Ok(runtime) = runtime_rx.await else {
+                return;
+            };
+            while let Some(params) = log_rx.recv().await {
+                let _ = runtime.notify_log_message(params).await;
+            }
+        });
+    }
+
+    type RuntimeTx = Option<
+        Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Arc<dyn rust_mcp_sdk::McpServer>>>>>,
+    >;
+
     struct Handler {
         schema_json: String,
         tools: Vec<Tool>,
@@ -503,6 +883,7 @@ pub async fn serve_schema_json_over_stdio(
         in_process_handler: Option<InProcessToolHandler>,
         root_name: String,
         tool_execution_lock: Option<Arc<tokio::sync::Mutex<()>>>,
+        runtime_tx: RuntimeTx,
     }
 
     #[async_trait]
@@ -562,14 +943,72 @@ pub async fn serve_schema_json_over_stdio(
             })
         }
 
+        async fn handle_list_prompts_request(
+            &self,
+            _params: Option<PaginatedRequestParams>,
+            _runtime: Arc<dyn rust_mcp_sdk::McpServer>,
+        ) -> std::result::Result<ListPromptsResult, RpcError> {
+            Ok(ListPromptsResult {
+                prompts: vec![Prompt {
+                    name: PROMPT_LOGGING_GUIDE.to_string(),
+                    description: Some("How to interpret log messages from this clap-mcp server".to_string()),
+                    arguments: vec![],
+                    icons: vec![],
+                    meta: None,
+                    title: Some("clap-mcp Logging Guide".to_string()),
+                }],
+                meta: None,
+                next_cursor: None,
+            })
+        }
+
+        async fn handle_get_prompt_request(
+            &self,
+            params: GetPromptRequestParams,
+            _runtime: Arc<dyn rust_mcp_sdk::McpServer>,
+        ) -> std::result::Result<GetPromptResult, RpcError> {
+            if params.name != PROMPT_LOGGING_GUIDE {
+                return Err(RpcError::invalid_params()
+                    .with_message(format!("unknown prompt: {}", params.name)));
+            }
+            Ok(GetPromptResult {
+                description: Some("How to interpret log messages from this clap-mcp server".to_string()),
+                messages: vec![PromptMessage {
+                    content: ContentBlock::text_content(LOGGING_GUIDE_CONTENT.to_string()),
+                    role: Role::User,
+                }],
+                meta: None,
+            })
+        }
+
         async fn handle_call_tool_request(
             &self,
             params: CallToolRequestParams,
-            _runtime: Arc<dyn rust_mcp_sdk::McpServer>,
+            runtime: Arc<dyn rust_mcp_sdk::McpServer>,
         ) -> std::result::Result<CallToolResult, CallToolError> {
-            let known = self.tools.iter().any(|t| t.name == params.name);
-            if !known {
+            if let Some(ref tx) = self.runtime_tx
+                && let Ok(mut guard) = tx.lock()
+                && let Some(sender) = guard.take()
+            {
+                let _ = sender.send(runtime.clone());
+            }
+
+            let tool = self.tools.iter().find(|t| t.name == params.name);
+            let Some(tool) = tool else {
                 return Err(CallToolError::unknown_tool(params.name.clone()));
+            };
+
+            // Reject unknown argument names — do not trust client to send only schema-defined args
+            let args_map = params.arguments.unwrap_or_default();
+            if let Some(ref props) = tool.input_schema.properties {
+                for key in args_map.keys() {
+                    if !props.contains_key(key) {
+                        return Err(CallToolError::invalid_arguments(
+                            &params.name,
+                            Some(format!("unknown argument: {key}")),
+                        ));
+                    }
+                }
             }
 
             let _guard = if let Some(ref lock) = self.tool_execution_lock {
@@ -579,12 +1018,29 @@ pub async fn serve_schema_json_over_stdio(
             };
 
             if let Some(ref handler) = self.in_process_handler {
-                let args_map = params.arguments.unwrap_or_default();
                 match handler(&params.name, args_map) {
-                    Ok(text) => {
-                        return Ok(CallToolResult::from_content(vec![
-                            ContentBlock::text_content(text),
-                        ]));
+                    Ok(output) => {
+                        let (content, structured_content) = match &output {
+                            ClapMcpToolOutput::Text(s) => (
+                                vec![ContentBlock::text_content(s.clone())],
+                                None,
+                            ),
+                            ClapMcpToolOutput::Structured(v) => {
+                                let json_text =
+                                    serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string());
+                                let structured = v.as_object().cloned();
+                                (
+                                    vec![ContentBlock::text_content(json_text)],
+                                    structured,
+                                )
+                            }
+                        };
+                        return Ok(CallToolResult {
+                            content,
+                            is_error: None,
+                            meta: None,
+                            structured_content,
+                        });
                     }
                     Err(e) => {
                         return Ok(CallToolResult {
@@ -598,7 +1054,6 @@ pub async fn serve_schema_json_over_stdio(
             }
 
             if let Some(ref exe) = self.executable_path {
-                let args_map = params.arguments.unwrap_or_default();
                 let schema: ClapSchema = match serde_json::from_str(&self.schema_json) {
                     Ok(s) => s,
                     Err(_) => {
@@ -624,6 +1079,19 @@ pub async fn serve_schema_json_over_stdio(
                     Ok(output) => {
                         let out = String::from_utf8_lossy(&output.stdout);
                         let err = String::from_utf8_lossy(&output.stderr);
+                        if !err.is_empty() {
+                            // When changing stderr logging behavior, update LOG_INTERPRETATION_INSTRUCTIONS and LOGGING_GUIDE_CONTENT.
+                            let mut meta = serde_json::Map::new();
+                            meta.insert("tool".to_string(), serde_json::Value::String(params.name.clone()));
+                            let _ = runtime
+                                .notify_log_message(LoggingMessageNotificationParams {
+                                    data: serde_json::Value::String(err.trim().to_string()),
+                                    level: LoggingLevel::Info,
+                                    logger: Some("stderr".to_string()),
+                                    meta: Some(meta),
+                                })
+                                .await;
+                        }
                         let text = if err.is_empty() {
                             out.trim().to_string()
                         } else {
@@ -648,7 +1116,7 @@ pub async fn serve_schema_json_over_stdio(
             }
 
             let name = params.name;
-            let args_json = serde_json::Value::Object(params.arguments.unwrap_or_default());
+            let args_json = serde_json::Value::Object(args_map);
             let text = format!(
                 "Would invoke clap command '{name}' with arguments: {args_json:?}"
             );
@@ -688,10 +1156,22 @@ pub async fn serve_schema_json_over_stdio(
             tools: Some(ServerCapabilitiesTools {
                 list_changed: Some(false),
             }),
+            logging: if logging_enabled {
+                Some(serde_json::Map::new())
+            } else {
+                None
+            },
+            prompts: Some(ServerCapabilitiesPrompts {
+                list_changed: Some(false),
+            }),
             ..Default::default()
         },
         protocol_version: LATEST_PROTOCOL_VERSION.into(),
-        instructions: None,
+        instructions: if logging_enabled {
+            Some(LOG_INTERPRETATION_INSTRUCTIONS.to_string())
+        } else {
+            None
+        },
         meta,
     };
 
@@ -709,6 +1189,7 @@ pub async fn serve_schema_json_over_stdio(
         in_process_handler,
         root_name,
         tool_execution_lock,
+        runtime_tx,
     }
     .to_mcp_server_handler();
     let server = server_runtime::create_server(McpServerOptions {
@@ -723,12 +1204,15 @@ pub async fn serve_schema_json_over_stdio(
     Ok(())
 }
 
-/// Convenience wrapper for `serve_schema_json_over_stdio` that does not require an async main.
+/// Convenience wrapper for [`serve_schema_json_over_stdio`] that blocks on a tokio runtime.
+///
+/// Use when you cannot use `async fn main`. Spawns a current-thread runtime internally.
 pub fn serve_schema_json_over_stdio_blocking(
     schema_json: String,
     executable_path: Option<PathBuf>,
     config: ClapMcpConfig,
     in_process_handler: Option<InProcessToolHandler>,
+    serve_options: ClapMcpServeOptions,
 ) -> std::result::Result<(), ClapMcpError> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -739,6 +1223,7 @@ pub fn serve_schema_json_over_stdio_blocking(
         executable_path,
         config,
         in_process_handler,
+        serve_options,
     ))
 }
 

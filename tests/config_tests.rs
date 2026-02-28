@@ -1,7 +1,12 @@
 //! Tests for ClapMcpConfig and configuration possibilities.
 
 use clap::{CommandFactory, Parser};
-use clap_mcp::{ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, tools_from_schema_with_config, schema_from_command};
+use clap_mcp::{
+    schema_from_command, tools_from_schema_with_config, ClapMcpConfig, ClapMcpConfigProvider,
+    ClapMcpRunnable, ClapMcpToolExecutor, ClapMcpToolOutput,
+    LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, PROMPT_LOGGING_GUIDE,
+};
+use serde::Serialize;
 
 #[derive(Debug, Parser, clap_mcp::ClapMcp)]
 #[clap_mcp(parallel_safe = false, reinvocation_safe = false)]
@@ -30,6 +35,22 @@ enum TestCliParallelOnly {
 enum TestCliReinvokeOnly {
     #[clap_mcp_output = "format!(\"result: {}\", x)"]
     Qux { x: i32 },
+}
+
+#[derive(Debug, Serialize)]
+struct SubResult {
+    difference: i32,
+    minuend: i32,
+    subtrahend: i32,
+}
+
+#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[command(name = "test-cli-structured")]
+enum TestCliStructured {
+    #[clap_mcp_output_type = "SubResult"]
+    #[clap_mcp_output = "SubResult { difference: a - b, minuend: a, subtrahend: b }"]
+    Sub { a: i32, b: i32 },
 }
 
 #[test]
@@ -104,4 +125,43 @@ fn test_clap_mcp_runnable() {
 fn test_clap_mcp_runnable_default_debug() {
     let result = TestCliDefaults::Foo.run();
     assert!(result.contains("Foo"));
+}
+
+#[test]
+fn test_clap_mcp_tool_output_text() {
+    let out = ClapMcpToolOutput::Text("hello".to_string());
+    assert_eq!(out.as_text(), Some("hello"));
+    assert!(out.as_structured().is_none());
+    assert_eq!(out.into_string(), "hello");
+}
+
+#[test]
+fn test_clap_mcp_tool_output_structured() {
+    let v = serde_json::json!({"x": 1, "y": 2});
+    let out = ClapMcpToolOutput::Structured(v.clone());
+    assert!(out.as_text().is_none());
+    assert_eq!(out.as_structured(), Some(&v));
+    let s = out.into_string();
+    let parsed: serde_json::Value = serde_json::from_str(&s).expect("valid JSON");
+    assert_eq!(parsed.get("x").and_then(|v| v.as_i64()), Some(1));
+    assert_eq!(parsed.get("y").and_then(|v| v.as_i64()), Some(2));
+}
+
+#[test]
+fn test_logging_constants() {
+    assert_eq!(PROMPT_LOGGING_GUIDE, "clap-mcp-logging-guide");
+    assert!(LOG_INTERPRETATION_INSTRUCTIONS.contains("stderr"));
+    assert!(LOG_INTERPRETATION_INSTRUCTIONS.contains("app"));
+    assert!(LOGGING_GUIDE_CONTENT.contains("stderr"));
+    assert!(LOGGING_GUIDE_CONTENT.contains("app"));
+}
+
+#[test]
+fn test_clap_mcp_tool_executor_structured() {
+    let sub = TestCliStructured::Sub { a: 10, b: 3 };
+    let out = sub.execute_for_mcp();
+    let v = out.as_structured().expect("should be structured");
+    assert_eq!(v.get("difference").and_then(|x| x.as_i64()), Some(7));
+    assert_eq!(v.get("minuend").and_then(|x| x.as_i64()), Some(10));
+    assert_eq!(v.get("subtrahend").and_then(|x| x.as_i64()), Some(3));
 }

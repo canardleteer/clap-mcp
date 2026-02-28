@@ -2,7 +2,7 @@
 members = [".", "clap-mcp-macros"]
 
 [workspace.package]
-version = "0.0.1-rc.2"
+version = "0.0.1-rc.3"
 
 [package]
 name = "clap-mcp"
@@ -17,8 +17,38 @@ documentation = "https://docs.rs/clap-mcp"
 [build-dependencies]
 chrono = "0.4"
 
+[features]
+default = []
+output-schema = ["schemars"]
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
+log = ["dep:log"]
+
+# Server examples (in examples/servers/)
+[[example]]
+name = "derive"
+path = "examples/servers/derive.rs"
+
+[[example]]
+name = "structured"
+path = "examples/servers/structured.rs"
+
+[[example]]
+name = "tracing_bridge"
+path = "examples/servers/tracing_bridge.rs"
+required-features = ["tracing"]
+
+[[example]]
+name = "log_bridge"
+path = "examples/servers/log_bridge.rs"
+required-features = ["log"]
+
+# Client example (tests the servers)
+[[example]]
+name = "client"
+required-features = ["tracing"]
+
 [dependencies]
-clap-mcp-macros = { version = "0.0.1-rc.2", path = "clap-mcp-macros" }
+clap-mcp-macros = { version = "0.0.1-rc.3", path = "clap-mcp-macros" }
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 rust-mcp-sdk = { version = "0.8.3", default-features = false, features = ["server", "client", "stdio"] }
@@ -26,3 +56,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+# Optional dependencies
+schemars = { version = "0.8", optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, features = ["registry", "fmt"] }
+log = { version = "0.4", optional = true }

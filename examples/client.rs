@@ -1,30 +1,163 @@
+//! MCP client example that tests clap-mcp servers.
+//!
+//! Subcommands launch different example servers:
+//! - `derive` (default): Basic derive example with text and structured output
+//! - `structured`: Structured output only
+//! - `tracing-bridge`: With tracing integration (requires --features tracing)
+//! - `log-bridge`: With log crate forwarding (requires --features log)
+
 use async_trait::async_trait;
+use clap::{Parser, Subcommand};
 use rust_mcp_sdk::{
     error::SdkResult,
     mcp_client::{client_runtime, ClientHandler, McpClientOptions},
     schema::{
-        CallToolRequestParams, ClientCapabilities, Implementation, InitializeRequestParams,
-        ListResourcesResult, ReadResourceRequestParams, LATEST_PROTOCOL_VERSION,
+        CancelledNotificationParams, CallToolRequestParams, ClientCapabilities, Implementation,
+        InitializeRequestParams, ListPromptsResult, ListResourcesResult,
+        LoggingMessageNotificationParams, NotificationParams, ProgressNotificationParams,
+        ResourceUpdatedNotificationParams, RpcError, LATEST_PROTOCOL_VERSION,
     },
     McpClient, StdioTransport, ToMcpClientHandler, TransportOptions,
 };
 
 #[derive(Clone)]
-struct ExampleClientHandler;
+struct ExampleClientHandler {
+    json: bool,
+}
 
 #[async_trait]
-impl ClientHandler for ExampleClientHandler {}
+impl ClientHandler for ExampleClientHandler {
+    async fn handle_logging_message_notification(
+        &self,
+        params: LoggingMessageNotificationParams,
+        _runtime: &dyn McpClient,
+    ) -> std::result::Result<(), RpcError> {
+        if self.json {
+            println!("{}", serde_json::to_string(&params).unwrap_or_default());
+        } else {
+            let logger = params.logger.as_deref().unwrap_or("unknown");
+            let level = format!("{:?}", params.level).to_uppercase();
+            println!("  [LOG {level} ({logger})] {}", params.data);
+        }
+        Ok(())
+    }
 
-#[tokio::main]
-async fn main() -> SdkResult<()> {
-    // Client details
+    async fn handle_progress_notification(
+        &self,
+        params: ProgressNotificationParams,
+        _runtime: &dyn McpClient,
+    ) -> std::result::Result<(), RpcError> {
+        if self.json {
+            eprintln!("{}", serde_json::to_string(&params).unwrap_or_default());
+        }
+        Ok(())
+    }
+
+    async fn handle_cancelled_notification(
+        &self,
+        params: CancelledNotificationParams,
+        _runtime: &dyn McpClient,
+    ) -> std::result::Result<(), RpcError> {
+        if self.json {
+            eprintln!("{}", serde_json::to_string(&params).unwrap_or_default());
+        }
+        Ok(())
+    }
+
+    async fn handle_resource_list_changed_notification(
+        &self,
+        params: Option<NotificationParams>,
+        _runtime: &dyn McpClient,
+    ) -> std::result::Result<(), RpcError> {
+        if self.json {
+            eprintln!("{}", serde_json::to_string(&params).unwrap_or_default());
+        }
+        Ok(())
+    }
+
+    async fn handle_resource_updated_notification(
+        &self,
+        params: ResourceUpdatedNotificationParams,
+        _runtime: &dyn McpClient,
+    ) -> std::result::Result<(), RpcError> {
+        if self.json {
+            eprintln!("{}", serde_json::to_string(&params).unwrap_or_default());
+        }
+        Ok(())
+    }
+
+    async fn handle_prompt_list_changed_notification(
+        &self,
+        params: Option<NotificationParams>,
+        _runtime: &dyn McpClient,
+    ) -> std::result::Result<(), RpcError> {
+        if self.json {
+            eprintln!("{}", serde_json::to_string(&params).unwrap_or_default());
+        }
+        Ok(())
+    }
+
+    async fn handle_tool_list_changed_notification(
+        &self,
+        params: Option<NotificationParams>,
+        _runtime: &dyn McpClient,
+    ) -> std::result::Result<(), RpcError> {
+        if self.json {
+            eprintln!("{}", serde_json::to_string(&params).unwrap_or_default());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Parser)]
+#[command(name = "client", about = "MCP client that tests clap-mcp example servers")]
+struct Args {
+    /// Print incoming notification JSON to stderr as it arrives
+    #[arg(long, short)]
+    json: bool,
+
+    #[command(subcommand)]
+    command: Cli,
+}
+
+#[derive(Subcommand)]
+enum Cli {
+    /// Test the derive example (default)
+    Derive,
+    /// Test the structured output example
+    Structured,
+    /// Test the tracing_bridge example (requires --features tracing)
+    #[cfg(feature = "tracing")]
+    TracingBridge,
+    /// Test the log_bridge example (requires --features log)
+    #[cfg(feature = "log")]
+    LogBridge,
+}
+
+fn server_args(example: &str) -> Vec<String> {
+    let feature = match example {
+        "tracing_bridge" => Some("tracing"),
+        "log_bridge" => Some("log"),
+        _ => None,
+    };
+    let mut args = vec!["run".into(), "--example".into(), example.into()];
+    if let Some(f) = feature {
+        args.push("--features".into());
+        args.push(f.into());
+    }
+    args.push("--".into());
+    args.push("--mcp".into());
+    args
+}
+
+async fn run_client(example: &str, json: bool) -> SdkResult<()> {
     let client_details = InitializeRequestParams {
         capabilities: ClientCapabilities::default(),
         client_info: Implementation {
             name: "clap-mcp-client-example".into(),
             version: "0.1.0".into(),
             title: Some("clap-mcp client example".into()),
-            description: Some("Tests clap-mcp derive example as an MCP stdio server".into()),
+            description: Some(format!("Tests clap-mcp {} example", example)),
             icons: vec![],
             website_url: None,
         },
@@ -32,60 +165,48 @@ async fn main() -> SdkResult<()> {
         meta: None,
     };
 
-    // Launch the derive example as an MCP stdio server: cargo run --example derive -- --mcp
     let transport = StdioTransport::create_with_server_launch(
         "cargo",
-        vec![
-            "run".into(),
-            "--example".into(),
-            "derive".into(),
-            "--".into(),
-            "--mcp".into(),
-        ],
+        server_args(example),
         None,
         TransportOptions::default(),
     )?;
 
-    let handler = ExampleClientHandler;
-
     let client = client_runtime::create_client(McpClientOptions {
         client_details,
         transport,
-        handler: handler.to_mcp_client_handler(),
+        handler: ExampleClientHandler { json }.to_mcp_client_handler(),
         task_store: None,
         server_task_store: None,
     });
 
     client.clone().start().await?;
 
-    // List resources and print them
-    let ListResourcesResult { resources, .. } =
-        client.request_resource_list(None).await?;
-
+    let ListResourcesResult { resources, .. } = client.request_resource_list(None).await?;
     println!("Resources:");
     for res in &resources {
         println!("- {} ({})", res.name, res.uri);
     }
 
-    // Read the clap schema resource
-    let uri = "clap://schema".to_string();
-    let read = client
-        .request_resource_read(ReadResourceRequestParams { meta: None, uri })
-        .await?;
-
-    println!("\nclap://schema contents (truncated):");
-    if let Some(first) = read.contents.first() {
-        println!("{first:?}");
-    }
-
-    // List tools (one per command/subcommand)
     let tools_result = client.request_tool_list(None).await?;
     println!("\nTools:");
     for t in &tools_result.tools {
         println!("  {}: {}", t.name, t.description.as_deref().unwrap_or(""));
     }
 
-    // Call the "greet" tool with a name
+    if example == "derive" {
+        run_derive_tests(client.as_ref()).await?;
+    } else if example == "structured" {
+        run_structured_tests(client.as_ref()).await?;
+    } else if example == "tracing_bridge" || example == "log_bridge" {
+        run_logging_tests(client.as_ref()).await?;
+    }
+
+    client.shut_down().await?;
+    Ok(())
+}
+
+async fn run_derive_tests(client: &impl McpClient) -> SdkResult<()> {
     let mut greet_args = serde_json::Map::new();
     greet_args.insert("name".into(), serde_json::json!("Rust"));
     let greet_result = client
@@ -96,33 +217,31 @@ async fn main() -> SdkResult<()> {
             task: None,
         })
         .await?;
-    println!("\nCall tool 'greet' with name=\"Rust\":");
+    println!("\nCall 'greet' with name=\"Rust\":");
     for block in &greet_result.content {
         if let Ok(t) = block.as_text_content() {
             println!("  {}", t.text);
         }
     }
 
-    // Call the "add" tool
-    let mut args = serde_json::Map::new();
-    args.insert("a".into(), serde_json::json!(2));
-    args.insert("b".into(), serde_json::json!(3));
-    let call_result = client
+    let mut add_args = serde_json::Map::new();
+    add_args.insert("a".into(), serde_json::json!(2));
+    add_args.insert("b".into(), serde_json::json!(3));
+    let add_result = client
         .request_tool_call(CallToolRequestParams {
             name: "add".into(),
-            arguments: Some(args),
+            arguments: Some(add_args),
             meta: None,
             task: None,
         })
         .await?;
-    println!("\nCall tool 'add' with a=2, b=3:");
-    for block in &call_result.content {
+    println!("\nCall 'add' with a=2, b=3:");
+    for block in &add_result.content {
         if let Ok(t) = block.as_text_content() {
             println!("  {}", t.text);
         }
     }
 
-    // Call the "sub" tool with 10 and 5
     let mut sub_args = serde_json::Map::new();
     sub_args.insert("a".into(), serde_json::json!(10));
     sub_args.insert("b".into(), serde_json::json!(5));
@@ -134,15 +253,79 @@ async fn main() -> SdkResult<()> {
             task: None,
         })
         .await?;
-    println!("\nCall tool 'sub' with a=10, b=5:");
+    println!("\nCall 'sub' with a=10, b=5 (structured output):");
     for block in &sub_result.content {
         if let Ok(t) = block.as_text_content() {
             println!("  {}", t.text);
         }
     }
-
-    client.shut_down().await?;
+    if let Some(ref structured) = sub_result.structured_content {
+        println!("  structured_content: {}", serde_json::to_string_pretty(structured).unwrap());
+    }
 
     Ok(())
 }
 
+async fn run_structured_tests(client: &impl McpClient) -> SdkResult<()> {
+    let mut args = serde_json::Map::new();
+    args.insert("a".into(), serde_json::json!(7));
+    args.insert("b".into(), serde_json::json!(3));
+    let result = client
+        .request_tool_call(CallToolRequestParams {
+            name: "add".into(),
+            arguments: Some(args),
+            meta: None,
+            task: None,
+        })
+        .await?;
+    println!("\nCall 'add' with a=7, b=3:");
+    for block in &result.content {
+        if let Ok(t) = block.as_text_content() {
+            println!("  {}", t.text);
+        }
+    }
+    if let Some(ref structured) = result.structured_content {
+        println!("  structured_content: {}", serde_json::to_string_pretty(structured).unwrap());
+    }
+    Ok(())
+}
+
+async fn run_logging_tests(client: &impl McpClient) -> SdkResult<()> {
+    let ListPromptsResult { prompts, .. } = client.request_prompt_list(None).await?;
+    println!("\nPrompts:");
+    for p in &prompts {
+        println!("  {}: {}", p.name, p.description.as_deref().unwrap_or(""));
+    }
+
+    let mut args = serde_json::Map::new();
+    args.insert("s".into(), serde_json::json!("hello"));
+    let result = client
+        .request_tool_call(CallToolRequestParams {
+            name: "echo".into(),
+            arguments: Some(args),
+            meta: None,
+            task: None,
+        })
+        .await?;
+    println!("\nCall 'echo' with s=\"hello\":");
+    for block in &result.content {
+        if let Ok(t) = block.as_text_content() {
+            println!("  {}", t.text);
+        }
+    }
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> SdkResult<()> {
+    let args = Args::parse();
+    let example = match args.command {
+        Cli::Derive => "derive",
+        Cli::Structured => "structured",
+        #[cfg(feature = "tracing")]
+        Cli::TracingBridge => "tracing_bridge",
+        #[cfg(feature = "log")]
+        Cli::LogBridge => "log_bridge",
+    };
+    run_client(example, args.json).await
+}
