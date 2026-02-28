@@ -2,7 +2,7 @@
 members = [".", "clap-mcp-macros"]
 
 [workspace.package]
-version = "0.0.1-rc.3"
+version = "0.0.1-rc.4"
 
 [package]
 name = "clap-mcp"
@@ -41,6 +41,16 @@ required-features = ["tracing"]
 name = "log_bridge"
 path = "examples/servers/log_bridge.rs"
 required-features = ["log"]
+
+[[example]]
+name = "async_sleep"
+path = "examples/servers/async_sleep.rs"
+required-features = ["tracing"]
+
+[[example]]
+name = "async_sleep_shared"
+path = "examples/servers/async_sleep_shared.rs"
+required-features = ["tracing"]
 
 # Client example (tests the servers)
 [[example]]

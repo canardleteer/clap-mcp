@@ -2,8 +2,8 @@
 
 use clap::{CommandFactory, Parser};
 use clap_mcp::{
-    schema_from_command, tools_from_schema_with_config, ClapMcpConfig, ClapMcpConfigProvider,
-    ClapMcpRunnable, ClapMcpToolExecutor, ClapMcpToolOutput,
+    run_async_tool, schema_from_command, tools_from_schema_with_config, ClapMcpConfig,
+    ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpToolExecutor, ClapMcpToolOutput,
     LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, PROMPT_LOGGING_GUIDE,
 };
 use serde::Serialize;
@@ -45,7 +45,7 @@ struct SubResult {
 }
 
 #[derive(Debug, Parser, clap_mcp::ClapMcp)]
-#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
 #[command(name = "test-cli-structured")]
 enum TestCliStructured {
     #[clap_mcp_output_type = "SubResult"]
@@ -53,11 +53,19 @@ enum TestCliStructured {
     Sub { a: i32, b: i32 },
 }
 
+#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime)]
+#[command(name = "test-cli-share-runtime")]
+enum TestCliShareRuntime {
+    Foo,
+}
+
 #[test]
 fn test_config_default() {
     let config = ClapMcpConfig::default();
     assert!(!config.reinvocation_safe, "reinvocation_safe should default to false");
     assert!(!config.parallel_safe, "parallel_safe should default to false");
+    assert!(!config.share_runtime, "share_runtime should default to false");
 }
 
 #[test]
@@ -89,11 +97,30 @@ fn test_clap_mcp_config_provider_reinvoke_only() {
 }
 
 #[test]
+fn test_clap_mcp_config_provider_share_runtime() {
+    let config = TestCliShareRuntime::clap_mcp_config();
+    assert!(config.reinvocation_safe);
+    assert!(config.share_runtime);
+}
+
+#[test]
+fn test_clap_mcp_config_provider_share_runtime_defaults_when_omitted() {
+    // TestCliReinvokeOnly has reinvocation_safe but no share_runtime attribute
+    let config = TestCliReinvokeOnly::clap_mcp_config();
+    assert!(config.reinvocation_safe);
+    assert!(!config.share_runtime, "share_runtime should default to false when omitted");
+}
+
+#[test]
 fn test_tools_from_schema_with_config_meta() {
     let cmd = TestCliDefaults::command();
     let schema = schema_from_command(&cmd);
 
-    let config_false_false = ClapMcpConfig { reinvocation_safe: false, parallel_safe: false };
+    let config_false_false = ClapMcpConfig {
+        reinvocation_safe: false,
+        parallel_safe: false,
+        ..Default::default()
+    };
     let tools = tools_from_schema_with_config(&schema, &config_false_false);
     assert!(!tools.is_empty());
     for tool in &tools {
@@ -104,7 +131,11 @@ fn test_tools_from_schema_with_config_meta() {
         assert_eq!(obj.get("parallelSafe").and_then(|v| v.as_bool()), Some(false));
     }
 
-    let config_true_true = ClapMcpConfig { reinvocation_safe: true, parallel_safe: true };
+    let config_true_true = ClapMcpConfig {
+        reinvocation_safe: true,
+        parallel_safe: true,
+        ..Default::default()
+    };
     let tools = tools_from_schema_with_config(&schema, &config_true_true);
     for tool in &tools {
         let meta = tool.meta.as_ref().expect("tool should have meta");
@@ -112,6 +143,20 @@ fn test_tools_from_schema_with_config_meta() {
         let obj = clap_mcp.as_object().expect("clapMcp should be object");
         assert_eq!(obj.get("reinvocationSafe").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(obj.get("parallelSafe").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(obj.get("shareRuntime").and_then(|v| v.as_bool()), Some(false));
+    }
+
+    let config_share_runtime = ClapMcpConfig {
+        reinvocation_safe: true,
+        parallel_safe: false,
+        share_runtime: true,
+    };
+    let tools = tools_from_schema_with_config(&schema, &config_share_runtime);
+    for tool in &tools {
+        let meta = tool.meta.as_ref().expect("tool should have meta");
+        let clap_mcp = meta.get("clapMcp").expect("meta should have clapMcp");
+        let obj = clap_mcp.as_object().expect("clapMcp should be object");
+        assert_eq!(obj.get("shareRuntime").and_then(|v| v.as_bool()), Some(true));
     }
 }
 
@@ -165,3 +210,54 @@ fn test_clap_mcp_tool_executor_structured() {
     assert_eq!(v.get("minuend").and_then(|x| x.as_i64()), Some(10));
     assert_eq!(v.get("subtrahend").and_then(|x| x.as_i64()), Some(3));
 }
+
+// --- run_async_tool and share_runtime edge cases ---
+
+#[test]
+fn test_run_async_tool_dedicated_thread_reinvocation_safe_false() {
+    // When reinvocation_safe=false, always uses dedicated thread (share_runtime ignored)
+    let config = ClapMcpConfig {
+        reinvocation_safe: false,
+        parallel_safe: false,
+        share_runtime: true, // ignored
+    };
+    let result = run_async_tool(&config, || async { 42 });
+    assert_eq!(result, 42);
+}
+
+#[test]
+fn test_run_async_tool_dedicated_thread_share_runtime_false() {
+    // When share_runtime=false, uses dedicated thread even with reinvocation_safe=true
+    let config = ClapMcpConfig {
+        reinvocation_safe: true,
+        parallel_safe: false,
+        share_runtime: false,
+    };
+    let result = run_async_tool(&config, || async { 99 });
+    assert_eq!(result, 99);
+}
+
+#[test]
+fn test_run_async_tool_dedicated_thread_share_runtime_true_but_reinvoke_false() {
+    // share_runtime=true with reinvocation_safe=false: uses dedicated thread
+    let config = ClapMcpConfig {
+        reinvocation_safe: false,
+        parallel_safe: true,
+        share_runtime: true,
+    };
+    let result = run_async_tool(&config, || async { "hello".to_string() });
+    assert_eq!(result, "hello");
+}
+
+#[test]
+fn test_run_async_tool_returns_complex_type() {
+    let config = ClapMcpConfig::default();
+    let result = run_async_tool(&config, || async {
+        vec![1u8, 2, 3]
+    });
+    assert_eq!(result, vec![1, 2, 3]);
+}
+
+// Shared runtime path (reinvocation_safe=true + share_runtime=true) is exercised
+// via integration: run the async_sleep example with share_runtime in #[clap_mcp].
+// Unit-testing it would require block_on from within a tokio worker, which panics.

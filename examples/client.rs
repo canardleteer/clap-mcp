@@ -5,6 +5,8 @@
 //! - `structured`: Structured output only
 //! - `tracing-bridge`: With tracing integration (requires --features tracing)
 //! - `log-bridge`: With log crate forwarding (requires --features log)
+//! - `async-sleep`: Async tokio CLI with 3 sleep tasks, dedicated thread (requires --features tracing)
+//! - `async-sleep-shared`: Same but shares the MCP server's runtime (requires --features tracing)
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
@@ -129,6 +131,12 @@ enum Cli {
     /// Test the tracing_bridge example (requires --features tracing)
     #[cfg(feature = "tracing")]
     TracingBridge,
+    /// Test the async_sleep example (requires --features tracing)
+    #[cfg(feature = "tracing")]
+    AsyncSleep,
+    /// Test the async_sleep_shared example (requires --features tracing)
+    #[cfg(feature = "tracing")]
+    AsyncSleepShared,
     /// Test the log_bridge example (requires --features log)
     #[cfg(feature = "log")]
     LogBridge,
@@ -136,7 +144,7 @@ enum Cli {
 
 fn server_args(example: &str) -> Vec<String> {
     let feature = match example {
-        "tracing_bridge" => Some("tracing"),
+        "tracing_bridge" | "async_sleep" | "async_sleep_shared" => Some("tracing"),
         "log_bridge" => Some("log"),
         _ => None,
     };
@@ -198,6 +206,8 @@ async fn run_client(example: &str, json: bool) -> SdkResult<()> {
         run_derive_tests(client.as_ref()).await?;
     } else if example == "structured" {
         run_structured_tests(client.as_ref()).await?;
+    } else if example == "async_sleep" || example == "async_sleep_shared" {
+        run_async_sleep_tests(client.as_ref()).await?;
     } else if example == "tracing_bridge" || example == "log_bridge" {
         run_logging_tests(client.as_ref()).await?;
     }
@@ -266,6 +276,27 @@ async fn run_derive_tests(client: &impl McpClient) -> SdkResult<()> {
     Ok(())
 }
 
+async fn run_async_sleep_tests(client: &impl McpClient) -> SdkResult<()> {
+    let result = client
+        .request_tool_call(CallToolRequestParams {
+            name: "sleep-demo".into(),
+            arguments: None,
+            meta: None,
+            task: None,
+        })
+        .await?;
+    println!("\nCall 'sleep-demo':");
+    for block in &result.content {
+        if let Ok(t) = block.as_text_content() {
+            println!("  {}", t.text);
+        }
+    }
+    if let Some(ref structured) = result.structured_content {
+        println!("  structured_content: {}", serde_json::to_string_pretty(structured).unwrap());
+    }
+    Ok(())
+}
+
 async fn run_structured_tests(client: &impl McpClient) -> SdkResult<()> {
     let mut args = serde_json::Map::new();
     args.insert("a".into(), serde_json::json!(7));
@@ -324,6 +355,10 @@ async fn main() -> SdkResult<()> {
         Cli::Structured => "structured",
         #[cfg(feature = "tracing")]
         Cli::TracingBridge => "tracing_bridge",
+        #[cfg(feature = "tracing")]
+        Cli::AsyncSleep => "async_sleep",
+        #[cfg(feature = "tracing")]
+        Cli::AsyncSleepShared => "async_sleep_shared",
         #[cfg(feature = "log")]
         Cli::LogBridge => "log_bridge",
     };

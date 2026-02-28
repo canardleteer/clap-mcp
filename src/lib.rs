@@ -199,8 +199,8 @@ pub enum ClapMcpError {
 
 /// Configuration for execution safety when exposing a CLI over MCP.
 ///
-/// Use this to declare whether your CLI tool can be safely invoked multiple times
-/// and whether it can run in parallel with other tool calls.
+/// Use this to declare whether your CLI tool can be safely invoked multiple times,
+/// whether it can run in parallel with other tool calls, and how async tools run.
 ///
 /// # Example
 ///
@@ -214,6 +214,7 @@ pub enum ClapMcpError {
 /// let config = ClapMcpConfig {
 ///     reinvocation_safe: true,
 ///     parallel_safe: true,
+///     ..Default::default()
 /// };
 /// ```
 #[derive(Debug, Clone, Default)]
@@ -226,6 +227,17 @@ pub struct ClapMcpConfig {
     /// If true, tool calls may run concurrently. When false, calls are serialized.
     /// Default is false (serialize by default) for safety.
     pub parallel_safe: bool,
+
+    /// When `reinvocation_safe` is true, controls how async tool execution runs.
+    /// Only applies to in-process execution; ignored when `reinvocation_safe` is false.
+    ///
+    /// | Value | Behavior | When to use |
+    /// |-------|----------|-------------|
+    /// | `false` (default) | Dedicated thread with its own tokio runtime per tool call. No nesting, no special setup. | **Recommended.** Use unless you need deep integration. |
+    /// | `true` | Shares the MCP server's tokio runtime. Uses a multi-thread runtime so `block_on` can run async work. | Advanced: share runtime state, spawn long-lived tasks, or integrate with other async code. |
+    ///
+    /// Use with [`run_async_tool`] in `#[clap_mcp_output]` for async subcommands.
+    pub share_runtime: bool,
 }
 
 /// Optional configuration for MCP serve behavior (logging, etc.).
@@ -356,7 +368,7 @@ pub fn tools_from_schema(schema: &ClapSchema) -> Vec<Tool> {
 /// enum Cli { Foo }
 ///
 /// let schema = schema_from_command(&Cli::command());
-/// let config = ClapMcpConfig { reinvocation_safe: true, parallel_safe: false };
+/// let config = ClapMcpConfig { reinvocation_safe: true, parallel_safe: false, ..Default::default() };
 /// let tools = tools_from_schema_with_config(&schema, &config);
 /// ```
 pub fn tools_from_schema_with_config(schema: &ClapSchema, config: &ClapMcpConfig) -> Vec<Tool> {
@@ -416,6 +428,7 @@ fn command_to_tool_with_config(cmd: &ClapCommand, config: &ClapMcpConfig) -> Too
             serde_json::json!({
                 "reinvocationSafe": config.reinvocation_safe,
                 "parallelSafe": config.parallel_safe,
+                "shareRuntime": config.share_runtime,
             }),
         );
         Some(m)
@@ -1206,7 +1219,15 @@ pub async fn serve_schema_json_over_stdio(
 
 /// Convenience wrapper for [`serve_schema_json_over_stdio`] that blocks on a tokio runtime.
 ///
-/// Use when you cannot use `async fn main`. Spawns a current-thread runtime internally.
+/// Use when you cannot use `async fn main`. Spawns a runtime internally.
+///
+/// # Runtime selection
+///
+/// | `reinvocation_safe` | `share_runtime` | Runtime type |
+/// |---------------------|----------------|--------------|
+/// | `false` | any | `current_thread` |
+/// | `true` | `false` | `current_thread` |
+/// | `true` | `true` | `multi_thread` (so [`run_async_tool`] with `share_runtime` can use `block_on`) |
 pub fn serve_schema_json_over_stdio_blocking(
     schema_json: String,
     executable_path: Option<PathBuf>,
@@ -1214,10 +1235,18 @@ pub fn serve_schema_json_over_stdio_blocking(
     in_process_handler: Option<InProcessToolHandler>,
     serve_options: ClapMcpServeOptions,
 ) -> std::result::Result<(), ClapMcpError> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime must build");
+    let use_multi_thread = config.reinvocation_safe && config.share_runtime;
+    let rt = if use_multi_thread {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime must build")
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime must build")
+    };
     rt.block_on(serve_schema_json_over_stdio(
         schema_json,
         executable_path,
@@ -1225,5 +1254,63 @@ pub fn serve_schema_json_over_stdio_blocking(
         in_process_handler,
         serve_options,
     ))
+}
+
+/// Runs an async future for MCP tool execution, respecting `share_runtime` in config.
+///
+/// Use this in `#[clap_mcp_output]` when your tool does async work (e.g. `tokio::sleep`,
+/// `tokio::spawn`). The closure must return a `Future` that produces the tool output.
+///
+/// # Runtime selection
+///
+/// | `reinvocation_safe` | `share_runtime` | Behavior |
+/// |---------------------|----------------|----------|
+/// | `false` | any | Dedicated thread (subprocess mode; `share_runtime` ignored) |
+/// | `true` | `false` | Dedicated thread with its own tokio runtime (default, recommended) |
+/// | `true` | `true` | Uses `Handle::current().block_on()` on the MCP server's runtime |
+///
+/// When `share_runtime` is true, uses `block_in_place` + `block_on` so the async
+/// work runs on the MCP server's multi-thread runtime without deadlock.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// #[derive(Parser, clap_mcp::ClapMcp)]
+/// #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
+/// enum Cli {
+///     #[clap_mcp_output_type = "SleepResult"]
+///     #[clap_mcp_output = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo())"]
+///     SleepDemo,
+/// }
+/// ```
+///
+/// # Panics
+///
+/// When `share_runtime` is true and `reinvocation_safe` is true, panics if not
+/// running within a tokio runtime (e.g. `Handle::try_current()` fails).
+pub fn run_async_tool<Fut, O>(config: &ClapMcpConfig, f: impl FnOnce() -> Fut + Send) -> O
+where
+    Fut: std::future::Future<Output = O> + Send,
+    O: Send,
+{
+    if config.reinvocation_safe && config.share_runtime {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::try_current()
+                .expect("share_runtime=true requires running within tokio runtime (use reinvocation_safe + share_runtime)")
+                .block_on(f())
+        })
+    } else {
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("tokio runtime must build")
+                    .block_on(f())
+            })
+            .join()
+            .expect("async tool thread must not panic")
+        })
+    }
 }
 

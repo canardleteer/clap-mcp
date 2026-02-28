@@ -140,6 +140,9 @@ CLIs differ in how safely they can be invoked over MCP. Two flags control this:
   serialized behind a tokio `Mutex` (`false`) or dispatched concurrently
   (`true`). Set to `true` only if your CLI logic is safe to run concurrently.
 
+- **`share_runtime`** (default: `false`): When `reinvocation_safe` is true,
+  controls how async tool execution runs. See [Async tools and share_runtime](#async-tools-and-share_runtime) below.
+
 ### Attribute-based config (recommended)
 
 Use `#[derive(ClapMcp)]` and `#[clap_mcp(...)]` on your CLI type:
@@ -170,6 +173,40 @@ clap_mcp::parse_or_serve_mcp_with_config::<Cli>(clap_mcp::ClapMcpConfig {
 ```
 
 Tools include `meta.clapMcp` with these hints for clients.
+
+### Async tools and share_runtime
+
+When your CLI has async subcommands (e.g. `tokio::sleep`, `tokio::spawn`), use
+`clap_mcp::run_async_tool` in `#[clap_mcp_output]` and set `share_runtime` in
+`#[clap_mcp(...)]`:
+
+| `share_runtime` | Behavior | When to use |
+|-----------------|----------|-------------|
+| `false` (default) | Dedicated thread with its own tokio runtime per tool call. No nesting. | **Recommended.** Use unless you need deep integration. |
+| `true` | Shares the MCP server's tokio runtime. Requires `reinvocation_safe`; uses multi-thread runtime. | Advanced: share runtime state, spawn long-lived tasks, or integrate with other async code. |
+
+**Non-shared (default):**
+
+```rust
+#[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
+enum Cli {
+    #[clap_mcp_output = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || my_async_fn())"]
+    SleepDemo,
+}
+```
+
+**Shared runtime:**
+
+```rust
+#[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime)]
+enum Cli {
+    #[clap_mcp_output = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || my_async_fn())"]
+    SleepDemo,
+}
+```
+
+`share_runtime` only applies when `reinvocation_safe` is true. When tools run
+in subprocesses (`reinvocation_safe = false`), `share_runtime` is ignored.
 
 ## Security
 
