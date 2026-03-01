@@ -26,10 +26,7 @@ fn test_log_params() {
     let params = log_params(LoggingLevel::Info, Some("test".into()), "hello");
     assert_eq!(params.level, LoggingLevel::Info);
     assert_eq!(params.logger, Some("test".to_string()));
-    assert_eq!(
-        params.data.as_str(),
-        Some("hello")
-    );
+    assert_eq!(params.data.as_str(), Some("hello"));
 }
 
 #[test]

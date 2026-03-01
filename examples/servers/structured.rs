@@ -39,7 +39,10 @@ fn main() {
                 operands: vec![a, b],
             };
             println!("{} + {} = {}", a, b, result.sum);
-            println!("Structured: {}", serde_json::to_string_pretty(&result).unwrap());
+            println!(
+                "Structured: {}",
+                serde_json::to_string_pretty(&result).unwrap()
+            );
         }
     }
 }

@@ -31,7 +31,7 @@ enum Cli {
 
 #[cfg(feature = "tracing")]
 fn main() {
-    use clap_mcp::logging::{log_channel, ClapMcpTracingLayer};
+    use clap_mcp::logging::{ClapMcpTracingLayer, log_channel};
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 

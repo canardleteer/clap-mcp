@@ -16,6 +16,8 @@ fn main() {
     println!("cargo:rustc-env=CLAP_MCP_GIT_COMMIT={}", git_commit);
 
     // Build date/time (UTC)
-    let build_date = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+    let build_date = chrono::Utc::now()
+        .format("%Y-%m-%d %H:%M:%S UTC")
+        .to_string();
     println!("cargo:rustc-env=CLAP_MCP_BUILD_DATE={}", build_date);
 }

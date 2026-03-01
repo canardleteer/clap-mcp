@@ -58,7 +58,7 @@ mod tee_logger {
 
 #[cfg(feature = "log")]
 fn main() {
-    use clap_mcp::logging::{log_channel, ClapMcpLogBridge};
+    use clap_mcp::logging::{ClapMcpLogBridge, log_channel};
     use tee_logger::TeeLogger;
 
     let (log_tx, log_rx) = log_channel(32);

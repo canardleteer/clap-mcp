@@ -11,15 +11,15 @@
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use rust_mcp_sdk::{
-    error::SdkResult,
-    mcp_client::{client_runtime, ClientHandler, McpClientOptions},
-    schema::{
-        CancelledNotificationParams, CallToolRequestParams, ClientCapabilities, Implementation,
-        InitializeRequestParams, ListPromptsResult, ListResourcesResult,
-        LoggingMessageNotificationParams, NotificationParams, ProgressNotificationParams,
-        ResourceUpdatedNotificationParams, RpcError, LATEST_PROTOCOL_VERSION,
-    },
     McpClient, StdioTransport, ToMcpClientHandler, TransportOptions,
+    error::SdkResult,
+    mcp_client::{ClientHandler, McpClientOptions, client_runtime},
+    schema::{
+        CallToolRequestParams, CancelledNotificationParams, ClientCapabilities, Implementation,
+        InitializeRequestParams, LATEST_PROTOCOL_VERSION, ListPromptsResult, ListResourcesResult,
+        LoggingMessageNotificationParams, NotificationParams, ProgressNotificationParams,
+        ResourceUpdatedNotificationParams, RpcError,
+    },
 };
 
 #[derive(Clone)]
@@ -112,7 +112,10 @@ impl ClientHandler for ExampleClientHandler {
 }
 
 #[derive(Parser)]
-#[command(name = "client", about = "MCP client that tests clap-mcp example servers")]
+#[command(
+    name = "client",
+    about = "MCP client that tests clap-mcp example servers"
+)]
 struct Args {
     /// Print incoming notification JSON to stderr as it arrives
     #[arg(long, short)]
@@ -270,7 +273,10 @@ async fn run_derive_tests(client: &impl McpClient) -> SdkResult<()> {
         }
     }
     if let Some(ref structured) = sub_result.structured_content {
-        println!("  structured_content: {}", serde_json::to_string_pretty(structured).unwrap());
+        println!(
+            "  structured_content: {}",
+            serde_json::to_string_pretty(structured).unwrap()
+        );
     }
 
     Ok(())
@@ -292,7 +298,10 @@ async fn run_async_sleep_tests(client: &impl McpClient) -> SdkResult<()> {
         }
     }
     if let Some(ref structured) = result.structured_content {
-        println!("  structured_content: {}", serde_json::to_string_pretty(structured).unwrap());
+        println!(
+            "  structured_content: {}",
+            serde_json::to_string_pretty(structured).unwrap()
+        );
     }
     Ok(())
 }
@@ -316,7 +325,10 @@ async fn run_structured_tests(client: &impl McpClient) -> SdkResult<()> {
         }
     }
     if let Some(ref structured) = result.structured_content {
-        println!("  structured_content: {}", serde_json::to_string_pretty(structured).unwrap());
+        println!(
+            "  structured_content: {}",
+            serde_json::to_string_pretty(structured).unwrap()
+        );
     }
     Ok(())
 }

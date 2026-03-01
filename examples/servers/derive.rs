@@ -58,10 +58,10 @@ fn main() {
         Cli::Greet { name } => {
             let who = name.as_deref().unwrap_or("world");
             println!("Hello, {who}!");
-        },
+        }
         Cli::Add { a, b } => {
             println!("{a} + {b} = {}", a + b);
-        },
+        }
         Cli::Sub { a, b } => {
             println!("{a} - {b} = {}", a - b);
         }

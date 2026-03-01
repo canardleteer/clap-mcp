@@ -5,7 +5,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Expr, Lit, Meta, MetaNameValue};
+use syn::{DeriveInput, Expr, Lit, Meta, MetaNameValue, parse_macro_input};
 
 /// Parses `#[clap_mcp(...)]` attributes to extract parallel_safe, reinvocation_safe, and share_runtime.
 fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> (Option<bool>, Option<bool>, Option<bool>) {
