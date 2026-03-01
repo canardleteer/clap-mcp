@@ -37,3 +37,4 @@ log = { version = "0.4", optional = true }
 
 [dev-dependencies]
 clap-mcp-macros = { path = "macros" }
+schemars = "0.8"

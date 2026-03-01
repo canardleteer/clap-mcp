@@ -16,6 +16,7 @@ use clap_mcp::ClapMcpConfigProvider;
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run"]
 #[command(
     name = "tracing-bridge-example",
     about = "CLI with MCP logging (tracing)",
@@ -23,11 +24,16 @@ use clap_mcp::ClapMcpConfigProvider;
 )]
 enum Cli {
     /// Echo with tracing.
-    #[clap_mcp_output = "format!(\"Echo: {}\", s)"]
     Echo {
         /// The string to echo.
         s: String,
     },
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Echo { s } => format!("Echo: {s}"),
+    }
 }
 
 #[cfg(feature = "tracing")]

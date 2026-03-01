@@ -136,6 +136,90 @@ impl From<&str> for ClapMcpToolError {
     }
 }
 
+/// Converts the return value of a `run` function (used with `#[clap_mcp_output_from]`) into
+/// MCP tool output or error.
+///
+/// Implemented for:
+/// - `String` / `&str` → text output
+/// - [`AsStructured`]`<T>` where `T: Serialize` → structured JSON output
+/// - `Option<O>` → `None` → empty text; `Some(o)` → `o.into_tool_result()`
+/// - `Result<O, E>` → `Ok(o)` → output; `Err(e)` → `ClapMcpToolError`
+pub trait IntoClapMcpResult {
+    fn into_tool_result(self) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError>;
+}
+
+impl IntoClapMcpResult for String {
+    fn into_tool_result(self) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError> {
+        Ok(ClapMcpToolOutput::Text(self))
+    }
+}
+
+impl IntoClapMcpResult for &str {
+    fn into_tool_result(self) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError> {
+        Ok(ClapMcpToolOutput::Text(self.to_string()))
+    }
+}
+
+/// Wrapper for structured (JSON) output when using `#[clap_mcp_output_from]`.
+/// Use when your `run` function returns a type that implements `Serialize` but is not `String`/`&str`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// fn run(cmd: Cli) -> Result<clap_mcp::AsStructured<SubcommandResult>, Error> {
+///     match cmd { ... }
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct AsStructured<T>(pub T);
+
+impl<T: Serialize> IntoClapMcpResult for AsStructured<T> {
+    fn into_tool_result(self) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError> {
+        serde_json::to_value(&self.0)
+            .map(ClapMcpToolOutput::Structured)
+            .map_err(|e| ClapMcpToolError::text(e.to_string()))
+    }
+}
+
+impl<O: IntoClapMcpResult> IntoClapMcpResult for Option<O> {
+    fn into_tool_result(self) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError> {
+        match self {
+            None => Ok(ClapMcpToolOutput::Text(String::new())),
+            Some(o) => o.into_tool_result(),
+        }
+    }
+}
+
+/// Converts an error type from a `run` function into [`ClapMcpToolError`].
+/// Used when `run` returns `Result<O, E>` and the `Err` branch is taken.
+///
+/// Implement this for your error type when you need custom formatting or structured errors.
+/// For plain string errors, you can use `String` or `&str`, which have built-in impls.
+pub trait IntoClapMcpToolError {
+    fn into_tool_error(self) -> ClapMcpToolError;
+}
+
+impl IntoClapMcpToolError for String {
+    fn into_tool_error(self) -> ClapMcpToolError {
+        ClapMcpToolError::text(self)
+    }
+}
+
+impl IntoClapMcpToolError for &str {
+    fn into_tool_error(self) -> ClapMcpToolError {
+        ClapMcpToolError::text(self.to_string())
+    }
+}
+
+impl<O: IntoClapMcpResult, E: IntoClapMcpToolError> IntoClapMcpResult for Result<O, E> {
+    fn into_tool_result(self) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError> {
+        match self {
+            Ok(o) => o.into_tool_result(),
+            Err(e) => Err(e.into_tool_error()),
+        }
+    }
+}
+
 /// Helper for unwrapping `Option` in `#[clap_mcp_output]` expressions.
 ///
 /// Use in format strings to avoid `as_deref().unwrap_or("default")` boilerplate.
@@ -297,8 +381,12 @@ impl ClapMcpToolOutput {
 /// Produces MCP tool output (text or structured) for a parsed CLI value.
 ///
 /// Implemented by the `#[derive(ClapMcp)]` macro. Used for in-process execution.
-/// Use `#[clap_mcp_output = "expr"]` for text output, or `#[clap_mcp_output_json = "expr"]`
-/// for structured JSON output.
+///
+/// When using **`#[clap_mcp_output_from = "run"]`** on the enum, the macro implements this trait
+/// by calling `run(self)` and converting the result via [`IntoClapMcpResult`].
+///
+/// When not using `output_from`, use `#[clap_mcp_output = "expr"]` for text output, or
+/// `#[clap_mcp_output_json = "expr"]` for structured JSON output.
 ///
 /// When using `#[clap_mcp_output_result]` with `Result<T, E>` expressions, `Err(e)` yields
 /// [`ClapMcpToolError`] and the MCP client receives an error response (`is_error: true`).
@@ -451,6 +539,42 @@ pub struct ClapMcpSchemaMetadata {
     pub skip_args: std::collections::HashMap<String, Vec<String>>,
     /// Per-command arg ids to treat as required in MCP (command_name -> arg_ids).
     pub requires_args: std::collections::HashMap<String, Vec<String>>,
+    /// Optional JSON schema for tool output. When set (e.g. via `#[clap_mcp_output_type]` or
+    /// `#[clap_mcp_output_one_of]` with the `output-schema` feature), this schema is attached
+    /// to each tool's `output_schema` field.
+    pub output_schema: Option<serde_json::Value>,
+}
+
+/// Builds a JSON schema for a single type. Used by the derive macro when `#[clap_mcp_output_type = "T"]` is set.
+/// When the `output-schema` feature is enabled and `T: schemars::JsonSchema`, returns the schema; otherwise returns `None`.
+#[cfg(feature = "output-schema")]
+pub fn output_schema_for_type<T: schemars::JsonSchema>() -> Option<serde_json::Value> {
+    serde_json::to_value(&schemars::schema_for!(T)).ok()
+}
+
+#[cfg(not(feature = "output-schema"))]
+pub fn output_schema_for_type<T>() -> Option<serde_json::Value> {
+    let _ = std::marker::PhantomData::<T>;
+    None
+}
+
+/// Builds a JSON schema with `oneOf` for the given types. Used by the derive macro when
+/// `#[clap_mcp_output_one_of = "T1, T2, T3"]` is set. Requires the `output-schema` feature
+/// and each type must implement `schemars::JsonSchema`.
+#[macro_export]
+macro_rules! output_schema_one_of {
+    ($($T:ty),+ $(,)?) => {{
+        #[cfg(feature = "output-schema")]
+        {
+            let mut one_of = vec![];
+            $( one_of.push(serde_json::to_value(&schemars::schema_for!($T)).unwrap()); )+
+            Some(serde_json::json!({ "oneOf": one_of }))
+        }
+        #[cfg(not(feature = "output-schema"))]
+        {
+            None::<serde_json::Value>
+        }
+    }};
 }
 
 /// Serializable schema extracted from a clap `Command`.
@@ -536,15 +660,29 @@ pub fn tools_from_schema(schema: &ClapSchema) -> Vec<Tool> {
 /// let tools = tools_from_schema_with_config(&schema, &config);
 /// ```
 pub fn tools_from_schema_with_config(schema: &ClapSchema, config: &ClapMcpConfig) -> Vec<Tool> {
+    tools_from_schema_with_config_and_metadata(schema, config, &ClapMcpSchemaMetadata::default())
+}
+
+/// Builds MCP tools from a clap schema with config and optional metadata.
+/// When `metadata.output_schema` is set, each tool's `output_schema` field is set to that value.
+pub fn tools_from_schema_with_config_and_metadata(
+    schema: &ClapSchema,
+    config: &ClapMcpConfig,
+    metadata: &ClapMcpSchemaMetadata,
+) -> Vec<Tool> {
     schema
         .root
         .all_commands()
         .into_iter()
-        .map(|cmd| command_to_tool_with_config(cmd, config))
+        .map(|cmd| command_to_tool_with_config(cmd, config, metadata.output_schema.as_ref()))
         .collect()
 }
 
-fn command_to_tool_with_config(cmd: &ClapCommand, config: &ClapMcpConfig) -> Tool {
+fn command_to_tool_with_config(
+    cmd: &ClapCommand,
+    config: &ClapMcpConfig,
+    output_schema: Option<&serde_json::Value>,
+) -> Tool {
     let args: Vec<&ClapArg> = cmd
         .args
         .iter()
@@ -607,7 +745,9 @@ fn command_to_tool_with_config(cmd: &ClapCommand, config: &ClapMcpConfig) -> Too
         execution: None,
         icons: vec![],
         meta,
-        output_schema: None,
+        output_schema: output_schema
+            .cloned()
+            .and_then(|v| serde_json::from_value::<rust_mcp_sdk::schema::ToolOutputSchema>(v).ok()),
     }
 }
 
@@ -801,6 +941,7 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
             config,
             None,
             ClapMcpServeOptions::default(),
+            &ClapMcpSchemaMetadata::default(),
         )
         .expect("MCP server must start");
         std::process::exit(0);
@@ -974,6 +1115,7 @@ where
             config,
             in_process_handler,
             serve_options,
+            &metadata,
         )
         .expect("MCP server must start");
 
@@ -1146,16 +1288,22 @@ fn value_to_string(v: &serde_json::Value) -> Option<String> {
 ///
 /// Use `serve_options.log_rx` to forward log messages to the MCP client.
 ///
+/// Use `metadata` to attach an optional output schema to each tool (e.g. from
+/// `#[clap_mcp_output_type]` or `#[clap_mcp_output_one_of]` with the `output-schema`
+/// feature). Pass [`ClapMcpSchemaMetadata::default()`] when you have none.
+///
 /// # Example
 ///
 /// ```rust,ignore
 /// let schema_json = serde_json::to_string(&schema)?;
+/// let metadata = clap_mcp::ClapMcpSchemaMetadata::default();
 /// clap_mcp::serve_schema_json_over_stdio(
 ///     schema_json,
 ///     Some(std::env::current_exe()?),
 ///     clap_mcp::ClapMcpConfig::default(),
 ///     None,
 ///     clap_mcp::ClapMcpServeOptions::default(),
+///     &metadata,
 /// ).await?;
 /// ```
 pub async fn serve_schema_json_over_stdio(
@@ -1164,9 +1312,10 @@ pub async fn serve_schema_json_over_stdio(
     config: ClapMcpConfig,
     in_process_handler: Option<InProcessToolHandler>,
     serve_options: ClapMcpServeOptions,
+    metadata: &ClapMcpSchemaMetadata,
 ) -> std::result::Result<(), ClapMcpError> {
     let schema: ClapSchema = serde_json::from_str(&schema_json)?;
-    let tools = tools_from_schema_with_config(&schema, &config);
+    let tools = tools_from_schema_with_config_and_metadata(&schema, &config, metadata);
     let root_name = schema.root.name.clone();
 
     let tool_execution_lock: Option<Arc<tokio::sync::Mutex<()>>> = if config.parallel_safe {
@@ -1563,6 +1712,7 @@ pub fn serve_schema_json_over_stdio_blocking(
     config: ClapMcpConfig,
     in_process_handler: Option<InProcessToolHandler>,
     serve_options: ClapMcpServeOptions,
+    metadata: &ClapMcpSchemaMetadata,
 ) -> std::result::Result<(), ClapMcpError> {
     let use_multi_thread = config.reinvocation_safe && config.share_runtime;
     let rt = if use_multi_thread {
@@ -1582,6 +1732,7 @@ pub fn serve_schema_json_over_stdio_blocking(
         config,
         in_process_handler,
         serve_options,
+        metadata,
     ))
 }
 

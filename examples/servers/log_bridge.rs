@@ -17,6 +17,7 @@ use clap_mcp::ClapMcpConfigProvider;
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run"]
 #[command(
     name = "log-bridge-example",
     about = "CLI with MCP logging (log crate)",
@@ -24,11 +25,16 @@ use clap_mcp::ClapMcpConfigProvider;
 )]
 enum Cli {
     /// Echo a string, logging via the `log` crate.
-    #[clap_mcp_output = "format!(\"Echo: {}\", s)"]
     Echo {
         /// The string to echo.
         s: String,
     },
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Echo { s } => format!("Echo: {s}"),
+    }
 }
 
 #[cfg(feature = "log")]
