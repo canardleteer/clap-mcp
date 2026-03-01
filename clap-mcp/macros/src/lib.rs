@@ -119,6 +119,146 @@ fn field_has_command_subcommand(attrs: &[syn::Attribute]) -> bool {
     false
 }
 
+/// Parses #[clap_mcp(skip)] from attributes.
+fn has_clap_mcp_skip(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let mut has_skip = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("skip") {
+                has_skip = true;
+            }
+            Ok(())
+        });
+        if has_skip {
+            return true;
+        }
+    }
+    false
+}
+
+/// Parses variant-level #[clap_mcp(requires = "arg1,arg2")] - comma-separated list.
+fn get_clap_mcp_requires_variant(attrs: &[syn::Attribute]) -> Option<Vec<String>> {
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let mut result = None;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("requires") && meta.input.peek(syn::token::Eq) {
+                let value: Expr = meta.value()?.parse()?;
+                if let Expr::Lit(lit) = value
+                    && let Lit::Str(s) = &lit.lit
+                {
+                    result = Some(
+                        s.value()
+                            .split(',')
+                            .map(|p| p.trim().to_string())
+                            .filter(|p| !p.is_empty())
+                            .collect(),
+                    );
+                }
+            }
+            Ok(())
+        });
+        if result.is_some() {
+            return result;
+        }
+    }
+    None
+}
+
+/// Parses #[clap_mcp(requires)] or #[clap_mcp(requires = "arg_name")] from field attributes.
+/// Returns Some(arg_name) when present; empty string means use the field's own ident.
+fn get_clap_mcp_requires(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let mut result = None;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("requires") {
+                if meta.input.peek(syn::token::Eq) {
+                    let value: Expr = meta.value()?.parse()?;
+                    if let Expr::Lit(lit) = value
+                        && let Lit::Str(s) = &lit.lit
+                    {
+                        result = Some(s.value());
+                    }
+                } else {
+                    result = Some(String::new()); // use field ident
+                }
+            }
+            Ok(())
+        });
+        if result.is_some() {
+            return result;
+        }
+    }
+    None
+}
+
+/// Gets command name from #[command(name = "x")] or converts ident to kebab-case.
+fn get_command_name(attrs: &[syn::Attribute], ident: &syn::Ident) -> String {
+    for attr in attrs {
+        if !attr.path().is_ident("command") {
+            continue;
+        }
+        let mut name = None;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("name") {
+                let value: Expr = meta.value()?.parse()?;
+                if let Expr::Lit(lit) = value
+                    && let Lit::Str(s) = &lit.lit
+                {
+                    name = Some(s.value());
+                }
+            }
+            Ok(())
+        });
+        if let Some(n) = name {
+            return n;
+        }
+    }
+    ident_to_kebab(ident)
+}
+
+fn inner_type_if_option(ty: &Type) -> Option<&Type> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let last = type_path.path.segments.last()?;
+    if last.ident != "Option" {
+        return None;
+    }
+    let PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    args.args.first().and_then(|a| {
+        if let GenericArgument::Type(t) = a {
+            Some(t)
+        } else {
+            None
+        }
+    })
+}
+
+fn ident_to_kebab(ident: &syn::Ident) -> String {
+    let s = ident.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            out.push('-');
+        }
+        for c in c.to_lowercase() {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Returns true if the type is `Option<T>`.
 fn is_option_type(ty: &Type) -> bool {
     let Type::Path(type_path) = ty else {
@@ -171,6 +311,21 @@ fn is_option_type(ty: &Type) -> bool {
 ///
 /// When present, output is structured JSON. The expression must produce a `Serialize` type.
 ///
+/// ## `#[clap_mcp(skip)]` (on variant or field)
+///
+/// Exclude the subcommand or argument from MCP exposure.
+///
+/// ## `#[clap_mcp(requires)]` / `#[clap_mcp(requires = "arg_name")]` (on field)
+///
+/// Make the argument required in the MCP tool schema even if optional in clap.
+/// Use `requires` for the field's own id, or `requires = "name"` to specify.
+///
+/// ## `#[clap_mcp(requires = "arg1,arg2")]` (on variant)
+///
+/// Variant-level alternative: comma-separated list of optional args to make required.
+/// Prefer this when declaring multiple required args. When the client omits a required
+/// arg, a clear error is returned.
+///
 /// # Example
 ///
 /// ```rust,ignore
@@ -188,7 +343,7 @@ fn is_option_type(ty: &Type) -> bool {
 /// ```
 #[proc_macro_derive(
     ClapMcp,
-    attributes(clap_mcp, clap_mcp_output, clap_mcp_output_type, command)
+    attributes(clap_mcp, clap_mcp_output, clap_mcp_output_type, command, arg)
 )]
 pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -317,12 +472,187 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
         },
     };
 
+    let schema_metadata_impl = build_schema_metadata_impl(&input);
+
     let expanded = quote! {
         #config_provider
         #executor_impl
+        #schema_metadata_impl
     };
 
     TokenStream::from(expanded)
+}
+
+/// Builds the ClapMcpSchemaMetadataProvider impl from #[clap_mcp(skip)] and #[clap_mcp(requires)].
+fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
+    let name = &input.ident;
+    let mut skip_commands = Vec::<String>::new();
+    let mut skip_args: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut requires_args: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+
+    match &input.data {
+        syn::Data::Enum(data) => {
+            for v in &data.variants {
+                let cmd_name = get_command_name(&v.attrs, &v.ident);
+                if has_clap_mcp_skip(&v.attrs) {
+                    skip_commands.push(cmd_name.clone());
+                }
+                if let Some(variant_reqs) = get_clap_mcp_requires_variant(&v.attrs) {
+                    requires_args
+                        .entry(cmd_name.clone())
+                        .or_default()
+                        .extend(variant_reqs);
+                }
+                for (i, f) in v.fields.iter().enumerate() {
+                    let arg_id = f
+                        .ident
+                        .as_ref()
+                        .map(|i| i.to_string())
+                        .unwrap_or_else(|| format!("__f{i}"));
+                    if has_clap_mcp_skip(&f.attrs) {
+                        skip_args
+                            .entry(cmd_name.clone())
+                            .or_default()
+                            .push(arg_id.clone());
+                    }
+                    if let Some(req) = get_clap_mcp_requires(&f.attrs) {
+                        let req_id = if req.is_empty() { arg_id } else { req };
+                        requires_args
+                            .entry(cmd_name.clone())
+                            .or_default()
+                            .push(req_id);
+                    }
+                }
+            }
+        }
+        syn::Data::Struct(data) => {
+            let root_name = get_command_name(&input.attrs, name);
+            let subcommand_field = data
+                .fields
+                .iter()
+                .find(|f| field_has_command_subcommand(&f.attrs));
+            for f in &data.fields {
+                if subcommand_field.is_some_and(|sf| std::ptr::eq(sf, f)) {
+                    continue;
+                }
+                let Some(ref field_ident) = f.ident else {
+                    continue;
+                };
+                let arg_id = field_ident.to_string();
+                if has_clap_mcp_skip(&f.attrs) {
+                    skip_args
+                        .entry(root_name.clone())
+                        .or_default()
+                        .push(arg_id.clone());
+                }
+                if let Some(req) = get_clap_mcp_requires(&f.attrs) {
+                    let req_id = if req.is_empty() { arg_id } else { req };
+                    requires_args
+                        .entry(root_name.clone())
+                        .or_default()
+                        .push(req_id);
+                }
+            }
+            if let Some(sub_field) = subcommand_field {
+                let sub_ty = inner_type_if_option(&sub_field.ty).unwrap_or(&sub_field.ty);
+                if let syn::Type::Path(tp) = sub_ty {
+                    let sub_path = &tp.path;
+                    let merge = !skip_commands.is_empty()
+                        || !skip_args.is_empty()
+                        || !requires_args.is_empty();
+                    if merge {
+                        let skip_commands_lit = skip_commands.iter().map(|s| {
+                            let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+                            quote! { #lit.to_string() }
+                        });
+                        let skip_args_entries = skip_args.iter().map(|(k, v)| {
+                            let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+                            let vs = v
+                                .iter()
+                                .map(|s| {
+                                    let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+                                    quote! { #lit.to_string() }
+                                });
+                            quote! {
+                                m.skip_args.entry(#k_lit.to_string()).or_default().extend([#(#vs),*]);
+                            }
+                        });
+                        let requires_args_entries = requires_args.iter().map(|(k, v)| {
+                            let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+                            let vs = v
+                                .iter()
+                                .map(|s| {
+                                    let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+                                    quote! { #lit.to_string() }
+                                });
+                            quote! {
+                                m.requires_args.entry(#k_lit.to_string()).or_default().extend([#(#vs),*]);
+                            }
+                        });
+                        return quote! {
+                            impl clap_mcp::ClapMcpSchemaMetadataProvider for #name {
+                                fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
+                                    let mut m = <#sub_path as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata();
+                                    m.skip_commands.extend([#(#skip_commands_lit),*]);
+                                    #(#skip_args_entries)*
+                                    #(#requires_args_entries)*
+                                    m
+                                }
+                            }
+                        };
+                    } else {
+                        return quote! {
+                            impl clap_mcp::ClapMcpSchemaMetadataProvider for #name {
+                                fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
+                                    <#sub_path as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata()
+                                }
+                            }
+                        };
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let skip_commands_lit = skip_commands.iter().map(|s| {
+        let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+        quote! { #lit.to_string() }
+    });
+    let skip_args_entries = skip_args.iter().map(|(k, v)| {
+        let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+        let vs = v.iter().map(|s| {
+            let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+            quote! { #lit.to_string() }
+        });
+        quote! {
+            m.skip_args.insert(#k_lit.to_string(), vec![#(#vs),*]);
+        }
+    });
+    let requires_args_entries = requires_args.iter().map(|(k, v)| {
+        let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+        let vs = v.iter().map(|s| {
+            let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+            quote! { #lit.to_string() }
+        });
+        quote! {
+            m.requires_args.insert(#k_lit.to_string(), vec![#(#vs),*]);
+        }
+    });
+
+    quote! {
+        impl clap_mcp::ClapMcpSchemaMetadataProvider for #name {
+            fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
+                let mut m = clap_mcp::ClapMcpSchemaMetadata::default();
+                m.skip_commands.extend([#(#skip_commands_lit),*]);
+                #(#skip_args_entries)*
+                #(#requires_args_entries)*
+                m
+            }
+        }
+    }
 }
 
 /// Builds the output expression for a variant: either Text(expr) or Structured(serde_json::to_value(expr).unwrap()).

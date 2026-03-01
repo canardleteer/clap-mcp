@@ -131,6 +131,8 @@ enum Cli {
     Subcommands,
     /// Test the struct_subcommand example (struct root with optional subcommand)
     StructSubcommand,
+    /// Test the optional_commands_and_args example (skip, requires)
+    OptionalCommandsAndArgs,
     /// Test the structured output example
     Structured,
     /// Test the tracing_bridge example (requires --features tracing)
@@ -215,6 +217,8 @@ async fn run_client(example: &str, json: bool) -> SdkResult<()> {
 
     if example == "subcommands" || example == "struct_subcommand" {
         run_subcommands_tests(client.as_ref()).await?;
+    } else if example == "optional_commands_and_args" {
+        run_optional_commands_tests(client.as_ref()).await?;
     } else if example == "structured" {
         run_structured_tests(client.as_ref()).await?;
     } else if example == "async_sleep" || example == "async_sleep_shared" {
@@ -286,6 +290,79 @@ async fn run_subcommands_tests(client: &impl McpClient) -> SdkResult<()> {
             serde_json::to_string_pretty(structured).unwrap()
         );
     }
+
+    Ok(())
+}
+
+async fn run_optional_commands_tests(client: &impl McpClient) -> SdkResult<()> {
+    let result = client
+        .request_tool_call(CallToolRequestParams {
+            name: "public".into(),
+            arguments: None,
+            meta: None,
+            task: None,
+        })
+        .await?;
+    println!("\nCall 'public':");
+    for block in &result.content {
+        if let Ok(t) = block.as_text_content() {
+            println!("  {}", t.text);
+        }
+    }
+
+    let mut read_args = serde_json::Map::new();
+    read_args.insert("path".into(), serde_json::json!("/tmp/example"));
+    let result = client
+        .request_tool_call(CallToolRequestParams {
+            name: "read".into(),
+            arguments: Some(read_args),
+            meta: None,
+            task: None,
+        })
+        .await?;
+    println!("\nCall 'read' with path=\"/tmp/example\":");
+    for block in &result.content {
+        if let Ok(t) = block.as_text_content() {
+            println!("  {}", t.text);
+        }
+    }
+
+    let mut process_args = serde_json::Map::new();
+    process_args.insert("path".into(), serde_json::json!("/data"));
+    process_args.insert("input".into(), serde_json::json!("hello"));
+    let result = client
+        .request_tool_call(CallToolRequestParams {
+            name: "process".into(),
+            arguments: Some(process_args),
+            meta: None,
+            task: None,
+        })
+        .await?;
+    println!("\nCall 'process' with path and input:");
+    for block in &result.content {
+        if let Ok(t) = block.as_text_content() {
+            println!("  {}", t.text);
+        }
+    }
+
+    let result = client
+        .request_tool_call(CallToolRequestParams {
+            name: "read".into(),
+            arguments: Some(serde_json::Map::new()),
+            meta: None,
+            task: None,
+        })
+        .await?;
+    println!("\nCall 'read' without path (expect error):");
+    for block in &result.content {
+        if let Ok(t) = block.as_text_content() {
+            println!("  {}", t.text);
+        }
+    }
+    assert!(
+        result.is_error == Some(true),
+        "read without required path should return error"
+    );
 
     Ok(())
 }
@@ -373,6 +450,7 @@ async fn main() -> SdkResult<()> {
     let example = match args.command {
         Cli::Subcommands => "subcommands",
         Cli::StructSubcommand => "struct_subcommand",
+        Cli::OptionalCommandsAndArgs => "optional_commands_and_args",
         Cli::Structured => "structured",
         #[cfg(feature = "tracing")]
         Cli::TracingBridge => "tracing_bridge",
