@@ -2,9 +2,9 @@
 
 use clap::{CommandFactory, Parser};
 use clap_mcp::{
-    run_async_tool, schema_from_command, tools_from_schema_with_config, ClapMcpConfig,
-    ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpToolExecutor, ClapMcpToolOutput,
-    LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, PROMPT_LOGGING_GUIDE,
+    ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpToolExecutor, ClapMcpToolOutput,
+    LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, PROMPT_LOGGING_GUIDE, run_async_tool,
+    schema_from_command, tools_from_schema_with_config,
 };
 use serde::Serialize;
 
@@ -63,9 +63,18 @@ enum TestCliShareRuntime {
 #[test]
 fn test_config_default() {
     let config = ClapMcpConfig::default();
-    assert!(!config.reinvocation_safe, "reinvocation_safe should default to false");
-    assert!(!config.parallel_safe, "parallel_safe should default to false");
-    assert!(!config.share_runtime, "share_runtime should default to false");
+    assert!(
+        !config.reinvocation_safe,
+        "reinvocation_safe should default to false"
+    );
+    assert!(
+        !config.parallel_safe,
+        "parallel_safe should default to false"
+    );
+    assert!(
+        !config.share_runtime,
+        "share_runtime should default to false"
+    );
 }
 
 #[test]
@@ -108,7 +117,10 @@ fn test_clap_mcp_config_provider_share_runtime_defaults_when_omitted() {
     // TestCliReinvokeOnly has reinvocation_safe but no share_runtime attribute
     let config = TestCliReinvokeOnly::clap_mcp_config();
     assert!(config.reinvocation_safe);
-    assert!(!config.share_runtime, "share_runtime should default to false when omitted");
+    assert!(
+        !config.share_runtime,
+        "share_runtime should default to false when omitted"
+    );
 }
 
 #[test]
@@ -127,8 +139,14 @@ fn test_tools_from_schema_with_config_meta() {
         let meta = tool.meta.as_ref().expect("tool should have meta");
         let clap_mcp = meta.get("clapMcp").expect("meta should have clapMcp");
         let obj = clap_mcp.as_object().expect("clapMcp should be object");
-        assert_eq!(obj.get("reinvocationSafe").and_then(|v| v.as_bool()), Some(false));
-        assert_eq!(obj.get("parallelSafe").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            obj.get("reinvocationSafe").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            obj.get("parallelSafe").and_then(|v| v.as_bool()),
+            Some(false)
+        );
     }
 
     let config_true_true = ClapMcpConfig {
@@ -141,9 +159,18 @@ fn test_tools_from_schema_with_config_meta() {
         let meta = tool.meta.as_ref().expect("tool should have meta");
         let clap_mcp = meta.get("clapMcp").expect("meta should have clapMcp");
         let obj = clap_mcp.as_object().expect("clapMcp should be object");
-        assert_eq!(obj.get("reinvocationSafe").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(obj.get("parallelSafe").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(obj.get("shareRuntime").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            obj.get("reinvocationSafe").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            obj.get("parallelSafe").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            obj.get("shareRuntime").and_then(|v| v.as_bool()),
+            Some(false)
+        );
     }
 
     let config_share_runtime = ClapMcpConfig {
@@ -156,7 +183,10 @@ fn test_tools_from_schema_with_config_meta() {
         let meta = tool.meta.as_ref().expect("tool should have meta");
         let clap_mcp = meta.get("clapMcp").expect("meta should have clapMcp");
         let obj = clap_mcp.as_object().expect("clapMcp should be object");
-        assert_eq!(obj.get("shareRuntime").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            obj.get("shareRuntime").and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 }
 
@@ -252,9 +282,7 @@ fn test_run_async_tool_dedicated_thread_share_runtime_true_but_reinvoke_false() 
 #[test]
 fn test_run_async_tool_returns_complex_type() {
     let config = ClapMcpConfig::default();
-    let result = run_async_tool(&config, || async {
-        vec![1u8, 2, 3]
-    });
+    let result = run_async_tool(&config, || async { vec![1u8, 2, 3] });
     assert_eq!(result, vec![1, 2, 3]);
 }
 

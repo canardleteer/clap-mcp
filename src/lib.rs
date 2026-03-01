@@ -27,26 +27,20 @@
 use async_trait::async_trait;
 use clap::{Arg, ArgAction, Command};
 use rust_mcp_sdk::{
-    mcp_server::{server_runtime, McpServerOptions, ServerHandler, ToMcpServerHandler},
+    McpServer, StdioTransport, TransportOptions,
+    mcp_server::{McpServerOptions, ServerHandler, ToMcpServerHandler, server_runtime},
     schema::{
-        schema_utils, CallToolError, CallToolRequestParams, CallToolResult, ContentBlock,
-        GetPromptRequestParams, GetPromptResult, Implementation, InitializeResult,
+        CallToolError, CallToolRequestParams, CallToolResult, ContentBlock, GetPromptRequestParams,
+        GetPromptResult, Implementation, InitializeResult, LATEST_PROTOCOL_VERSION,
         ListPromptsResult, ListResourcesResult, ListToolsResult, LoggingLevel,
         LoggingMessageNotificationParams, PaginatedRequestParams, Prompt, PromptMessage,
-        ReadResourceContent, ReadResourceRequestParams, ReadResourceResult,
-        Resource, Role, RpcError, ServerCapabilities, ServerCapabilitiesPrompts,
-        ServerCapabilitiesResources, ServerCapabilitiesTools, TextResourceContents,
-        Tool, ToolInputSchema, LATEST_PROTOCOL_VERSION,
+        ReadResourceContent, ReadResourceRequestParams, ReadResourceResult, Resource, Role,
+        RpcError, ServerCapabilities, ServerCapabilitiesPrompts, ServerCapabilitiesResources,
+        ServerCapabilitiesTools, TextResourceContents, Tool, ToolInputSchema, schema_utils,
     },
-    McpServer, StdioTransport, TransportOptions,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 /// Derive macro for `ClapMcpConfigProvider` and `ClapMcpToolExecutor`.
 ///
@@ -623,7 +617,11 @@ where
 /// ```
 pub fn parse_or_serve_mcp_attr<T>() -> T
 where
-    T: ClapMcpConfigProvider + ClapMcpToolExecutor + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
+    T: ClapMcpConfigProvider
+        + ClapMcpToolExecutor
+        + clap::Parser
+        + clap::CommandFactory
+        + clap::FromArgMatches,
 {
     parse_or_serve_mcp_with_config::<T>(T::clap_mcp_config())
 }
@@ -666,12 +664,14 @@ where
 
         let in_process_handler = if config.reinvocation_safe {
             let schema = schema.clone();
-            Some(Arc::new(move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
-                let argv = build_argv_for_clap(&schema, cmd, args);
-                let matches = T::command().get_matches_from(&argv);
-                let cli = T::from_arg_matches(&matches).map_err(|e| e.to_string())?;
-                Ok(<T as ClapMcpToolExecutor>::execute_for_mcp(cli))
-            }) as InProcessToolHandler)
+            Some(Arc::new(
+                move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
+                    let argv = build_argv_for_clap(&schema, cmd, args);
+                    let matches = T::command().get_matches_from(&argv);
+                    let cli = T::from_arg_matches(&matches).map_err(|e| e.to_string())?;
+                    Ok(<T as ClapMcpToolExecutor>::execute_for_mcp(cli))
+                },
+            ) as InProcessToolHandler)
         } else {
             None
         };
@@ -688,8 +688,7 @@ where
         std::process::exit(0);
     }
 
-    T::from_arg_matches(&matches)
-        .unwrap_or_else(|e| e.exit())
+    T::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
 }
 
 fn command_to_schema(cmd: &Command) -> ClapCommand {
@@ -702,10 +701,7 @@ fn command_to_schema(cmd: &Command) -> ClapCommand {
     // Stable ordering for consumers
     args.sort_by(|a, b| a.id.cmp(&b.id));
 
-    let subcommands: Vec<ClapCommand> = cmd
-        .get_subcommands()
-        .map(command_to_schema)
-        .collect();
+    let subcommands: Vec<ClapCommand> = cmd.get_subcommands().map(command_to_schema).collect();
 
     ClapCommand {
         name: cmd.get_name().to_string(),
@@ -777,7 +773,8 @@ fn build_tool_argv(
         .filter(|a| !is_builtin_arg(a.id.as_str()))
         .collect();
 
-    let mut positionals: Vec<&ClapArg> = args.iter().filter(|a| a.long.is_none()).copied().collect();
+    let mut positionals: Vec<&ClapArg> =
+        args.iter().filter(|a| a.long.is_none()).copied().collect();
     positionals.sort_by_key(|a| a.index.unwrap_or(0));
     let optionals: Vec<&ClapArg> = args.iter().filter(|a| a.long.is_some()).copied().collect();
 
@@ -859,17 +856,19 @@ pub async fn serve_schema_json_over_stdio(
     let tools = tools_from_schema_with_config(&schema, &config);
     let root_name = schema.root.name.clone();
 
-    let tool_execution_lock: Option<Arc<tokio::sync::Mutex<()>>> =
-        if config.parallel_safe {
-            None
-        } else {
-            Some(Arc::new(tokio::sync::Mutex::new(())))
-        };
+    let tool_execution_lock: Option<Arc<tokio::sync::Mutex<()>>> = if config.parallel_safe {
+        None
+    } else {
+        Some(Arc::new(tokio::sync::Mutex::new(())))
+    };
 
     let logging_enabled = serve_options.log_rx.is_some();
     let (runtime_tx, runtime_rx) = if logging_enabled {
         let (tx, rx) = tokio::sync::oneshot::channel::<Arc<dyn rust_mcp_sdk::McpServer>>();
-        (Some(std::sync::Arc::new(std::sync::Mutex::new(Some(tx)))), Some(rx))
+        (
+            Some(std::sync::Arc::new(std::sync::Mutex::new(Some(tx)))),
+            Some(rx),
+        )
     } else {
         (None, None)
     };
@@ -886,7 +885,11 @@ pub async fn serve_schema_json_over_stdio(
     }
 
     type RuntimeTx = Option<
-        Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Arc<dyn rust_mcp_sdk::McpServer>>>>>,
+        Arc<
+            std::sync::Mutex<
+                Option<tokio::sync::oneshot::Sender<Arc<dyn rust_mcp_sdk::McpServer>>>,
+            >,
+        >,
     >;
 
     struct Handler {
@@ -934,12 +937,14 @@ pub async fn serve_schema_json_over_stdio(
             }
 
             Ok(ReadResourceResult {
-                contents: vec![ReadResourceContent::TextResourceContents(TextResourceContents {
-                    uri: params.uri,
-                    mime_type: Some("application/json".into()),
-                    text: self.schema_json.clone(),
-                    meta: None,
-                })],
+                contents: vec![ReadResourceContent::TextResourceContents(
+                    TextResourceContents {
+                        uri: params.uri,
+                        mime_type: Some("application/json".into()),
+                        text: self.schema_json.clone(),
+                        meta: None,
+                    },
+                )],
                 meta: None,
             })
         }
@@ -964,7 +969,9 @@ pub async fn serve_schema_json_over_stdio(
             Ok(ListPromptsResult {
                 prompts: vec![Prompt {
                     name: PROMPT_LOGGING_GUIDE.to_string(),
-                    description: Some("How to interpret log messages from this clap-mcp server".to_string()),
+                    description: Some(
+                        "How to interpret log messages from this clap-mcp server".to_string(),
+                    ),
                     arguments: vec![],
                     icons: vec![],
                     meta: None,
@@ -985,7 +992,9 @@ pub async fn serve_schema_json_over_stdio(
                     .with_message(format!("unknown prompt: {}", params.name)));
             }
             Ok(GetPromptResult {
-                description: Some("How to interpret log messages from this clap-mcp server".to_string()),
+                description: Some(
+                    "How to interpret log messages from this clap-mcp server".to_string(),
+                ),
                 messages: vec![PromptMessage {
                     content: ContentBlock::text_content(LOGGING_GUIDE_CONTENT.to_string()),
                     role: Role::User,
@@ -1034,18 +1043,14 @@ pub async fn serve_schema_json_over_stdio(
                 match handler(&params.name, args_map) {
                     Ok(output) => {
                         let (content, structured_content) = match &output {
-                            ClapMcpToolOutput::Text(s) => (
-                                vec![ContentBlock::text_content(s.clone())],
-                                None,
-                            ),
+                            ClapMcpToolOutput::Text(s) => {
+                                (vec![ContentBlock::text_content(s.clone())], None)
+                            }
                             ClapMcpToolOutput::Structured(v) => {
-                                let json_text =
-                                    serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string());
+                                let json_text = serde_json::to_string_pretty(v)
+                                    .unwrap_or_else(|_| v.to_string());
                                 let structured = v.as_object().cloned();
-                                (
-                                    vec![ContentBlock::text_content(json_text)],
-                                    structured,
-                                )
+                                (vec![ContentBlock::text_content(json_text)], structured)
                             }
                         };
                         return Ok(CallToolResult {
@@ -1095,7 +1100,10 @@ pub async fn serve_schema_json_over_stdio(
                         if !err.is_empty() {
                             // When changing stderr logging behavior, update LOG_INTERPRETATION_INSTRUCTIONS and LOGGING_GUIDE_CONTENT.
                             let mut meta = serde_json::Map::new();
-                            meta.insert("tool".to_string(), serde_json::Value::String(params.name.clone()));
+                            meta.insert(
+                                "tool".to_string(),
+                                serde_json::Value::String(params.name.clone()),
+                            );
                             let _ = runtime
                                 .notify_log_message(LoggingMessageNotificationParams {
                                     data: serde_json::Value::String(err.trim().to_string()),
@@ -1130,9 +1138,7 @@ pub async fn serve_schema_json_over_stdio(
 
             let name = params.name;
             let args_json = serde_json::Value::Object(args_map);
-            let text = format!(
-                "Would invoke clap command '{name}' with arguments: {args_json:?}"
-            );
+            let text = format!("Would invoke clap command '{name}' with arguments: {args_json:?}");
             Ok(CallToolResult::from_content(vec![
                 ContentBlock::text_content(text),
             ]))
@@ -1313,4 +1319,3 @@ where
         })
     }
 }
-

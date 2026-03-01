@@ -117,8 +117,8 @@ pub fn log_params(
 mod tracing_layer {
     use super::*;
     use tracing::Subscriber;
-    use tracing_subscriber::layer::Context;
     use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::Context;
 
     /// A tracing layer that forwards events to an MCP log channel.
     ///
@@ -159,11 +159,7 @@ mod tracing_layer {
     where
         S: Subscriber,
     {
-        fn on_event(
-            &self,
-            event: &tracing::Event<'_>,
-            _ctx: Context<'_, S>,
-        ) {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
             let mut visitor = LogVisitor::default();
             event.record(&mut visitor);
             let message = visitor.message.unwrap_or_else(|| format!("{:?}", event));
