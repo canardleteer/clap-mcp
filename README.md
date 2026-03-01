@@ -168,6 +168,63 @@ enum Cli {
 let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
 ```
 
+### Schema metadata: skip and requires
+
+Use `#[clap_mcp(skip)]` to exclude subcommands or arguments from MCP exposure.
+Use `#[clap_mcp(requires)]` or `#[clap_mcp(requires = "arg_name")]` to make an optional
+argument required in the MCP tool schema (useful for positional args that may trigger
+stdin behavior when omitted). When the client omits a required arg, a clear error is returned.
+
+**Argument-level** (on each field):
+```rust
+#[derive(Parser, ClapMcp)]
+enum Cli {
+    #[clap_mcp_output = "path.clone()"]
+    Read {
+        #[clap_mcp(requires)]  // MCP schema makes path required
+        #[arg(long)]
+        path: Option<String>,
+    },
+}
+```
+
+**Variant-level** (prefer when declaring multiple required args):
+```rust
+#[derive(Parser, ClapMcp)]
+enum Cli {
+    #[clap_mcp(requires = "path, input")]  // both become required in MCP
+    #[clap_mcp_output = "format!(\"{:?}\", (path, input))"]
+    Process {
+        #[arg(long)] path: Option<String>,
+        #[arg(long)] input: Option<String>,
+    },
+}
+```
+
+**Skip:**
+```rust
+#[derive(Parser, ClapMcp)]
+enum Cli {
+    #[clap_mcp_output = "\"ok\".into()"]
+    Public,
+    #[clap_mcp(skip)]
+    #[clap_mcp_output = "\"hidden\".into()"]
+    Internal,
+}
+```
+
+**Imperative:** Use `schema_from_command_with_metadata` and `get_matches_or_serve_mcp_with_config_and_metadata` with `ClapMcpSchemaMetadata`:
+
+```rust
+let mut metadata = ClapMcpSchemaMetadata::default();
+metadata.skip_commands.push("internal".into());
+metadata.requires_args.insert("read".into(), vec!["path".into()]);
+let schema = schema_from_command_with_metadata(&cmd, &metadata);
+```
+
+When the client omits a required argument, the tool returns a clear error:
+`"Missing required argument(s): path. The MCP tool schema marks these as required."`
+
 ### Runtime config
 
 Use `ClapMcpConfig` with `parse_or_serve_mcp_with_config` or `get_matches_or_serve_mcp_with_config`:

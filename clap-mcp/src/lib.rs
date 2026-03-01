@@ -77,6 +77,15 @@ pub trait ClapMcpConfigProvider {
     fn clap_mcp_config() -> ClapMcpConfig;
 }
 
+/// Provides MCP schema metadata (skip, requires) from `#[clap_mcp(skip)]` and
+/// `#[clap_mcp(requires = "arg_name")]` attributes.
+///
+/// Implemented by the `#[derive(ClapMcp)]` macro. For custom types, implement
+/// with `fn clap_mcp_schema_metadata() -> ClapMcpSchemaMetadata { ClapMcpSchemaMetadata::default() }`.
+pub trait ClapMcpSchemaMetadataProvider {
+    fn clap_mcp_schema_metadata() -> ClapMcpSchemaMetadata;
+}
+
 /// Produces the output string for a parsed CLI value.
 /// Used for in-process MCP tool execution when `reinvocation_safe` is true.
 /// Implemented by the `#[derive(ClapMcp)]` macro via the blanket impl for `ClapMcpToolExecutor`.
@@ -281,6 +290,35 @@ When this server emits log messages (notifications/message), use the `logger` fi
 
 The `level` field uses RFC 5424 syslog severity: debug, info, notice, warning, error, critical, alert, emergency.
 The `data` field contains the message (string or JSON object)."#;
+
+/// Metadata for filtering and adjusting the MCP schema.
+///
+/// Use with [`schema_from_command_with_metadata`] to exclude commands/args from MCP
+/// or to make optional args required in the MCP tool schema.
+///
+/// # Example (imperative)
+///
+/// ```rust
+/// use clap::Command;
+/// use clap_mcp::{schema_from_command_with_metadata, ClapMcpSchemaMetadata};
+///
+/// let mut metadata = ClapMcpSchemaMetadata::default();
+/// metadata.skip_commands.push("internal".into());
+/// metadata.skip_args.insert("mycmd".into(), vec!["verbose".into()]);
+/// metadata.requires_args.insert("mycmd".into(), vec!["path".into()]);
+///
+/// let cmd = Command::new("myapp").subcommand(Command::new("mycmd").arg(clap::Arg::new("path")));
+/// let schema = schema_from_command_with_metadata(&cmd, &metadata);
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct ClapMcpSchemaMetadata {
+    /// Command names to exclude from MCP exposure.
+    pub skip_commands: Vec<String>,
+    /// Per-command arg ids to exclude (command_name -> arg_ids).
+    pub skip_args: std::collections::HashMap<String, Vec<String>>,
+    /// Per-command arg ids to treat as required in MCP (command_name -> arg_ids).
+    pub requires_args: std::collections::HashMap<String, Vec<String>>,
+}
 
 /// Serializable schema extracted from a clap `Command`.
 /// Used to build MCP tools and invoke the CLI.
@@ -509,8 +547,68 @@ pub fn command_with_mcp_flag(mut cmd: Command) -> Command {
 /// assert_eq!(schema.root.name, "mycli");
 /// ```
 pub fn schema_from_command(cmd: &Command) -> ClapSchema {
+    schema_from_command_with_metadata(cmd, &ClapMcpSchemaMetadata::default())
+}
+
+/// Extracts a schema from a `clap::Command` with MCP metadata applied.
+///
+/// Use [`ClapMcpSchemaMetadata`] to skip commands/args or make optional args required in MCP.
+pub fn schema_from_command_with_metadata(
+    cmd: &Command,
+    metadata: &ClapMcpSchemaMetadata,
+) -> ClapSchema {
+    let skip_commands: std::collections::HashSet<_> =
+        metadata.skip_commands.iter().cloned().collect();
     ClapSchema {
-        root: command_to_schema(cmd),
+        root: command_to_schema_with_metadata(cmd, metadata, &skip_commands),
+    }
+}
+
+fn command_to_schema_with_metadata(
+    cmd: &Command,
+    metadata: &ClapMcpSchemaMetadata,
+    skip_commands: &std::collections::HashSet<String>,
+) -> ClapCommand {
+    let mut args: Vec<ClapArg> = cmd
+        .get_arguments()
+        .filter(|a| a.get_long() != Some(MCP_FLAG_LONG))
+        .map(arg_to_schema)
+        .collect();
+
+    let cmd_name = cmd.get_name().to_string();
+    let skip_args: std::collections::HashSet<_> = metadata
+        .skip_args
+        .get(&cmd_name)
+        .map(|v| v.iter().cloned().collect())
+        .unwrap_or_default();
+
+    let requires_args: std::collections::HashSet<_> = metadata
+        .requires_args
+        .get(&cmd_name)
+        .map(|v| v.iter().cloned().collect())
+        .unwrap_or_default();
+
+    args.retain(|a| !skip_args.contains(&a.id));
+    for arg in &mut args {
+        if requires_args.contains(&arg.id) {
+            arg.required = true;
+        }
+    }
+    args.sort_by(|a, b| a.id.cmp(&b.id));
+
+    let subcommands: Vec<ClapCommand> = cmd
+        .get_subcommands()
+        .filter(|s| !skip_commands.contains(&s.get_name().to_string()))
+        .map(|s| command_to_schema_with_metadata(s, metadata, skip_commands))
+        .collect();
+
+    ClapCommand {
+        name: cmd.get_name().to_string(),
+        about: cmd.get_about().map(|s| s.to_string()),
+        long_about: cmd.get_long_about().map(|s| s.to_string()),
+        version: cmd.get_version().map(|s| s.to_string()),
+        args,
+        subcommands,
     }
 }
 
@@ -542,7 +640,22 @@ pub fn get_matches_or_serve_mcp_with_config(
     cmd: Command,
     config: ClapMcpConfig,
 ) -> clap::ArgMatches {
-    let schema = schema_from_command(&cmd);
+    get_matches_or_serve_mcp_with_config_and_metadata(
+        cmd,
+        config,
+        &ClapMcpSchemaMetadata::default(),
+    )
+}
+
+/// Imperative clap entrypoint with execution safety configuration and schema metadata.
+///
+/// Use `metadata` for `#[clap_mcp(skip)]` and `#[clap_mcp(requires = "arg_name")]` behavior.
+pub fn get_matches_or_serve_mcp_with_config_and_metadata(
+    cmd: Command,
+    config: ClapMcpConfig,
+    metadata: &ClapMcpSchemaMetadata,
+) -> clap::ArgMatches {
+    let schema = schema_from_command_with_metadata(&cmd, metadata);
     let cmd = command_with_mcp_flag(cmd);
 
     let matches = cmd.get_matches();
@@ -588,7 +701,11 @@ pub fn get_matches_or_serve_mcp_with_config(
 /// ```
 pub fn parse_or_serve_mcp<T>() -> T
 where
-    T: ClapMcpToolExecutor + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
+    T: ClapMcpSchemaMetadataProvider
+        + ClapMcpToolExecutor
+        + clap::Parser
+        + clap::CommandFactory
+        + clap::FromArgMatches,
 {
     parse_or_serve_mcp_with_config::<T>(ClapMcpConfig::default())
 }
@@ -619,6 +736,7 @@ where
 pub fn parse_or_serve_mcp_attr<T>() -> T
 where
     T: ClapMcpConfigProvider
+        + ClapMcpSchemaMetadataProvider
         + ClapMcpToolExecutor
         + clap::Parser
         + clap::CommandFactory
@@ -634,7 +752,11 @@ where
 /// execution; requires `T: ClapMcpToolExecutor`.
 pub fn parse_or_serve_mcp_with_config<T>(config: ClapMcpConfig) -> T
 where
-    T: ClapMcpToolExecutor + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
+    T: ClapMcpSchemaMetadataProvider
+        + ClapMcpToolExecutor
+        + clap::Parser
+        + clap::CommandFactory
+        + clap::FromArgMatches,
 {
     parse_or_serve_mcp_with_config_and_options::<T>(config, ClapMcpServeOptions::default())
 }
@@ -648,7 +770,11 @@ pub fn parse_or_serve_mcp_with_config_and_options<T>(
     serve_options: ClapMcpServeOptions,
 ) -> T
 where
-    T: ClapMcpToolExecutor + clap::Parser + clap::CommandFactory + clap::FromArgMatches,
+    T: ClapMcpSchemaMetadataProvider
+        + ClapMcpToolExecutor
+        + clap::Parser
+        + clap::CommandFactory
+        + clap::FromArgMatches,
 {
     let mut cmd = T::command();
     cmd = command_with_mcp_flag(cmd);
@@ -658,7 +784,8 @@ where
 
     if mcp_requested {
         let base_cmd = T::command();
-        let schema = schema_from_command(&base_cmd);
+        let metadata = T::clap_mcp_schema_metadata();
+        let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
         let schema_json =
             serde_json::to_string_pretty(&schema).expect("schema JSON must serialize");
         let exe = std::env::current_exe().ok();
@@ -667,8 +794,11 @@ where
             let schema = schema.clone();
             Some(Arc::new(
                 move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
-                    let argv = build_argv_for_clap(&schema, cmd, args);
-                    let matches = T::command().get_matches_from(&argv);
+                    validate_required_args(&schema, cmd, &args)?;
+                    let argv = build_argv_for_clap(&schema, cmd, args.clone());
+                    let matches = T::command()
+                        .try_get_matches_from(&argv)
+                        .map_err(|e| e.to_string())?;
                     let cli = T::from_arg_matches(&matches).map_err(|e| e.to_string())?;
                     Ok(<T as ClapMcpToolExecutor>::execute_for_mcp(cli))
                 },
@@ -692,28 +822,6 @@ where
     T::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
 }
 
-fn command_to_schema(cmd: &Command) -> ClapCommand {
-    let mut args: Vec<ClapArg> = cmd
-        .get_arguments()
-        .filter(|a| a.get_long() != Some(MCP_FLAG_LONG))
-        .map(arg_to_schema)
-        .collect();
-
-    // Stable ordering for consumers
-    args.sort_by(|a, b| a.id.cmp(&b.id));
-
-    let subcommands: Vec<ClapCommand> = cmd.get_subcommands().map(command_to_schema).collect();
-
-    ClapCommand {
-        name: cmd.get_name().to_string(),
-        about: cmd.get_about().map(|s| s.to_string()),
-        long_about: cmd.get_long_about().map(|s| s.to_string()),
-        version: cmd.get_version().map(|s| s.to_string()),
-        args,
-        subcommands,
-    }
-}
-
 fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
     let value_names = arg
         .get_value_names()
@@ -732,6 +840,46 @@ fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
         action: Some(format!("{:?}", arg.get_action())),
         value_names,
         num_args: arg.get_num_args().map(|r| format!("{r:?}")),
+    }
+}
+
+/// Validates that all required args for the command are present in the arguments map.
+/// Returns Err with a clear message if any required arg is missing.
+fn validate_required_args(
+    schema: &ClapSchema,
+    command_name: &str,
+    arguments: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let cmd = schema
+        .root
+        .all_commands()
+        .into_iter()
+        .find(|c| c.name == command_name);
+    let Some(cmd) = cmd else {
+        return Ok(());
+    };
+    let missing: Vec<_> = cmd
+        .args
+        .iter()
+        .filter(|a| {
+            if !a.required || is_builtin_arg(a.id.as_str()) {
+                return false;
+            }
+            let has_value = arguments
+                .get(&a.id)
+                .and_then(value_to_string)
+                .is_some_and(|s| !s.is_empty());
+            !has_value
+        })
+        .map(|a| a.id.clone())
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Missing required argument(s): {}. The MCP tool schema marks these as required.",
+            missing.join(", ")
+        ))
     }
 }
 
@@ -1086,6 +1234,14 @@ pub async fn serve_schema_json_over_stdio(
                         });
                     }
                 };
+                if let Err(e) = validate_required_args(&schema, &params.name, &args_map) {
+                    return Ok(CallToolResult {
+                        content: vec![ContentBlock::text_content(e)],
+                        is_error: Some(true),
+                        meta: None,
+                        structured_content: None,
+                    });
+                }
                 let args = build_tool_argv(&schema, &params.name, args_map);
                 let mut cmd = std::process::Command::new(exe);
                 if params.name != self.root_name {

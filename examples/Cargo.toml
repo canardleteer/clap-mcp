@@ -50,6 +50,10 @@ name = "struct_subcommand"
 path = "servers/struct_subcommand.rs"
 
 [[bin]]
+name = "optional_commands_and_args"
+path = "servers/optional_commands_and_args.rs"
+
+[[bin]]
 name = "client"
 path = "client.rs"
 required-features = ["tracing"]

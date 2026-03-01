@@ -5,7 +5,7 @@ This directory contains example CLIs that demonstrate clap-mcp capabilities.
 Run all commands from the **workspace root** (the parent of this `examples/` directory). The examples depend on `clap-mcp` via a path dependency.
 
 - **`client.rs`** — MCP client that exercises the server examples (easiest way to see everything working)
-- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared)
+- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared)
 
 ## Testing with the Client Example
 
@@ -20,6 +20,9 @@ cargo run -p clap-mcp-examples --bin client -- structured
 
 # Test struct_subcommand
 cargo run -p clap-mcp-examples --bin client -- struct-subcommand
+
+# Test optional_commands_and_args
+cargo run -p clap-mcp-examples --bin client -- optional-commands-and-args
 
 # Test tracing_bridge
 cargo run -p clap-mcp-examples --bin client -- tracing-bridge
@@ -70,6 +73,24 @@ cargo run -p clap-mcp-examples --bin struct_subcommand -- sub --a 10 --b 5
 
 # MCP server mode
 cargo run -p clap-mcp-examples --bin struct_subcommand -- --mcp
+```
+
+### optional_commands_and_args
+
+Demonstrates `#[clap_mcp(skip)]` and `#[clap_mcp(requires)]`:
+- **skip**: `internal` subcommand is hidden from MCP
+- **requires** (argument-level): `read`'s `path` is optional in CLI but required in MCP
+- **requires** (variant-level): `process`'s `path` and `input` are required in MCP
+
+```bash
+# Normal CLI usage
+cargo run -p clap-mcp-examples --bin optional_commands_and_args -- public
+cargo run -p clap-mcp-examples --bin optional_commands_and_args -- internal
+cargo run -p clap-mcp-examples --bin optional_commands_and_args -- read --path /tmp/foo
+cargo run -p clap-mcp-examples --bin optional_commands_and_args -- process --path /tmp --input data
+
+# MCP server mode (only public, read, process are exposed; internal is skipped)
+cargo run -p clap-mcp-examples --bin optional_commands_and_args -- --mcp
 ```
 
 ### structured
@@ -149,6 +170,7 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | ------------------ | ------------------------------- | ------------------------------------------------------------------ |
 | **subcommands**    | `servers/subcommands.rs`        | Text output, structured output, subprocess                         |
 | **struct_subcommand** | `servers/struct_subcommand.rs` | Struct root, `#[command(subcommand)]`, optional subcommand         |
+| **optional_commands_and_args** | `servers/optional_commands_and_args.rs` | `#[clap_mcp(skip)]`, `#[clap_mcp(requires)]` (arg and variant-level) |
 | **structured**     | `servers/structured.rs`         | Structured output only (`#[clap_mcp_output_type]`)                 |
 | **tracing_bridge** | `servers/tracing_bridge.rs`  | Tracing integration, MCP log forwarding, prompts   |
 | **log_bridge**     | `servers/log_bridge.rs`      | `log` crate integration, MCP log forwarding       |

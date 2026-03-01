@@ -3,9 +3,10 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_mcp::ClapMcp;
 use clap_mcp::{
-    ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpToolExecutor, ClapMcpToolOutput,
-    LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, PROMPT_LOGGING_GUIDE, run_async_tool,
-    schema_from_command, tools_from_schema_with_config,
+    ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpSchemaMetadataProvider,
+    ClapMcpToolExecutor, ClapMcpToolOutput, LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT,
+    PROMPT_LOGGING_GUIDE, run_async_tool, schema_from_command, schema_from_command_with_metadata,
+    tools_from_schema_with_config,
 };
 use serde::Serialize;
 
@@ -353,4 +354,86 @@ fn test_struct_optional_cli_executor_none() {
     let cli = TestStructOptionalCli { command: None };
     let out = cli.execute_for_mcp();
     assert_eq!(out.as_text(), Some(""));
+}
+
+// --- #[clap_mcp(skip)] and #[clap_mcp(requires)] ---
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(parallel_safe = false, reinvocation_safe)]
+#[command(name = "test-skip-requires")]
+enum TestSkipRequires {
+    #[clap_mcp_output = "\"exposed\".into()"]
+    Exposed,
+    #[clap_mcp(skip)]
+    #[clap_mcp_output = "\"hidden\".into()"]
+    Hidden,
+    #[clap_mcp_output = "format!(\"path: {:?}\", path)"]
+    Read {
+        #[clap_mcp(requires)]
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Variant-level requires: path and input become required in MCP
+    #[clap_mcp(requires = "path, input")]
+    #[clap_mcp_output = "format!(\"path={}, input={}\", path.as_deref().unwrap_or(\"\"), input.as_deref().unwrap_or(\"\"))"]
+    Process {
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        input: Option<String>,
+    },
+}
+
+#[test]
+fn test_clap_mcp_skip_command() {
+    let cmd = TestSkipRequires::command();
+    let metadata = TestSkipRequires::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let commands = schema.root.all_commands();
+    let names: Vec<_> = commands.iter().map(|c| c.name.as_str()).collect();
+    assert!(names.contains(&"exposed"));
+    assert!(names.contains(&"read"));
+    assert!(!names.contains(&"hidden"));
+}
+
+#[test]
+fn test_clap_mcp_requires_arg() {
+    let cmd = TestSkipRequires::command();
+    let metadata = TestSkipRequires::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let commands = schema.root.all_commands();
+    let read_cmd = commands
+        .iter()
+        .find(|c| c.name == "read")
+        .expect("read command");
+    let path_arg = read_cmd
+        .args
+        .iter()
+        .find(|a| a.id == "path")
+        .expect("path arg");
+    assert!(path_arg.required, "path should be required in MCP schema");
+}
+
+#[test]
+fn test_clap_mcp_requires_variant() {
+    let cmd = TestSkipRequires::command();
+    let metadata = TestSkipRequires::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let commands = schema.root.all_commands();
+    let process_cmd = commands
+        .iter()
+        .find(|c| c.name == "process")
+        .expect("process command");
+    for arg_id in ["path", "input"] {
+        let arg = process_cmd
+            .args
+            .iter()
+            .find(|a| a.id == arg_id)
+            .expect(arg_id);
+        assert!(
+            arg.required,
+            "{} should be required in MCP schema (variant-level requires)",
+            arg_id
+        );
+    }
 }
