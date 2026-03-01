@@ -1,6 +1,7 @@
 //! Tests for ClapMcpConfig and configuration possibilities.
 
 use clap::{CommandFactory, Parser};
+use clap_mcp::ClapMcp;
 use clap_mcp::{
     ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpToolExecutor, ClapMcpToolOutput,
     LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, PROMPT_LOGGING_GUIDE, run_async_tool,
@@ -8,28 +9,28 @@ use clap_mcp::{
 };
 use serde::Serialize;
 
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(parallel_safe = false, reinvocation_safe = false)]
 #[command(name = "test-cli")]
 enum TestCliDefaults {
     Foo,
 }
 
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(parallel_safe, reinvocation_safe)]
 #[command(name = "test-cli-both-true")]
 enum TestCliBothTrue {
     Bar,
 }
 
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(parallel_safe = true, reinvocation_safe = false)]
 #[command(name = "test-cli-parallel-only")]
 enum TestCliParallelOnly {
     Baz,
 }
 
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(parallel_safe = false, reinvocation_safe)]
 #[command(name = "test-cli-reinvoke-only")]
 enum TestCliReinvokeOnly {
@@ -44,7 +45,7 @@ struct SubResult {
     subtrahend: i32,
 }
 
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
 #[command(name = "test-cli-structured")]
 enum TestCliStructured {
@@ -53,7 +54,7 @@ enum TestCliStructured {
     Sub { a: i32, b: i32 },
 }
 
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime)]
 #[command(name = "test-cli-share-runtime")]
 enum TestCliShareRuntime {

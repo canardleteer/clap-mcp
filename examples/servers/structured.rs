@@ -1,8 +1,9 @@
 //! Example CLI with structured output via #[clap_mcp_output_type].
 //!
-//! Run: `cargo run --example structured -- --mcp`
+//! Run: `cargo run -p clap-mcp-examples --bin structured -- --mcp`
 
 use clap::Parser;
+use clap_mcp::ClapMcp;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -11,7 +12,7 @@ struct AddResult {
     operands: Vec<i32>,
 }
 
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
 #[command(
     name = "structured-example",

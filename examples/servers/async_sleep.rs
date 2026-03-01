@@ -1,7 +1,7 @@
 //! Example CLI with tokio async runtime (dedicated thread).
 //!
-//! Run: `cargo run --example async_sleep --features tracing -- sleep-demo`
-//! Run: `cargo run --example async_sleep --features tracing -- --mcp`
+//! Run: `cargo run -p clap-mcp-examples --bin async_sleep --features tracing -- sleep-demo`
+//! Run: `cargo run -p clap-mcp-examples --bin async_sleep --features tracing -- --mcp`
 //!
 //! Demonstrates `share_runtime = false` — uses a dedicated thread with its own
 //! tokio runtime per tool call. See async_sleep_shared for the shared-runtime variant.
@@ -10,11 +10,12 @@ mod async_sleep_common;
 
 use async_sleep_common::run_sleep_demo;
 use clap::Parser;
+use clap_mcp::ClapMcp;
 
 #[cfg(feature = "tracing")]
 use clap_mcp::ClapMcpConfigProvider;
 
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
 #[command(
     name = "async-sleep-example",
@@ -65,6 +66,8 @@ fn main() {
 #[cfg(not(feature = "tracing"))]
 fn main() {
     eprintln!("This example requires the 'tracing' feature. Run with:");
-    eprintln!("  cargo run --example async_sleep --features tracing -- sleep-demo");
+    eprintln!(
+        "  cargo run -p clap-mcp-examples --bin async_sleep --features tracing -- sleep-demo"
+    );
     std::process::exit(1);
 }

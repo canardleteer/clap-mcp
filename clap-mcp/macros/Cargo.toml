@@ -1,11 +1,11 @@
 [package]
 name = "clap-mcp-macros"
-version.workspace = true
+version = "0.0.1-rc.5"
 edition = "2024"
 license = "MIT"
 description = "Procedural macros for clap-mcp"
 repository = "https://github.com/canardleteer/clap-mcp"
-documentation = "https://docs.rs/clap-mcp-macros"
+publish = false
 
 [lib]
 proc-macro = true

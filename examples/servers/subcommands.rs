@@ -1,15 +1,16 @@
 use clap::Parser;
+use clap_mcp::ClapMcp;
 use serde::Serialize;
 
 /// Simple example CLI using clap-mcp with the derive API.
 ///
 /// Try:
-/// - `cargo run --example derive -- --help`
-/// - `cargo run --example derive -- --mcp`
+/// - `cargo run -p clap-mcp-examples --bin subcommands -- --help`
+/// - `cargo run -p clap-mcp-examples --bin subcommands -- --mcp`
 ///
 /// This CLI is both parallel_safe and reinvocation_safe, but we configure the harder case
 /// (parallel_safe=false, reinvocation_safe=false) to demonstrate subprocess-based execution.
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(parallel_safe = false, reinvocation_safe = false)]
 #[command(
     name = "clap-mcp-derive-example",

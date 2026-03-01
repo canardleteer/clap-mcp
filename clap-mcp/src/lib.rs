@@ -6,8 +6,9 @@
 //!
 //! ```rust,ignore
 //! use clap::Parser;
+//! use clap_mcp::ClapMcp;
 //!
-//! #[derive(Parser, clap_mcp::ClapMcp)]
+//! #[derive(Parser, ClapMcp)]
 //! #[clap_mcp(reinvocation_safe, parallel_safe = false)]
 //! enum Cli {
 //!     #[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
@@ -42,14 +43,11 @@ use rust_mcp_sdk::{
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
-/// Derive macro for `ClapMcpConfigProvider` and `ClapMcpToolExecutor`.
-///
-/// Use with `#[derive(ClapMcp)]` on your clap enum. Supports attributes:
-/// `#[clap_mcp(...)]`, `#[clap_mcp_output = "..."]`, `#[clap_mcp_output_type = "TypeName"]`.
-pub use clap_mcp_macros::ClapMcp;
-
 #[cfg(any(feature = "tracing", feature = "log"))]
 pub mod logging;
+
+#[cfg(feature = "derive")]
+pub use clap_mcp_macros::ClapMcp;
 
 /// Long flag that triggers MCP server mode. Add to your CLI via [`command_with_mcp_flag`].
 pub const MCP_FLAG_LONG: &str = "mcp";
@@ -65,8 +63,9 @@ pub const MCP_RESOURCE_URI_SCHEMA: &str = "clap://schema";
 /// ```rust
 /// use clap::Parser;
 /// use clap_mcp::ClapMcpConfigProvider;
+/// use clap_mcp::ClapMcp;
 ///
-/// #[derive(Debug, Parser, clap_mcp::ClapMcp)]
+/// #[derive(Debug, Parser, ClapMcp)]
 /// #[clap_mcp(parallel_safe = false, reinvocation_safe)]
 /// enum MyCli { Foo }
 ///
@@ -577,8 +576,9 @@ pub fn get_matches_or_serve_mcp_with_config(
 ///
 /// ```rust,ignore
 /// use clap::Parser;
+/// use clap_mcp::ClapMcp;
 ///
-/// #[derive(Parser, clap_mcp::ClapMcp)]
+/// #[derive(Parser, ClapMcp)]
 /// enum Cli { Foo }
 ///
 /// fn main() {
@@ -602,8 +602,9 @@ where
 ///
 /// ```rust,ignore
 /// use clap::Parser;
+/// use clap_mcp::ClapMcp;
 ///
-/// #[derive(Parser, clap_mcp::ClapMcp)]
+/// #[derive(Parser, ClapMcp)]
 /// #[clap_mcp(reinvocation_safe, parallel_safe = false)]
 /// enum Cli {
 ///     #[clap_mcp_output = "format!(\"done\")"]
@@ -1281,7 +1282,9 @@ pub fn serve_schema_json_over_stdio_blocking(
 /// # Example
 ///
 /// ```rust,ignore
-/// #[derive(Parser, clap_mcp::ClapMcp)]
+/// use clap_mcp::ClapMcp;
+///
+/// #[derive(Parser, ClapMcp)]
 /// #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
 /// enum Cli {
 ///     #[clap_mcp_output_type = "SleepResult"]

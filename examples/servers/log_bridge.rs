@@ -1,7 +1,7 @@
 //! Example CLI with MCP logging via the `log` crate.
 //!
-//! Run: `cargo run --example log_bridge --features log -- echo "hello"`
-//! Run: `cargo run --example log_bridge --features log -- --mcp`
+//! Run: `cargo run -p clap-mcp-examples --bin log_bridge --features log -- echo "hello"`
+//! Run: `cargo run -p clap-mcp-examples --bin log_bridge --features log -- --mcp`
 //!
 //! When run with --mcp, `log::info!` (etc.) messages are forwarded to the MCP client.
 //!
@@ -10,11 +10,12 @@
 //! MCP channel. See the README for more on this trade-off.
 
 use clap::Parser;
+use clap_mcp::ClapMcp;
 
 #[cfg(feature = "log")]
 use clap_mcp::ClapMcpConfigProvider;
 
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
 #[command(
     name = "log-bridge-example",
@@ -87,6 +88,6 @@ fn main() {
 #[cfg(not(feature = "log"))]
 fn main() {
     eprintln!("This example requires the 'log' feature. Run with:");
-    eprintln!("  cargo run --example log_bridge --features log -- --mcp");
+    eprintln!("  cargo run -p clap-mcp-examples --bin log_bridge --features log -- --mcp");
     std::process::exit(1);
 }
