@@ -1,4 +1,4 @@
-//! Example CLI with structured output via #[clap_mcp_output_type].
+//! Example CLI with structured output via #[clap_mcp_output_json].
 //!
 //! Run: `cargo run -p clap-mcp-examples --bin structured -- --mcp`
 
@@ -21,8 +21,7 @@ struct AddResult {
 )]
 enum Cli {
     /// Add numbers with structured JSON output.
-    #[clap_mcp_output_type = "AddResult"]
-    #[clap_mcp_output = "AddResult { sum: a + b, operands: vec![a, b] }"]
+    #[clap_mcp_output_json = "AddResult { sum: a + b, operands: vec![a, b] }"]
     Add {
         /// First operand.
         a: i32,

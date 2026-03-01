@@ -119,7 +119,7 @@ cargo run -p clap-mcp-examples --bin result_output -- --mcp
 
 ### structured
 
-CLI with structured JSON output via `#[clap_mcp_output_type]`. No optional
+CLI with structured JSON output via `#[clap_mcp_output_json]`. No optional
 features required.
 
 ```bash
@@ -196,7 +196,7 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **struct_subcommand** | `servers/struct_subcommand.rs` | Struct root, `#[command(subcommand)]`, optional subcommand         |
 | **optional_commands_and_args** | `servers/optional_commands_and_args.rs` | `#[clap_mcp(skip)]`, `#[clap_mcp(requires)]` (arg and variant-level) |
 | **result_output**  | `servers/result_output.rs`      | `#[clap_mcp_output_result]` for `Result<T, E>`, `#[clap_mcp_error_type]` for structured errors |
-| **structured**     | `servers/structured.rs`         | Structured output only (`#[clap_mcp_output_type]`)                 |
+| **structured**     | `servers/structured.rs`         | Structured output only (`#[clap_mcp_output_json]`)                 |
 | **tracing_bridge** | `servers/tracing_bridge.rs`  | Tracing integration, MCP log forwarding, prompts   |
 | **log_bridge**     | `servers/log_bridge.rs`      | `log` crate integration, MCP log forwarding       |
 | **async_sleep**       | `servers/async_sleep.rs`        | Async tokio, 3 sleep tasks, `share_runtime = false` |
@@ -206,7 +206,7 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 ## Async tools and share_runtime
 
 When your CLI has async subcommands (e.g. using `tokio::sleep`, `tokio::spawn`),
-use `clap_mcp::run_async_tool` in `#[clap_mcp_output]` and configure
+use `clap_mcp::run_async_tool` in `#[clap_mcp_output_json]` and configure
 `share_runtime` in `#[clap_mcp(...)]`:
 
 | `share_runtime` | Behavior | When to use |
@@ -219,8 +219,7 @@ use `clap_mcp::run_async_tool` in `#[clap_mcp_output]` and configure
 ```rust
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
 enum Cli {
-    #[clap_mcp_output_type = "SleepResult"]
-    #[clap_mcp_output = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo())"]
+    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo())"]
     SleepDemo,
 }
 ```
@@ -230,8 +229,7 @@ enum Cli {
 ```rust
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime)]
 enum Cli {
-    #[clap_mcp_output_type = "SleepResult"]
-    #[clap_mcp_output = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo())"]
+    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo())"]
     SleepDemo,
 }
 ```

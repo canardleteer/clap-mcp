@@ -18,16 +18,16 @@ use clap_mcp::ClapMcp;
 )]
 enum Cli {
     /// Exposed to MCP
-    #[clap_mcp_output = "\"done\".into()"]
+    #[clap_mcp_output_literal = "done"]
     Public,
 
     /// Hidden from MCP (internal use only)
     #[clap_mcp(skip)]
-    #[clap_mcp_output = "\"internal\".into()"]
+    #[clap_mcp_output_literal = "internal"]
     Internal,
 
     /// Read: path is optional in CLI but required in MCP (argument-level)
-    #[clap_mcp_output = "path.as_deref().unwrap_or(\"<none>\").to_string()"]
+    #[clap_mcp_output = "clap_mcp::opt_str(&path, \"<none>\").to_string()"]
     Read {
         #[clap_mcp(requires)]
         #[arg(long)]
@@ -36,7 +36,7 @@ enum Cli {
 
     /// Process: path and input are optional in CLI but required in MCP (variant-level)
     #[clap_mcp(requires = "path, input")]
-    #[clap_mcp_output = "format!(\"path={}, input={}\", path.as_deref().unwrap_or(\"\"), input.as_deref().unwrap_or(\"\"))"]
+    #[clap_mcp_output = "format!(\"path={}, input={}\", clap_mcp::opt_str(&path, \"\"), clap_mcp::opt_str(&input, \"\"))"]
     Process {
         #[arg(long)]
         path: Option<String>,
