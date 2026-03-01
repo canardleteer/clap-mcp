@@ -1,9 +1,10 @@
 //! Example CLI with struct root and #[command(subcommand)].
 //! Shows ClapMcpConfigProvider on the struct, delegation to subcommand,
 //! and optional subcommand support.
+//! Uses `#[clap_mcp_output_from = "run"]` on the subcommand enum.
 
 use clap::{Parser, Subcommand};
-use clap_mcp::ClapMcp;
+use clap_mcp::{ClapMcp, ClapMcpToolError, ClapMcpToolOutput};
 use serde::Serialize;
 
 #[derive(Debug, Parser, ClapMcp)]
@@ -22,20 +23,18 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp_output_from = "run"]
 enum Commands {
-    #[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
     Greet {
         #[arg(long)]
         name: Option<String>,
     },
-    #[clap_mcp_output = "format!(\"{}\", a + b)"]
     Add {
         #[arg(long)]
         a: i32,
         #[arg(long)]
         b: i32,
     },
-    #[clap_mcp_output_json = "SubResult { difference: a - b, minuend: a, subtrahend: b }"]
     Sub {
         #[arg(long)]
         a: i32,
@@ -44,11 +43,43 @@ enum Commands {
     },
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct SubResult {
     difference: i32,
     minuend: i32,
     subtrahend: i32,
+}
+
+#[derive(Debug)]
+enum CommandsOutput {
+    Text(String),
+    Structured(SubResult),
+}
+
+impl clap_mcp::IntoClapMcpResult for CommandsOutput {
+    fn into_tool_result(self) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError> {
+        match self {
+            CommandsOutput::Text(s) => Ok(ClapMcpToolOutput::Text(s)),
+            CommandsOutput::Structured(s) => Ok(ClapMcpToolOutput::Structured(
+                serde_json::to_value(&s).expect("SubResult must serialize"),
+            )),
+        }
+    }
+}
+
+fn run(cmd: Commands) -> CommandsOutput {
+    match cmd {
+        Commands::Greet { name } => {
+            let who = name.as_deref().unwrap_or("world");
+            CommandsOutput::Text(format!("Hello, {who}!"))
+        }
+        Commands::Add { a, b } => CommandsOutput::Text(format!("{}", a + b)),
+        Commands::Sub { a, b } => CommandsOutput::Structured(SubResult {
+            difference: a - b,
+            minuend: a,
+            subtrahend: b,
+        }),
+    }
 }
 
 fn main() {

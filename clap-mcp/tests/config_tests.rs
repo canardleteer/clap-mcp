@@ -3,10 +3,11 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_mcp::ClapMcp;
 use clap_mcp::{
-    ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpSchemaMetadataProvider,
-    ClapMcpToolExecutor, ClapMcpToolOutput, LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT,
-    PROMPT_LOGGING_GUIDE, run_async_tool, schema_from_command, schema_from_command_with_metadata,
-    tools_from_schema_with_config,
+    ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpSchemaMetadata,
+    ClapMcpSchemaMetadataProvider, ClapMcpToolExecutor, ClapMcpToolOutput,
+    LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, PROMPT_LOGGING_GUIDE, run_async_tool,
+    schema_from_command, schema_from_command_with_metadata, tools_from_schema_with_config,
+    tools_from_schema_with_config_and_metadata,
 };
 use serde::Serialize;
 
@@ -52,6 +53,61 @@ struct SubResult {
 enum TestCliStructured {
     #[clap_mcp_output_json = "SubResult { difference: a - b, minuend: a, subtrahend: b }"]
     Sub { a: i32, b: i32 },
+}
+
+// --- #[clap_mcp_output_from = "run"] ---
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run"]
+#[command(name = "test-cli-output-from")]
+enum TestCliOutputFrom {
+    TextOut { x: i32 },
+    OptionOut { present: bool },
+    ResultOk,
+    ResultErr,
+    StructuredOut { a: i32, b: i32 },
+}
+
+fn run(cmd: TestCliOutputFrom) -> Result<OutputFromResult, String> {
+    match cmd {
+        TestCliOutputFrom::TextOut { x } => Ok(OutputFromResult::Text(format!("x={}", x))),
+        TestCliOutputFrom::OptionOut { present } => {
+            if present {
+                Ok(OutputFromResult::Text("some".to_string()))
+            } else {
+                Ok(OutputFromResult::Empty)
+            }
+        }
+        TestCliOutputFrom::ResultOk => Ok(OutputFromResult::Text("ok".to_string())),
+        TestCliOutputFrom::ResultErr => Err("fail".to_string()),
+        TestCliOutputFrom::StructuredOut { a, b } => Ok(OutputFromResult::Structured(SubResult {
+            difference: a - b,
+            minuend: a,
+            subtrahend: b,
+        })),
+    }
+}
+
+#[derive(Debug)]
+enum OutputFromResult {
+    Text(String),
+    Empty,
+    Structured(SubResult),
+}
+
+impl clap_mcp::IntoClapMcpResult for OutputFromResult {
+    fn into_tool_result(
+        self,
+    ) -> std::result::Result<ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+        match self {
+            OutputFromResult::Text(s) => Ok(ClapMcpToolOutput::Text(s)),
+            OutputFromResult::Empty => Ok(ClapMcpToolOutput::Text(String::new())),
+            OutputFromResult::Structured(s) => Ok(ClapMcpToolOutput::Structured(
+                serde_json::to_value(&s).expect("serialize"),
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Parser, ClapMcp)]
@@ -164,7 +220,8 @@ fn test_tools_from_schema_with_config_meta() {
         parallel_safe: false,
         ..Default::default()
     };
-    let tools = tools_from_schema_with_config(&schema, &config_false_false);
+    let metadata = ClapMcpSchemaMetadata::default();
+    let tools = tools_from_schema_with_config_and_metadata(&schema, &config_false_false, &metadata);
     assert!(!tools.is_empty());
     for tool in &tools {
         let meta = tool.meta.as_ref().expect("tool should have meta");
@@ -271,6 +328,49 @@ fn test_clap_mcp_tool_executor_structured() {
     assert_eq!(v.get("difference").and_then(|x| x.as_i64()), Some(7));
     assert_eq!(v.get("minuend").and_then(|x| x.as_i64()), Some(10));
     assert_eq!(v.get("subtrahend").and_then(|x| x.as_i64()), Some(3));
+}
+
+#[test]
+fn test_clap_mcp_output_from_text() {
+    let cli = TestCliOutputFrom::TextOut { x: 42 };
+    let out = cli.execute_for_mcp().expect("should succeed");
+    assert_eq!(out.as_text(), Some("x=42"));
+}
+
+#[test]
+fn test_clap_mcp_output_from_option_some() {
+    let cli = TestCliOutputFrom::OptionOut { present: true };
+    let out = cli.execute_for_mcp().expect("should succeed");
+    assert_eq!(out.as_text(), Some("some"));
+}
+
+#[test]
+fn test_clap_mcp_output_from_option_none() {
+    let cli = TestCliOutputFrom::OptionOut { present: false };
+    let out = cli.execute_for_mcp().expect("should succeed");
+    assert_eq!(out.as_text(), Some(""));
+}
+
+#[test]
+fn test_clap_mcp_output_from_result_ok() {
+    let cli = TestCliOutputFrom::ResultOk;
+    let out = cli.execute_for_mcp().expect("should succeed");
+    assert_eq!(out.as_text(), Some("ok"));
+}
+
+#[test]
+fn test_clap_mcp_output_from_result_err() {
+    let cli = TestCliOutputFrom::ResultErr;
+    let err = cli.execute_for_mcp().expect_err("should fail");
+    assert!(err.message.contains("fail"));
+}
+
+#[test]
+fn test_clap_mcp_output_from_structured() {
+    let cli = TestCliOutputFrom::StructuredOut { a: 10, b: 3 };
+    let out = cli.execute_for_mcp().expect("should succeed");
+    let v = out.as_structured().expect("should be structured");
+    assert_eq!(v.get("difference").and_then(|x| x.as_i64()), Some(7));
 }
 
 // --- run_async_tool and share_runtime edge cases ---
@@ -516,6 +616,50 @@ fn test_clap_mcp_requires_variant() {
             arg.required,
             "{} should be required in MCP schema (variant-level requires)",
             arg_id
+        );
+    }
+}
+
+// --- output_schema (output_type / output_one_of) when feature "output-schema" is enabled ---
+
+#[cfg(feature = "output-schema")]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct OutputSchemaTestType {
+    value: i32,
+}
+
+#[cfg(feature = "output-schema")]
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_type = "OutputSchemaTestType"]
+#[command(name = "test-cli-output-schema")]
+enum TestCliOutputSchema {
+    Foo { _x: i32 },
+}
+
+#[cfg(feature = "output-schema")]
+#[test]
+fn test_output_schema_metadata_set() {
+    let metadata = TestCliOutputSchema::clap_mcp_schema_metadata();
+    assert!(
+        metadata.output_schema.is_some(),
+        "with output-schema feature and output_type, metadata.output_schema should be set"
+    );
+}
+
+#[cfg(feature = "output-schema")]
+#[test]
+fn test_tools_from_schema_with_metadata_output_schema() {
+    let metadata = TestCliOutputSchema::clap_mcp_schema_metadata();
+    let cmd = TestCliOutputSchema::command();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let config = ClapMcpConfig::default();
+    let tools = tools_from_schema_with_config_and_metadata(&schema, &config, &metadata);
+    for tool in &tools {
+        assert!(
+            tool.output_schema.is_some(),
+            "tool {} should have output_schema when metadata has it",
+            tool.name
         );
     }
 }

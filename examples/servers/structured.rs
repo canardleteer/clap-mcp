@@ -1,9 +1,9 @@
-//! Example CLI with structured output via #[clap_mcp_output_json].
+//! Example CLI with structured output via `#[clap_mcp_output_from]` and `AsStructured`.
 //!
 //! Run: `cargo run -p clap-mcp-examples --bin structured -- --mcp`
 
 use clap::Parser;
-use clap_mcp::ClapMcp;
+use clap_mcp::{AsStructured, ClapMcp};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -14,6 +14,7 @@ struct AddResult {
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run"]
 #[command(
     name = "structured-example",
     about = "CLI with structured MCP output",
@@ -21,13 +22,21 @@ struct AddResult {
 )]
 enum Cli {
     /// Add numbers with structured JSON output.
-    #[clap_mcp_output_json = "AddResult { sum: a + b, operands: vec![a, b] }"]
     Add {
         /// First operand.
         a: i32,
         /// Second operand.
         b: i32,
     },
+}
+
+fn run(cmd: Cli) -> AsStructured<AddResult> {
+    match cmd {
+        Cli::Add { a, b } => AsStructured(AddResult {
+            sum: a + b,
+            operands: vec![a, b],
+        }),
+    }
 }
 
 fn main() {

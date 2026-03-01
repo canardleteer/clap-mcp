@@ -11,6 +11,7 @@ use clap_mcp::ClapMcp;
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run"]
 #[command(
     name = "optional-commands-and-args",
     about = "Demonstrates #[clap_mcp(skip)] and #[clap_mcp(requires)]",
@@ -18,16 +19,13 @@ use clap_mcp::ClapMcp;
 )]
 enum Cli {
     /// Exposed to MCP
-    #[clap_mcp_output_literal = "done"]
     Public,
 
     /// Hidden from MCP (internal use only)
     #[clap_mcp(skip)]
-    #[clap_mcp_output_literal = "internal"]
     Internal,
 
     /// Read: path is optional in CLI but required in MCP (argument-level)
-    #[clap_mcp_output = "clap_mcp::opt_str(&path, \"<none>\").to_string()"]
     Read {
         #[clap_mcp(requires)]
         #[arg(long)]
@@ -36,13 +34,25 @@ enum Cli {
 
     /// Process: path and input are optional in CLI but required in MCP (variant-level)
     #[clap_mcp(requires = "path, input")]
-    #[clap_mcp_output = "format!(\"path={}, input={}\", clap_mcp::opt_str(&path, \"\"), clap_mcp::opt_str(&input, \"\"))"]
     Process {
         #[arg(long)]
         path: Option<String>,
         #[arg(long)]
         input: Option<String>,
     },
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Public => "done".to_string(),
+        Cli::Internal => "internal".to_string(),
+        Cli::Read { path } => path.as_deref().unwrap_or("<none>").to_string(),
+        Cli::Process { path, input } => format!(
+            "path={}, input={}",
+            path.as_deref().unwrap_or(""),
+            input.as_deref().unwrap_or("")
+        ),
+    }
 }
 
 fn main() {

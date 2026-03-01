@@ -1,13 +1,12 @@
-//! Example CLI demonstrating `#[clap_mcp_output_result]` for fallible tool output.
+//! Example CLI demonstrating `#[clap_mcp_output_from]` with fallible `run` returning `Result<T, E>`.
 //!
-//! When the expression returns `Result<T, E>`:
+//! When `run` returns `Result<T, E>`:
 //! - `Ok(value)` → normal MCP tool output (Text or Structured)
-//! - `Err(e)` → MCP error response (`is_error: true`) with the error message
-//!
-//! Use `#[clap_mcp_error_type = "TypeName"]` when `E: Serialize` for structured error JSON.
+//! - `Err(e)` → MCP error response (`is_error: true`); implement [`clap_mcp::IntoClapMcpToolError`]
+//!   for structured error JSON.
 
 use clap::Parser;
-use clap_mcp::ClapMcp;
+use clap_mcp::{ClapMcp, ClapMcpToolError};
 use serde::Serialize;
 
 // --- Inline error type (same file, used by Check) ---
@@ -19,11 +18,6 @@ struct ValidationError {
 }
 
 // --- Error type defined elsewhere (separate module) ---
-//
-// This pattern is useful when you have shared error types across your crate.
-// The type must implement Debug (for the message) and Serialize (when using
-// #[clap_mcp_error_type]). Implement Display if you prefer human-readable
-// messages over Debug output.
 
 mod errors {
     use serde::Serialize;
@@ -49,48 +43,89 @@ mod errors {
     impl std::error::Error for ParseError {}
 }
 
+/// Unified error type for `run`; implements [`clap_mcp::IntoClapMcpToolError`] so
+/// structured errors (ValidationError, ParseError) can be sent as JSON.
+#[derive(Debug)]
+enum CliError {
+    Message(String),
+    Validation(ValidationError),
+    Parse(errors::ParseError),
+}
+
+impl clap_mcp::IntoClapMcpToolError for CliError {
+    fn into_tool_error(self) -> ClapMcpToolError {
+        match self {
+            CliError::Message(s) => ClapMcpToolError::text(s),
+            CliError::Validation(e) => ClapMcpToolError::structured(
+                format!("{:?}", e),
+                serde_json::to_value(&e)
+                    .unwrap_or_else(|_| serde_json::Value::String(format!("{:?}", e))),
+            ),
+            CliError::Parse(e) => ClapMcpToolError::structured(
+                format!("{:?}", e),
+                serde_json::to_value(&e)
+                    .unwrap_or_else(|_| serde_json::Value::String(format!("{:?}", e))),
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run"]
 #[command(
     name = "result-output",
-    about = "Demonstrates #[clap_mcp_output_result] for Result<T, E> expressions",
+    about = "Demonstrates output_from with Result<T, E> and custom error conversion",
     subcommand_required = false
 )]
 enum Cli {
     /// Succeeds for n >= 0, fails otherwise (plain error message)
-    #[clap_mcp_output_result]
-    #[clap_mcp_output = "if n >= 0 { Ok(format!(\"sqrt ~{}\", n)) } else { Err(format!(\"negative: {}\", n)) }"]
     Sqrt {
         #[arg(long)]
         n: i32,
     },
 
     /// Always succeeds
-    #[clap_mcp_output_result]
-    #[clap_mcp_output = "Ok::<_, String>(format!(\"double: {}\", x * 2))"]
     Double {
         #[arg(long)]
         x: i32,
     },
 
-    /// Fails for x <= 0 with structured error via #[clap_mcp_error_type]
-    #[clap_mcp_output_result]
-    #[clap_mcp_error_type = "ValidationError"]
-    #[clap_mcp_output = "if x > 0 { Ok(format!(\"ok: {}\", x)) } else { Err(ValidationError { code: -1, message: format!(\"invalid: {}\", x) }) }"]
+    /// Fails for x <= 0 with structured error
     Check {
         #[arg(long)]
         x: i32,
     },
 
-    /// Uses an error type defined in a separate module (see `errors::ParseError`).
-    /// The error type lives elsewhere and is referenced by path.
-    #[clap_mcp_output_result]
-    #[clap_mcp_error_type = "errors::ParseError"]
-    #[clap_mcp_output = "parse_file(&path)"]
+    /// Uses an error type from a separate module
     Parse {
         #[arg(long)]
         path: String,
     },
+}
+
+fn run(cmd: Cli) -> Result<String, CliError> {
+    match cmd {
+        Cli::Sqrt { n } => {
+            if n >= 0 {
+                Ok(format!("sqrt ~{n}"))
+            } else {
+                Err(CliError::Message(format!("negative: {n}")))
+            }
+        }
+        Cli::Double { x } => Ok(format!("double: {}", x * 2)),
+        Cli::Check { x } => {
+            if x > 0 {
+                Ok(format!("ok: {x}"))
+            } else {
+                Err(CliError::Validation(ValidationError {
+                    code: -1,
+                    message: format!("invalid: {x}"),
+                }))
+            }
+        }
+        Cli::Parse { path } => parse_file(&path).map_err(CliError::Parse),
+    }
 }
 
 /// Simulates parsing a file. Returns `Err(errors::ParseError)` for invalid paths.
