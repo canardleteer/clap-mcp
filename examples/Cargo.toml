@@ -46,6 +46,10 @@ path = "servers/async_sleep_shared.rs"
 required-features = ["tracing"]
 
 [[bin]]
+name = "struct_subcommand"
+path = "servers/struct_subcommand.rs"
+
+[[bin]]
 name = "client"
 path = "client.rs"
 required-features = ["tracing"]
