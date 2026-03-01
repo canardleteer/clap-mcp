@@ -54,6 +54,10 @@ name = "optional_commands_and_args"
 path = "servers/optional_commands_and_args.rs"
 
 [[bin]]
+name = "result_output"
+path = "servers/result_output.rs"
+
+[[bin]]
 name = "client"
 path = "client.rs"
 required-features = ["tracing"]

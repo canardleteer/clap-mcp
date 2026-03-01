@@ -5,7 +5,7 @@ This directory contains example CLIs that demonstrate clap-mcp capabilities.
 Run all commands from the **workspace root** (the parent of this `examples/` directory). The examples depend on `clap-mcp` via a path dependency.
 
 - **`client.rs`** — MCP client that exercises the server examples (easiest way to see everything working)
-- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared)
+- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, result_output, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared)
 
 ## Testing with the Client Example
 
@@ -23,6 +23,9 @@ cargo run -p clap-mcp-examples --bin client -- struct-subcommand
 
 # Test optional_commands_and_args
 cargo run -p clap-mcp-examples --bin client -- optional-commands-and-args
+
+# Test result_output (Result<T, E> in #[clap_mcp_output])
+cargo run -p clap-mcp-examples --bin client -- result-output
 
 # Test tracing_bridge
 cargo run -p clap-mcp-examples --bin client -- tracing-bridge
@@ -91,6 +94,27 @@ cargo run -p clap-mcp-examples --bin optional_commands_and_args -- process --pat
 
 # MCP server mode (only public, read, process are exposed; internal is skipped)
 cargo run -p clap-mcp-examples --bin optional_commands_and_args -- --mcp
+```
+
+### result_output
+
+Demonstrates `#[clap_mcp_output_result]` for fallible tool output. When the expression
+returns `Result<T, E>`, `Ok(value)` produces normal output and `Err(e)` produces an
+MCP error response (`is_error: true`). Uses `#[clap_mcp_error_type]` for structured
+errors when `E: Serialize`.
+
+```bash
+# Normal CLI usage
+cargo run -p clap-mcp-examples --bin result_output -- sqrt --n 42
+cargo run -p clap-mcp-examples --bin result_output -- sqrt --n -1   # exits with error
+cargo run -p clap-mcp-examples --bin result_output -- double --x 21
+cargo run -p clap-mcp-examples --bin result_output -- check --x 10
+cargo run -p clap-mcp-examples --bin result_output -- check --x -5  # exits with error
+cargo run -p clap-mcp-examples --bin result_output -- parse --path /tmp/foo
+cargo run -p clap-mcp-examples --bin result_output -- parse --path invalid  # exits with error
+
+# MCP server mode
+cargo run -p clap-mcp-examples --bin result_output -- --mcp
 ```
 
 ### structured
@@ -171,6 +195,7 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **subcommands**    | `servers/subcommands.rs`        | Text output, structured output, subprocess                         |
 | **struct_subcommand** | `servers/struct_subcommand.rs` | Struct root, `#[command(subcommand)]`, optional subcommand         |
 | **optional_commands_and_args** | `servers/optional_commands_and_args.rs` | `#[clap_mcp(skip)]`, `#[clap_mcp(requires)]` (arg and variant-level) |
+| **result_output**  | `servers/result_output.rs`      | `#[clap_mcp_output_result]` for `Result<T, E>`, `#[clap_mcp_error_type]` for structured errors |
 | **structured**     | `servers/structured.rs`         | Structured output only (`#[clap_mcp_output_type]`)                 |
 | **tracing_bridge** | `servers/tracing_bridge.rs`  | Tracing integration, MCP log forwarding, prompts   |
 | **log_bridge**     | `servers/log_bridge.rs`      | `log` crate integration, MCP log forwarding       |

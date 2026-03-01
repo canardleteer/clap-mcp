@@ -93,6 +93,49 @@ pub trait ClapMcpRunnable {
     fn run(self) -> String;
 }
 
+/// Error produced when a tool's `#[clap_mcp_output]` expression evaluates to `Err`.
+///
+/// When using `#[clap_mcp_output_result]` with `Result<T, E>` expressions, `Err(e)` yields
+/// this type. Use `#[clap_mcp_error_type = "TypeName"]` to enable structured error
+/// serialization when `E: Serialize`.
+#[derive(Debug, Clone)]
+pub struct ClapMcpToolError {
+    /// Human-readable error message for MCP content.
+    pub message: String,
+    /// Optional structured JSON when `#[clap_mcp_error_type]` is used and `E: Serialize`.
+    pub structured: Option<serde_json::Value>,
+}
+
+impl ClapMcpToolError {
+    /// Create a plain text error.
+    pub fn text(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            structured: None,
+        }
+    }
+
+    /// Create an error with structured serialization.
+    pub fn structured(message: impl Into<String>, value: serde_json::Value) -> Self {
+        Self {
+            message: message.into(),
+            structured: Some(value),
+        }
+    }
+}
+
+impl From<String> for ClapMcpToolError {
+    fn from(s: String) -> Self {
+        Self::text(s)
+    }
+}
+
+impl From<&str> for ClapMcpToolError {
+    fn from(s: &str) -> Self {
+        Self::text(s)
+    }
+}
+
 /// Output produced by a CLI command for MCP tool results.
 ///
 /// Use `Text` for plain string output; use `Structured` for serializable JSON
@@ -178,13 +221,18 @@ impl ClapMcpToolOutput {
 /// Implemented by the `#[derive(ClapMcp)]` macro. Used for in-process execution.
 /// Use `#[clap_mcp_output = "expr"]` for text output, or `#[clap_mcp_output_type = "TypeName"]`
 /// with `#[clap_mcp_output = "expr"]` for structured JSON output.
+///
+/// When using `#[clap_mcp_output_result]` with `Result<T, E>` expressions, `Err(e)` yields
+/// [`ClapMcpToolError`] and the MCP client receives an error response (`is_error: true`).
 pub trait ClapMcpToolExecutor {
-    fn execute_for_mcp(self) -> ClapMcpToolOutput;
+    fn execute_for_mcp(self) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError>;
 }
 
 impl<T: ClapMcpToolExecutor> ClapMcpRunnable for T {
     fn run(self) -> String {
-        self.execute_for_mcp().into_string()
+        self.execute_for_mcp()
+            .unwrap_or_else(|e| ClapMcpToolOutput::Text(e.message))
+            .into_string()
     }
 }
 
@@ -794,13 +842,14 @@ where
             let schema = schema.clone();
             Some(Arc::new(
                 move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
-                    validate_required_args(&schema, cmd, &args)?;
+                    validate_required_args(&schema, cmd, &args).map_err(ClapMcpToolError::text)?;
                     let argv = build_argv_for_clap(&schema, cmd, args.clone());
                     let matches = T::command()
                         .try_get_matches_from(&argv)
-                        .map_err(|e| e.to_string())?;
-                    let cli = T::from_arg_matches(&matches).map_err(|e| e.to_string())?;
-                    Ok(<T as ClapMcpToolExecutor>::execute_for_mcp(cli))
+                        .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
+                    let cli = T::from_arg_matches(&matches)
+                        .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
+                    <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
                 },
             ) as InProcessToolHandler)
         } else {
@@ -951,10 +1000,13 @@ fn build_tool_argv(
 
 /// Type for in-process tool execution handler.
 ///
-/// Called with `(command_name, arguments)` and returns `Result<ClapMcpToolOutput, String>`.
+/// Called with `(command_name, arguments)` and returns `Result<ClapMcpToolOutput, ClapMcpToolError>`.
 /// Used when `reinvocation_safe` is true to avoid spawning subprocesses.
 pub type InProcessToolHandler = Arc<
-    dyn Fn(&str, serde_json::Map<String, serde_json::Value>) -> Result<ClapMcpToolOutput, String>
+    dyn Fn(
+            &str,
+            serde_json::Map<String, serde_json::Value>,
+        ) -> Result<ClapMcpToolOutput, ClapMcpToolError>
         + Send
         + Sync,
 >;
@@ -1210,11 +1262,13 @@ pub async fn serve_schema_json_over_stdio(
                         });
                     }
                     Err(e) => {
+                        let structured_content =
+                            e.structured.as_ref().and_then(|v| v.as_object().cloned());
                         return Ok(CallToolResult {
-                            content: vec![ContentBlock::text_content(e)],
+                            content: vec![ContentBlock::text_content(e.message)],
                             is_error: Some(true),
                             meta: None,
-                            structured_content: None,
+                            structured_content,
                         });
                     }
                 }

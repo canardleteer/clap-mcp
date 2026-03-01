@@ -3,6 +3,7 @@
 //! Subcommands launch different example servers:
 //! - `subcommands` (default): Basic subcommands example with text and structured output
 //! - `structured`: Structured output only
+//! - `result-output`: Result<T, E> in #[clap_mcp_output], error responses
 //! - `tracing-bridge`: With tracing integration (requires --features tracing)
 //! - `log-bridge`: With log crate forwarding (requires --features log)
 //! - `async-sleep`: Async tokio CLI with 3 sleep tasks, dedicated thread (requires --features tracing)
@@ -133,6 +134,8 @@ enum Cli {
     StructSubcommand,
     /// Test the optional_commands_and_args example (skip, requires)
     OptionalCommandsAndArgs,
+    /// Test the result_output example (Result<T, E>, error responses)
+    ResultOutput,
     /// Test the structured output example
     Structured,
     /// Test the tracing_bridge example (requires --features tracing)
@@ -451,6 +454,7 @@ async fn main() -> SdkResult<()> {
         Cli::Subcommands => "subcommands",
         Cli::StructSubcommand => "struct_subcommand",
         Cli::OptionalCommandsAndArgs => "optional_commands_and_args",
+        Cli::ResultOutput => "result_output",
         Cli::Structured => "structured",
         #[cfg(feature = "tracing")]
         Cli::TracingBridge => "tracing_bridge",

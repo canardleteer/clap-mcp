@@ -99,6 +99,33 @@ fn get_clap_mcp_output_type(attrs: &[syn::Attribute]) -> Option<syn::Ident> {
     None
 }
 
+/// Parses `#[clap_mcp_error_type = "TypeName"]` from a variant's attributes.
+fn get_clap_mcp_error_type(attrs: &[syn::Attribute]) -> Option<syn::Ident> {
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp_error_type") {
+            continue;
+        }
+        if let Meta::NameValue(MetaNameValue { value, .. }) = &attr.meta
+            && let Expr::Lit(lit) = value
+            && let Lit::Str(s) = &lit.lit
+            && let Ok(ident) = syn::parse_str::<syn::Ident>(&s.value())
+        {
+            return Some(ident);
+        }
+    }
+    None
+}
+
+/// Returns true if the variant has `#[clap_mcp_output_result]` (expression returns Result).
+fn has_clap_mcp_output_result(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if attr.path().is_ident("clap_mcp_output_result") {
+            return true;
+        }
+    }
+    false
+}
+
 /// Returns true if the field has `#[command(subcommand)]`.
 fn field_has_command_subcommand(attrs: &[syn::Attribute]) -> bool {
     for attr in attrs {
@@ -311,6 +338,15 @@ fn is_option_type(ty: &Type) -> bool {
 ///
 /// When present, output is structured JSON. The expression must produce a `Serialize` type.
 ///
+/// ## `#[clap_mcp_output_result]` (on variant, with `clap_mcp_output`)
+///
+/// When present, the expression returns `Result<T, E>`. `Ok(value)` produces normal output;
+/// `Err(e)` produces an MCP error response (`is_error: true`).
+///
+/// ## `#[clap_mcp_error_type = "TypeName"]` (on variant, with `clap_mcp_output_result`)
+///
+/// When present and `E: Serialize`, errors are serialized as structured JSON in the response.
+///
 /// ## `#[clap_mcp(skip)]` (on variant or field)
 ///
 /// Exclude the subcommand or argument from MCP exposure.
@@ -343,7 +379,15 @@ fn is_option_type(ty: &Type) -> bool {
 /// ```
 #[proc_macro_derive(
     ClapMcp,
-    attributes(clap_mcp, clap_mcp_output, clap_mcp_output_type, command, arg)
+    attributes(
+        clap_mcp,
+        clap_mcp_output,
+        clap_mcp_output_type,
+        clap_mcp_output_result,
+        clap_mcp_error_type,
+        command,
+        arg
+    )
 )]
 pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -409,7 +453,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
 
             quote! {
                 impl clap_mcp::ClapMcpToolExecutor for #name {
-                    fn execute_for_mcp(self) -> clap_mcp::ClapMcpToolOutput {
+                    fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
                         match self {
                             #(#arms),*
                         }
@@ -437,7 +481,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                     let body = if is_option_type(&field.ty) {
                         quote! {
                             self.#field_ident.map_or_else(
-                                || clap_mcp::ClapMcpToolOutput::Text(String::new()),
+                                || Ok(clap_mcp::ClapMcpToolOutput::Text(String::new())),
                                 |c| c.execute_for_mcp(),
                             )
                         }
@@ -448,7 +492,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                     };
                     quote! {
                         impl clap_mcp::ClapMcpToolExecutor for #name {
-                            fn execute_for_mcp(self) -> clap_mcp::ClapMcpToolOutput {
+                            fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
                                 #body
                             }
                         }
@@ -456,8 +500,8 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                 }
                 None => quote! {
                     impl clap_mcp::ClapMcpToolExecutor for #name {
-                        fn execute_for_mcp(self) -> clap_mcp::ClapMcpToolOutput {
-                            clap_mcp::ClapMcpToolOutput::Text(format!("{:?}", self))
+                        fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+                            Ok(clap_mcp::ClapMcpToolOutput::Text(format!("{:?}", self)))
                         }
                     }
                 },
@@ -465,8 +509,8 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
         }
         _ => quote! {
             impl clap_mcp::ClapMcpToolExecutor for #name {
-                fn execute_for_mcp(self) -> clap_mcp::ClapMcpToolOutput {
-                    clap_mcp::ClapMcpToolOutput::Text(format!("{:?}", self))
+                fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+                    Ok(clap_mcp::ClapMcpToolOutput::Text(format!("{:?}", self)))
                 }
             }
         },
@@ -655,19 +699,58 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     }
 }
 
-/// Builds the output expression for a variant: either Text(expr) or Structured(serde_json::to_value(expr).unwrap()).
+/// Builds the output expression for a variant: produces `Result<ClapMcpToolOutput, ClapMcpToolError>`.
+/// For normal expressions: `Ok(Text(expr))` or `Ok(Structured(...))`.
+/// For `#[clap_mcp_output_result]`: `match expr { Ok(v) => Ok(...), Err(e) => Err(...) }`.
 fn build_output_expr(
     v: &syn::Variant,
     default: proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     let output_expr = get_clap_mcp_output_expr(&v.attrs).unwrap_or(default);
-    if let Some(_output_type) = get_clap_mcp_output_type(&v.attrs) {
+    let is_result = has_clap_mcp_output_result(&v.attrs);
+    let error_type = get_clap_mcp_error_type(&v.attrs);
+
+    let success_output = if get_clap_mcp_output_type(&v.attrs).is_some() {
         quote! {
-            clap_mcp::ClapMcpToolOutput::Structured(::serde_json::to_value(#output_expr).expect("structured output must serialize"))
+            clap_mcp::ClapMcpToolOutput::Structured(::serde_json::to_value(v).expect("structured output must serialize"))
         }
     } else {
         quote! {
-            clap_mcp::ClapMcpToolOutput::Text(#output_expr)
+            clap_mcp::ClapMcpToolOutput::Text(v)
+        }
+    };
+
+    if is_result {
+        let err_conversion = if error_type.is_some() {
+            quote! {
+                clap_mcp::ClapMcpToolError::structured(
+                    format!("{:?}", e),
+                    ::serde_json::to_value(&e).unwrap_or_else(|_| ::serde_json::Value::String(format!("{:?}", e)))
+                )
+            }
+        } else {
+            quote! {
+                clap_mcp::ClapMcpToolError::text(format!("{:?}", e))
+            }
+        };
+        quote! {
+            match #output_expr {
+                Ok(v) => Ok(#success_output),
+                Err(e) => Err(#err_conversion),
+            }
+        }
+    } else {
+        let normal_output = if get_clap_mcp_output_type(&v.attrs).is_some() {
+            quote! {
+                clap_mcp::ClapMcpToolOutput::Structured(::serde_json::to_value(#output_expr).expect("structured output must serialize"))
+            }
+        } else {
+            quote! {
+                clap_mcp::ClapMcpToolOutput::Text(#output_expr)
+            }
+        };
+        quote! {
+            Ok(#normal_output)
         }
     }
 }
