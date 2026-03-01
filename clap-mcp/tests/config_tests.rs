@@ -50,8 +50,7 @@ struct SubResult {
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
 #[command(name = "test-cli-structured")]
 enum TestCliStructured {
-    #[clap_mcp_output_type = "SubResult"]
-    #[clap_mcp_output = "SubResult { difference: a - b, minuend: a, subtrahend: b }"]
+    #[clap_mcp_output_json = "SubResult { difference: a - b, minuend: a, subtrahend: b }"]
     Sub { a: i32, b: i32 },
 }
 
@@ -88,7 +87,7 @@ struct TestStructOptionalCli {
 
 #[derive(Debug, Subcommand, ClapMcp)]
 enum TestStructOptionalCommands {
-    #[clap_mcp_output = "\"done\".into()"]
+    #[clap_mcp_output_literal = "done"]
     Done,
 }
 
@@ -231,7 +230,8 @@ fn test_clap_mcp_runnable() {
 #[test]
 fn test_clap_mcp_runnable_default_debug() {
     let result = TestCliDefaults::Foo.run();
-    assert!(result.contains("Foo"));
+    // Unit variants without #[clap_mcp_output] default to kebab-case variant name
+    assert_eq!(result, "foo");
 }
 
 #[test]
@@ -362,10 +362,10 @@ fn test_struct_optional_cli_executor_none() {
 #[clap_mcp(parallel_safe = false, reinvocation_safe)]
 #[command(name = "test-skip-requires")]
 enum TestSkipRequires {
-    #[clap_mcp_output = "\"exposed\".into()"]
+    #[clap_mcp_output_literal = "exposed"]
     Exposed,
     #[clap_mcp(skip)]
-    #[clap_mcp_output = "\"hidden\".into()"]
+    #[clap_mcp_output_literal = "hidden"]
     Hidden,
     #[clap_mcp_output = "format!(\"path: {:?}\", path)"]
     Read {
@@ -375,7 +375,7 @@ enum TestSkipRequires {
     },
     /// Variant-level requires: path and input become required in MCP
     #[clap_mcp(requires = "path, input")]
-    #[clap_mcp_output = "format!(\"path={}, input={}\", path.as_deref().unwrap_or(\"\"), input.as_deref().unwrap_or(\"\"))"]
+    #[clap_mcp_output = "format!(\"path={}, input={}\", clap_mcp::opt_str(&path, \"\"), clap_mcp::opt_str(&input, \"\"))"]
     Process {
         #[arg(long)]
         path: Option<String>,

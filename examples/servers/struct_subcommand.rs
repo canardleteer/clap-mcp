@@ -23,7 +23,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand, ClapMcp)]
 enum Commands {
-    #[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
+    #[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
     Greet {
         #[arg(long)]
         name: Option<String>,
@@ -35,8 +35,7 @@ enum Commands {
         #[arg(long)]
         b: i32,
     },
-    #[clap_mcp_output_type = "SubResult"]
-    #[clap_mcp_output = "SubResult { difference: a - b, minuend: a, subtrahend: b }"]
+    #[clap_mcp_output_json = "SubResult { difference: a - b, minuend: a, subtrahend: b }"]
     Sub {
         #[arg(long)]
         a: i32,

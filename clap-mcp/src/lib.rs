@@ -11,7 +11,7 @@
 //! #[derive(Parser, ClapMcp)]
 //! #[clap_mcp(reinvocation_safe, parallel_safe = false)]
 //! enum Cli {
-//!     #[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
+//!     #[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
 //!     Greet { #[arg(long)] name: Option<String> },
 //! }
 //!
@@ -136,10 +136,88 @@ impl From<&str> for ClapMcpToolError {
     }
 }
 
+/// Helper for unwrapping `Option` in `#[clap_mcp_output]` expressions.
+///
+/// Use in format strings to avoid `as_deref().unwrap_or("default")` boilerplate.
+///
+/// # Example
+///
+/// ```rust
+/// use clap_mcp::opt_str;
+///
+/// let name: Option<String> = Some("Alice".into());
+/// assert_eq!(opt_str(&name, "world"), "Alice");
+///
+/// let none: Option<String> = None;
+/// assert_eq!(opt_str(&none, "world"), "world");
+/// ```
+pub fn opt_str<'a, T: AsRef<str>>(opt: &'a Option<T>, default: &'a str) -> &'a str {
+    opt.as_ref().map(|s| s.as_ref()).unwrap_or(default)
+}
+
+/// Runs a closure with stdout captured. Returns `(result, captured_stdout)`.
+/// Unix-only; on Windows returns empty captured string.
+#[cfg(unix)]
+fn run_with_stdout_capture<R, F>(f: F) -> (R, String)
+where
+    F: FnOnce() -> R,
+{
+    use std::io::{Read, Write};
+    use std::os::unix::io::FromRawFd;
+
+    let mut fds: [libc::c_int; 2] = [0, 0];
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return (f(), String::new());
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+
+    let stdout_fd = libc::STDOUT_FILENO;
+    let saved_stdout = unsafe { libc::dup(stdout_fd) };
+    if saved_stdout < 0 {
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
+        return (f(), String::new());
+    }
+
+    if unsafe { libc::dup2(write_fd, stdout_fd) } < 0 {
+        unsafe {
+            libc::close(saved_stdout);
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
+        return (f(), String::new());
+    }
+
+    let result = f();
+
+    let _ = std::io::stdout().flush();
+    unsafe {
+        libc::dup2(saved_stdout, stdout_fd);
+        libc::close(saved_stdout);
+        libc::close(write_fd);
+    }
+
+    let mut reader = unsafe { std::fs::File::from_raw_fd(read_fd) };
+    let mut captured = String::new();
+    let _ = reader.read_to_string(&mut captured);
+
+    (result, captured)
+}
+
+#[cfg(not(unix))]
+fn run_with_stdout_capture<R, F>(f: F) -> (R, String)
+where
+    F: FnOnce() -> R,
+{
+    (f(), String::new())
+}
+
 /// Output produced by a CLI command for MCP tool results.
 ///
 /// Use `Text` for plain string output; use `Structured` for serializable JSON
-/// (when using `#[clap_mcp_output_type = "TypeName"]`).
+/// (when using `#[clap_mcp_output_json = "expr"]`).
 ///
 /// # Example
 ///
@@ -219,8 +297,8 @@ impl ClapMcpToolOutput {
 /// Produces MCP tool output (text or structured) for a parsed CLI value.
 ///
 /// Implemented by the `#[derive(ClapMcp)]` macro. Used for in-process execution.
-/// Use `#[clap_mcp_output = "expr"]` for text output, or `#[clap_mcp_output_type = "TypeName"]`
-/// with `#[clap_mcp_output = "expr"]` for structured JSON output.
+/// Use `#[clap_mcp_output = "expr"]` for text output, or `#[clap_mcp_output_json = "expr"]`
+/// for structured JSON output.
 ///
 /// When using `#[clap_mcp_output_result]` with `Result<T, E>` expressions, `Err(e)` yields
 /// [`ClapMcpToolError`] and the MCP client receives an error response (`is_error: true`).
@@ -310,6 +388,13 @@ pub struct ClapMcpServeOptions {
     /// When set, log messages received on this channel are forwarded to the MCP client
     /// via `notifications/message`. Enables the logging capability and instructions.
     pub log_rx: Option<tokio::sync::mpsc::Receiver<LoggingMessageNotificationParams>>,
+
+    /// When true and running in-process, capture stdout written during tool execution
+    /// and merge it with Text output. Only has effect when `reinvocation_safe` is true.
+    /// Unix only; **not available on Windows** (this field does not exist there; code
+    /// setting it will fail to compile on Windows).
+    #[cfg(unix)]
+    pub capture_stdout: bool,
 }
 
 /// Log interpretation hint for MCP clients (included in `instructions` when logging is enabled).
@@ -772,7 +857,7 @@ where
 /// #[derive(Parser, ClapMcp)]
 /// #[clap_mcp(reinvocation_safe, parallel_safe = false)]
 /// enum Cli {
-///     #[clap_mcp_output = "format!(\"done\")"]
+///     #[clap_mcp_output_literal = "done"]
 ///     Foo,
 /// }
 ///
@@ -840,6 +925,10 @@ where
 
         let in_process_handler = if config.reinvocation_safe {
             let schema = schema.clone();
+            #[cfg(unix)]
+            let capture_stdout = serve_options.capture_stdout;
+            #[cfg(not(unix))]
+            let capture_stdout = false;
             Some(Arc::new(
                 move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
                     validate_required_args(&schema, cmd, &args).map_err(ClapMcpToolError::text)?;
@@ -849,7 +938,30 @@ where
                         .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
                     let cli = T::from_arg_matches(&matches)
                         .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
-                    <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
+
+                    if capture_stdout {
+                        let (result, captured) = run_with_stdout_capture(|| {
+                            <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
+                        });
+                        match result {
+                            Ok(ClapMcpToolOutput::Text(s)) if !captured.is_empty() => {
+                                let merged = if s.is_empty() {
+                                    captured.trim().to_string()
+                                } else {
+                                    let cap = captured.trim();
+                                    if cap.is_empty() {
+                                        s
+                                    } else {
+                                        format!("{s}\n{cap}")
+                                    }
+                                };
+                                Ok(ClapMcpToolOutput::Text(merged))
+                            }
+                            other => other,
+                        }
+                    } else {
+                        <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
+                    }
                 },
             ) as InProcessToolHandler)
         } else {
@@ -1497,8 +1609,7 @@ pub fn serve_schema_json_over_stdio_blocking(
 /// #[derive(Parser, ClapMcp)]
 /// #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
 /// enum Cli {
-///     #[clap_mcp_output_type = "SleepResult"]
-///     #[clap_mcp_output = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo())"]
+///     #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo())"]
 ///     SleepDemo,
 /// }
 /// ```

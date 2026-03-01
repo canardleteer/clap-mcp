@@ -82,18 +82,38 @@ fn get_clap_mcp_output_expr(attrs: &[syn::Attribute]) -> Option<proc_macro2::Tok
     None
 }
 
-/// Parses `#[clap_mcp_output_type = "TypeName"]` from a variant's attributes.
-fn get_clap_mcp_output_type(attrs: &[syn::Attribute]) -> Option<syn::Ident> {
+/// Parses `#[clap_mcp_output_json = "expr"]` from a variant's attributes.
+/// Single attribute for structured JSON output (replaces clap_mcp_output_type + clap_mcp_output).
+fn get_clap_mcp_output_json(attrs: &[syn::Attribute]) -> Option<proc_macro2::TokenStream> {
     for attr in attrs {
-        if !attr.path().is_ident("clap_mcp_output_type") {
+        if !attr.path().is_ident("clap_mcp_output_json") {
+            continue;
+        }
+        if let Meta::NameValue(MetaNameValue { value, .. }) = &attr.meta {
+            if let Expr::Lit(lit) = value
+                && let Lit::Str(s) = &lit.lit
+                && let Ok(expr) = syn::parse_str::<Expr>(&s.value())
+            {
+                return Some(quote! { #expr });
+            }
+            return Some(quote! { #value });
+        }
+    }
+    None
+}
+
+/// Parses `#[clap_mcp_output_literal = "string"]` from a variant's attributes.
+/// Generates `"string".to_string()`.
+fn get_clap_mcp_output_literal(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp_output_literal") {
             continue;
         }
         if let Meta::NameValue(MetaNameValue { value, .. }) = &attr.meta
             && let Expr::Lit(lit) = value
             && let Lit::Str(s) = &lit.lit
-            && let Ok(ident) = syn::parse_str::<syn::Ident>(&s.value())
         {
-            return Some(ident);
+            return Some(s.value());
         }
     }
     None
@@ -334,11 +354,15 @@ fn is_option_type(ty: &Type) -> bool {
 /// Rust expression (as a string) that produces the tool output. Use `format!(...)` for text.
 /// Variant field names are in scope.
 ///
-/// ## `#[clap_mcp_output_type = "TypeName"]` (on variant, with `clap_mcp_output`)
+/// ## `#[clap_mcp_output_json = "expr"]` (on variant)
 ///
-/// When present, output is structured JSON. The expression must produce a `Serialize` type.
+/// Single attribute for structured JSON output. The expression must produce a `Serialize` type.
 ///
-/// ## `#[clap_mcp_output_result]` (on variant, with `clap_mcp_output`)
+/// ## `#[clap_mcp_output_literal = "string"]` (on variant)
+///
+/// Shorthand for constant string output. Generates `"string".to_string()`.
+///
+/// ## `#[clap_mcp_output_result]` (on variant, with `clap_mcp_output` or `clap_mcp_output_json`)
 ///
 /// When present, the expression returns `Result<T, E>`. `Ok(value)` produces normal output;
 /// `Err(e)` produces an MCP error response (`is_error: true`).
@@ -370,10 +394,9 @@ fn is_option_type(ty: &Type) -> bool {
 /// #[derive(Debug, Parser, clap_mcp::ClapMcp)]
 /// #[clap_mcp(reinvocation_safe, parallel_safe = false)]
 /// enum Cli {
-///     #[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
+///     #[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
 ///     Greet { #[arg(long)] name: Option<String> },
-///     #[clap_mcp_output_type = "SumResult"]
-///     #[clap_mcp_output = "SumResult { sum: a + b }"]
+///     #[clap_mcp_output_json = "SumResult { sum: a + b }"]
 ///     Add { #[arg(long)] a: i32, #[arg(long)] b: i32 },
 /// }
 /// ```
@@ -382,7 +405,8 @@ fn is_option_type(ty: &Type) -> bool {
     attributes(
         clap_mcp,
         clap_mcp_output,
-        clap_mcp_output_type,
+        clap_mcp_output_json,
+        clap_mcp_output_literal,
         clap_mcp_output_result,
         clap_mcp_error_type,
         command,
@@ -426,7 +450,12 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                     let variant_name = &v.ident;
                     let (pat, output) = if v.fields.is_empty() {
                         let pat = quote! { #name::#variant_name };
-                        let out = build_output_expr(v, quote! { format!("{:?}", self) });
+                        let default_out = {
+                            let kebab = ident_to_kebab(&v.ident);
+                            let lit = syn::LitStr::new(&kebab, proc_macro2::Span::call_site());
+                            quote! { #lit.to_string() }
+                        };
+                        let out = build_output_expr(v, default_out);
                         (pat, out)
                     } else {
                         let names: Vec<_> = v
@@ -706,11 +735,20 @@ fn build_output_expr(
     v: &syn::Variant,
     default: proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
-    let output_expr = get_clap_mcp_output_expr(&v.attrs).unwrap_or(default);
+    let output_expr = get_clap_mcp_output_json(&v.attrs)
+        .or_else(|| {
+            get_clap_mcp_output_literal(&v.attrs).map(|s| {
+                let lit = syn::LitStr::new(&s, proc_macro2::Span::call_site());
+                quote! { #lit.to_string() }
+            })
+        })
+        .or_else(|| get_clap_mcp_output_expr(&v.attrs))
+        .unwrap_or(default);
+    let is_structured = get_clap_mcp_output_json(&v.attrs).is_some();
     let is_result = has_clap_mcp_output_result(&v.attrs);
     let error_type = get_clap_mcp_error_type(&v.attrs);
 
-    let success_output = if get_clap_mcp_output_type(&v.attrs).is_some() {
+    let success_output = if is_structured {
         quote! {
             clap_mcp::ClapMcpToolOutput::Structured(::serde_json::to_value(v).expect("structured output must serialize"))
         }
@@ -740,7 +778,7 @@ fn build_output_expr(
             }
         }
     } else {
-        let normal_output = if get_clap_mcp_output_type(&v.attrs).is_some() {
+        let normal_output = if is_structured {
             quote! {
                 clap_mcp::ClapMcpToolOutput::Structured(::serde_json::to_value(#output_expr).expect("structured output must serialize"))
             }

@@ -19,7 +19,7 @@ use serde::Serialize;
 )]
 enum Cli {
     /// Greet someone (or the world) once.
-    #[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
+    #[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
     Greet {
         /// Optional name to greet.
         #[arg(long)]
@@ -34,8 +34,7 @@ enum Cli {
         b: i32,
     },
     /// Subtract the second integer from the first (returns structured output).
-    #[clap_mcp_output_type = "SubResult"]
-    #[clap_mcp_output = "SubResult { difference: a - b, minuend: a, subtrahend: b }"]
+    #[clap_mcp_output_json = "SubResult { difference: a - b, minuend: a, subtrahend: b }"]
     Sub {
         /// Minuend.
         a: i32,

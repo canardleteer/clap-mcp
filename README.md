@@ -85,7 +85,7 @@ use clap_mcp_macros::ClapMcp;
 #[command(name = "myapp")]
 enum Cli {
     /// Say hello.
-    #[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
+    #[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
     Greet {
         #[arg(long)]
         name: Option<String>,
@@ -205,10 +205,10 @@ enum Cli {
 ```rust
 #[derive(Parser, ClapMcp)]
 enum Cli {
-    #[clap_mcp_output = "\"ok\".into()"]
+    #[clap_mcp_output_literal = "ok"]
     Public,
     #[clap_mcp(skip)]
-    #[clap_mcp_output = "\"hidden\".into()"]
+    #[clap_mcp_output_literal = "hidden"]
     Internal,
 }
 ```
@@ -255,7 +255,7 @@ When your CLI has async subcommands (e.g. `tokio::sleep`, `tokio::spawn`), use
 ```rust
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
 enum Cli {
-    #[clap_mcp_output = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || my_async_fn())"]
+    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || my_async_fn())"]
     SleepDemo,
 }
 ```
@@ -265,7 +265,7 @@ enum Cli {
 ```rust
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime)]
 enum Cli {
-    #[clap_mcp_output = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || my_async_fn())"]
+    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || my_async_fn())"]
     SleepDemo,
 }
 ```
@@ -318,7 +318,7 @@ variant's fields, so field names are directly in scope:
 
 ```rust
 enum Cli {
-    #[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
+    #[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
     Greet {
         #[arg(long)]
         name: Option<String>,   // `name` is in scope inside the expression
@@ -326,26 +326,52 @@ enum Cli {
 }
 ```
 
-Variants without `#[clap_mcp_output]` default to `format!("{:?}", self)`.
+Variants without `#[clap_mcp_output]` default to the variant name in kebab-case
+for unit variants, or `format!("{:?}", self)` for struct variants.
 
-### `#[clap_mcp_output_type = "TypeName"]`
+### `#[clap_mcp_output_json = "expr"]`
 
-When paired with `#[clap_mcp_output]`, produces **structured JSON** instead of
-plain text. The expression must evaluate to a type that implements `Serialize`:
+Single attribute for **structured JSON** output. The expression must evaluate to
+a type that implements `Serialize`:
 
 ```rust
 #[derive(Serialize)]
 struct SubResult { difference: i32 }
 
 enum Cli {
-    #[clap_mcp_output_type = "SubResult"]
-    #[clap_mcp_output = "SubResult { difference: a - b }"]
+    #[clap_mcp_output_json = "SubResult { difference: a - b }"]
     Sub { a: i32, b: i32 },
 }
 ```
 
 The MCP response will include both a `content` text block (pretty-printed JSON)
 and a `structuredContent` object.
+
+### `#[clap_mcp_output_literal = "string"]`
+
+Shorthand for constant string output. Generates `"string".to_string()`:
+
+```rust
+#[clap_mcp_output_literal = "done"]
+Public,
+```
+
+### `ClapMcpServeOptions::capture_stdout`
+
+When `true` and running in-process, captures stdout written during tool execution
+and merges it with Text output. Only has effect when `reinvocation_safe = true`
+(in-process execution). **Unix only** — the field is not present on Windows, so
+code that sets `capture_stdout` will not compile on Windows. Subprocess mode
+already captures stdout via `Command::output()`.
+
+### `clap_mcp::opt_str` — helper for optional args
+
+Use in `#[clap_mcp_output]` to avoid `as_deref().unwrap_or("default")` boilerplate:
+
+```rust
+#[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
+Greet { #[arg(long)] name: Option<String> },
+```
 
 ### `#[clap_mcp_output_result]` — fallible output
 
