@@ -45,12 +45,15 @@ ecosystem.
 
 ## Quick start
 
-Add `clap-mcp` to your `Cargo.toml`:
+Add `clap-mcp` and `clap-mcp-macros` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-clap-mcp = "0.0.1-rc.3"
+clap-mcp = "0.0.1-rc.5"
+clap-mcp-macros = "0.0.1-rc.5"
 ```
+
+For derive usage, `use clap_mcp_macros::ClapMcp` for brevity so you can write `#[derive(ClapMcp)]`.
 
 ### Imperative (existing clap CLI)
 
@@ -76,8 +79,9 @@ tool. This uses default config (subprocess execution, serialized tool calls):
 
 ```rust
 use clap::Parser;
+use clap_mcp_macros::ClapMcp;
 
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[derive(Debug, Parser, ClapMcp)]
 #[command(name = "myapp")]
 enum Cli {
     /// Say hello.
@@ -100,7 +104,9 @@ Use `#[clap_mcp(...)]` to declare execution safety, and
 `parse_or_serve_mcp_attr` to pick up that config automatically:
 
 ```rust
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+use clap_mcp_macros::ClapMcp;
+
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(parallel_safe = false, reinvocation_safe)]
 #[command(name = "myapp")]
 enum Cli {
@@ -123,7 +129,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-clap-mcp = { version = "0.0.1-rc.3", features = ["tracing"] }
+clap-mcp = { version = "0.0.1-rc.5", features = ["tracing"] }
 ```
 
 ## Execution safety configuration
@@ -148,7 +154,9 @@ CLIs differ in how safely they can be invoked over MCP. Two flags control this:
 Use `#[derive(ClapMcp)]` and `#[clap_mcp(...)]` on your CLI type:
 
 ```rust
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+use clap_mcp_macros::ClapMcp;
+
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(parallel_safe = false, reinvocation_safe)]
 #[command(...)]
 enum Cli {

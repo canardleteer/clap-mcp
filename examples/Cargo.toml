@@ -1,0 +1,56 @@
+[package]
+name = "clap-mcp-examples"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Examples for clap-mcp"
+
+[dependencies]
+clap-mcp = { path = "../clap-mcp", features = ["tracing", "log", "derive"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rust-mcp-sdk = { version = "0.8.3", default-features = false, features = ["server", "client", "stdio"] }
+async-trait = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["registry", "fmt"] }
+log = "0.4"
+
+[[bin]]
+name = "subcommands"
+path = "servers/subcommands.rs"
+
+[[bin]]
+name = "structured"
+path = "servers/structured.rs"
+
+[[bin]]
+name = "tracing_bridge"
+path = "servers/tracing_bridge.rs"
+required-features = ["tracing"]
+
+[[bin]]
+name = "log_bridge"
+path = "servers/log_bridge.rs"
+required-features = ["log"]
+
+[[bin]]
+name = "async_sleep"
+path = "servers/async_sleep.rs"
+required-features = ["tracing"]
+
+[[bin]]
+name = "async_sleep_shared"
+path = "servers/async_sleep_shared.rs"
+required-features = ["tracing"]
+
+[[bin]]
+name = "client"
+path = "client.rs"
+required-features = ["tracing"]
+
+[features]
+default = ["tracing", "log"]
+tracing = []
+log = []

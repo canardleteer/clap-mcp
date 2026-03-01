@@ -1,7 +1,7 @@
 //! MCP client example that tests clap-mcp servers.
 //!
 //! Subcommands launch different example servers:
-//! - `derive` (default): Basic derive example with text and structured output
+//! - `subcommands` (default): Basic subcommands example with text and structured output
 //! - `structured`: Structured output only
 //! - `tracing-bridge`: With tracing integration (requires --features tracing)
 //! - `log-bridge`: With log crate forwarding (requires --features log)
@@ -127,8 +127,8 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Cli {
-    /// Test the derive example (default)
-    Derive,
+    /// Test the subcommands example (default)
+    Subcommands,
     /// Test the structured output example
     Structured,
     /// Test the tracing_bridge example (requires --features tracing)
@@ -151,7 +151,13 @@ fn server_args(example: &str) -> Vec<String> {
         "log_bridge" => Some("log"),
         _ => None,
     };
-    let mut args = vec!["run".into(), "--example".into(), example.into()];
+    let mut args = vec![
+        "run".into(),
+        "-p".into(),
+        "clap-mcp-examples".into(),
+        "--bin".into(),
+        example.into(),
+    ];
     if let Some(f) = feature {
         args.push("--features".into());
         args.push(f.into());
@@ -205,8 +211,8 @@ async fn run_client(example: &str, json: bool) -> SdkResult<()> {
         println!("  {}: {}", t.name, t.description.as_deref().unwrap_or(""));
     }
 
-    if example == "derive" {
-        run_derive_tests(client.as_ref()).await?;
+    if example == "subcommands" {
+        run_subcommands_tests(client.as_ref()).await?;
     } else if example == "structured" {
         run_structured_tests(client.as_ref()).await?;
     } else if example == "async_sleep" || example == "async_sleep_shared" {
@@ -219,7 +225,7 @@ async fn run_client(example: &str, json: bool) -> SdkResult<()> {
     Ok(())
 }
 
-async fn run_derive_tests(client: &impl McpClient) -> SdkResult<()> {
+async fn run_subcommands_tests(client: &impl McpClient) -> SdkResult<()> {
     let mut greet_args = serde_json::Map::new();
     greet_args.insert("name".into(), serde_json::json!("Rust"));
     let greet_result = client
@@ -363,7 +369,7 @@ async fn run_logging_tests(client: &impl McpClient) -> SdkResult<()> {
 async fn main() -> SdkResult<()> {
     let args = Args::parse();
     let example = match args.command {
-        Cli::Derive => "derive",
+        Cli::Subcommands => "subcommands",
         Cli::Structured => "structured",
         #[cfg(feature = "tracing")]
         Cli::TracingBridge => "tracing_bridge",

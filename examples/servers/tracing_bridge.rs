@@ -1,11 +1,12 @@
 //! Example CLI with MCP logging (tracing) integration.
 //!
-//! Run: `cargo run --example tracing_bridge --features tracing -- echo "hello"`
-//! Run: `cargo run --example tracing_bridge --features tracing -- --mcp`
+//! Run: `cargo run -p clap-mcp-examples --bin tracing_bridge --features tracing -- echo "hello"`
+//! Run: `cargo run -p clap-mcp-examples --bin tracing_bridge --features tracing -- --mcp`
 //!
 //! When run with --mcp, tracing events are forwarded to the MCP client.
 
 use clap::Parser;
+use clap_mcp::ClapMcp;
 
 #[cfg(feature = "tracing")]
 use tracing::info;
@@ -13,7 +14,7 @@ use tracing::info;
 #[cfg(feature = "tracing")]
 use clap_mcp::ClapMcpConfigProvider;
 
-#[derive(Debug, Parser, clap_mcp::ClapMcp)]
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
 #[command(
     name = "tracing-bridge-example",
@@ -62,6 +63,6 @@ fn main() {
 #[cfg(not(feature = "tracing"))]
 fn main() {
     eprintln!("This example requires the 'tracing' feature. Run with:");
-    eprintln!("  cargo run --example tracing_bridge --features tracing -- --mcp");
+    eprintln!("  cargo run -p clap-mcp-examples --bin tracing_bridge --features tracing -- --mcp");
     std::process::exit(1);
 }
