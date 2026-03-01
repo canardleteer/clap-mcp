@@ -347,6 +347,38 @@ enum Cli {
 The MCP response will include both a `content` text block (pretty-printed JSON)
 and a `structuredContent` object.
 
+### `#[clap_mcp_output_result]` — fallible output
+
+When the expression returns `Result<T, E>`, add `#[clap_mcp_output_result]`:
+
+- `Ok(value)` → normal MCP output (Text or Structured)
+- `Err(e)` → MCP error response (`is_error: true`) with the error message
+
+```rust
+enum Cli {
+    #[clap_mcp_output_result]
+    #[clap_mcp_output = "if n >= 0 { Ok(format!(\"sqrt ~{}\", n)) } else { Err(format!(\"negative: {}\", n)) }"]
+    Sqrt { #[arg(long)] n: i32 },
+}
+```
+
+### `#[clap_mcp_error_type = "TypeName"]` — structured errors
+
+When `E: Serialize`, add `#[clap_mcp_error_type = "TypeName"]` to include the
+serialized error in the MCP response's `structuredContent`:
+
+```rust
+#[derive(Serialize)]
+struct MyError { code: i32, msg: String }
+
+enum Cli {
+    #[clap_mcp_output_result]
+    #[clap_mcp_error_type = "MyError"]
+    #[clap_mcp_output = "if x > 0 { Ok(\"ok\".into()) } else { Err(MyError { code: -1, msg: \"invalid\".into() }) }"]
+    Check { #[arg(long)] x: i32 },
+}
+```
+
 ## Logging and observability
 
 clap-mcp can forward application log messages to MCP clients as

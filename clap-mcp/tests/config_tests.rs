@@ -266,7 +266,7 @@ fn test_logging_constants() {
 #[test]
 fn test_clap_mcp_tool_executor_structured() {
     let sub = TestCliStructured::Sub { a: 10, b: 3 };
-    let out = sub.execute_for_mcp();
+    let out = sub.execute_for_mcp().expect("should succeed");
     let v = out.as_structured().expect("should be structured");
     assert_eq!(v.get("difference").and_then(|x| x.as_i64()), Some(7));
     assert_eq!(v.get("minuend").and_then(|x| x.as_i64()), Some(10));
@@ -336,7 +336,7 @@ fn test_struct_cli_executor_delegates() {
     let cli = TestStructCli {
         command: TestStructCommands::Add { a: 3, b: 7 },
     };
-    let out = cli.execute_for_mcp();
+    let out = cli.execute_for_mcp().expect("should succeed");
     assert_eq!(out.as_text(), Some("sum: 10"));
 }
 
@@ -345,14 +345,14 @@ fn test_struct_optional_cli_executor_some() {
     let cli = TestStructOptionalCli {
         command: Some(TestStructOptionalCommands::Done),
     };
-    let out = cli.execute_for_mcp();
+    let out = cli.execute_for_mcp().expect("should succeed");
     assert_eq!(out.as_text(), Some("done"));
 }
 
 #[test]
 fn test_struct_optional_cli_executor_none() {
     let cli = TestStructOptionalCli { command: None };
-    let out = cli.execute_for_mcp();
+    let out = cli.execute_for_mcp().expect("should succeed");
     assert_eq!(out.as_text(), Some(""));
 }
 
@@ -412,6 +412,88 @@ fn test_clap_mcp_requires_arg() {
         .find(|a| a.id == "path")
         .expect("path arg");
     assert!(path_arg.required, "path should be required in MCP schema");
+}
+
+// --- #[clap_mcp_output_result] Result<T, E> support ---
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[command(name = "test-cli-result")]
+enum TestCliResult {
+    #[clap_mcp_output_result]
+    #[clap_mcp_output = "if n >= 0 { Ok(format!(\"sqrt ~{}\", n)) } else { Err(format!(\"negative: {}\", n)) }"]
+    Sqrt {
+        #[arg(long)]
+        n: i32,
+    },
+    #[clap_mcp_output_result]
+    #[clap_mcp_output = "Ok::<_, String>(format!(\"double: {}\", x * 2))"]
+    Double {
+        #[arg(long)]
+        x: i32,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct MyError {
+    code: i32,
+    msg: String,
+}
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[command(name = "test-cli-result-structured-error")]
+enum TestCliResultStructuredError {
+    #[clap_mcp_output_result]
+    #[clap_mcp_error_type = "MyError"]
+    #[clap_mcp_output = "if x > 0 { Ok(format!(\"ok: {}\", x)) } else { Err(MyError { code: -1, msg: format!(\"invalid: {}\", x) }) }"]
+    Check {
+        #[arg(long)]
+        x: i32,
+    },
+}
+
+#[test]
+fn test_clap_mcp_output_result_ok() {
+    let cli = TestCliResult::Sqrt { n: 42 };
+    let out = cli.execute_for_mcp().expect("should succeed");
+    assert_eq!(out.as_text(), Some("sqrt ~42"));
+}
+
+#[test]
+fn test_clap_mcp_output_result_err() {
+    let cli = TestCliResult::Sqrt { n: -1 };
+    let err = cli.execute_for_mcp().expect_err("should fail");
+    assert!(err.message.contains("negative"));
+    assert!(err.message.contains("-1"));
+    assert!(err.structured.is_none());
+}
+
+#[test]
+fn test_clap_mcp_output_result_double_ok() {
+    let cli = TestCliResult::Double { x: 21 };
+    let out = cli.execute_for_mcp().expect("should succeed");
+    assert_eq!(out.as_text(), Some("double: 42"));
+}
+
+#[test]
+fn test_clap_mcp_output_result_structured_error_ok() {
+    let cli = TestCliResultStructuredError::Check { x: 10 };
+    let out = cli.execute_for_mcp().expect("should succeed");
+    assert_eq!(out.as_text(), Some("ok: 10"));
+}
+
+#[test]
+fn test_clap_mcp_output_result_structured_error_err() {
+    let cli = TestCliResultStructuredError::Check { x: -5 };
+    let err = cli.execute_for_mcp().expect_err("should fail");
+    assert!(err.message.contains("invalid: -5"));
+    let structured = err.structured.expect("should have structured error");
+    assert_eq!(structured.get("code").and_then(|v| v.as_i64()), Some(-1));
+    assert_eq!(
+        structured.get("msg").and_then(|v| v.as_str()),
+        Some("invalid: -5")
+    );
 }
 
 #[test]
