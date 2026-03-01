@@ -5,7 +5,7 @@ This directory contains example CLIs that demonstrate clap-mcp capabilities.
 Run all commands from the **workspace root** (the parent of this `examples/` directory). The examples depend on `clap-mcp` via a path dependency.
 
 - **`client.rs`** — MCP client that exercises the server examples (easiest way to see everything working)
-- **`servers/`** — Example MCP server CLIs (subcommands, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared)
+- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared)
 
 ## Testing with the Client Example
 
@@ -17,6 +17,9 @@ cargo run -p clap-mcp-examples --bin client -- subcommands
 
 # Test structured
 cargo run -p clap-mcp-examples --bin client -- structured
+
+# Test struct_subcommand
+cargo run -p clap-mcp-examples --bin client -- struct-subcommand
 
 # Test tracing_bridge
 cargo run -p clap-mcp-examples --bin client -- tracing-bridge
@@ -48,6 +51,25 @@ cargo run -p clap-mcp-examples --bin subcommands -- sub 10 5
 
 # MCP server mode (exposes tools over stdio)
 cargo run -p clap-mcp-examples --bin subcommands -- --mcp
+```
+
+### struct_subcommand
+
+Struct root with `#[command(subcommand)]`, optional subcommand
+(`Option<Commands>`), and `#[clap_mcp(...)]` on the struct. Output attributes
+live on the subcommand enum variants.
+
+```bash
+# Normal CLI usage (no subcommand)
+cargo run -p clap-mcp-examples --bin struct_subcommand
+
+# With subcommands
+cargo run -p clap-mcp-examples --bin struct_subcommand -- greet --name Rust
+cargo run -p clap-mcp-examples --bin struct_subcommand -- add --a 2 --b 3
+cargo run -p clap-mcp-examples --bin struct_subcommand -- sub --a 10 --b 5
+
+# MCP server mode
+cargo run -p clap-mcp-examples --bin struct_subcommand -- --mcp
 ```
 
 ### structured
@@ -123,10 +145,11 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 
 ## Example Summary
 
-| Example            | Path                         | Demonstrates                                       |
-| ------------------ | ---------------------------- | -------------------------------------------------- |
-| **subcommands**    | `servers/subcommands.rs`     | Text output, structured output, subprocess         |
-| **structured**     | `servers/structured.rs`      | Structured output only (`#[clap_mcp_output_type]`) |
+| Example            | Path                            | Demonstrates                                                       |
+| ------------------ | ------------------------------- | ------------------------------------------------------------------ |
+| **subcommands**    | `servers/subcommands.rs`        | Text output, structured output, subprocess                         |
+| **struct_subcommand** | `servers/struct_subcommand.rs` | Struct root, `#[command(subcommand)]`, optional subcommand         |
+| **structured**     | `servers/structured.rs`         | Structured output only (`#[clap_mcp_output_type]`)                 |
 | **tracing_bridge** | `servers/tracing_bridge.rs`  | Tracing integration, MCP log forwarding, prompts   |
 | **log_bridge**     | `servers/log_bridge.rs`      | `log` crate integration, MCP log forwarding       |
 | **async_sleep**       | `servers/async_sleep.rs`        | Async tokio, 3 sleep tasks, `share_runtime = false` |

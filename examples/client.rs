@@ -129,6 +129,8 @@ struct Args {
 enum Cli {
     /// Test the subcommands example (default)
     Subcommands,
+    /// Test the struct_subcommand example (struct root with optional subcommand)
+    StructSubcommand,
     /// Test the structured output example
     Structured,
     /// Test the tracing_bridge example (requires --features tracing)
@@ -211,7 +213,7 @@ async fn run_client(example: &str, json: bool) -> SdkResult<()> {
         println!("  {}: {}", t.name, t.description.as_deref().unwrap_or(""));
     }
 
-    if example == "subcommands" {
+    if example == "subcommands" || example == "struct_subcommand" {
         run_subcommands_tests(client.as_ref()).await?;
     } else if example == "structured" {
         run_structured_tests(client.as_ref()).await?;
@@ -370,6 +372,7 @@ async fn main() -> SdkResult<()> {
     let args = Args::parse();
     let example = match args.command {
         Cli::Subcommands => "subcommands",
+        Cli::StructSubcommand => "struct_subcommand",
         Cli::Structured => "structured",
         #[cfg(feature = "tracing")]
         Cli::TracingBridge => "tracing_bridge",

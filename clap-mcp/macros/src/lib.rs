@@ -5,7 +5,10 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{DeriveInput, Expr, Lit, Meta, MetaNameValue, parse_macro_input};
+use syn::{
+    DeriveInput, Expr, GenericArgument, Lit, Meta, MetaNameValue, PathArguments, Type,
+    parse_macro_input,
+};
 
 /// Parses `#[clap_mcp(...)]` attributes to extract parallel_safe, reinvocation_safe, and share_runtime.
 fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> (Option<bool>, Option<bool>, Option<bool>) {
@@ -96,6 +99,54 @@ fn get_clap_mcp_output_type(attrs: &[syn::Attribute]) -> Option<syn::Ident> {
     None
 }
 
+/// Returns true if the field has `#[command(subcommand)]`.
+fn field_has_command_subcommand(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("command") {
+            continue;
+        }
+        let mut has_subcommand = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("subcommand") {
+                has_subcommand = true;
+            }
+            Ok(())
+        });
+        if has_subcommand {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns true if the type is `Option<T>`.
+fn is_option_type(ty: &Type) -> bool {
+    let Type::Path(type_path) = ty else {
+        return false;
+    };
+    let Some(last) = type_path.path.segments.last() else {
+        return false;
+    };
+    if last.ident != "Option" {
+        return false;
+    }
+    let PathArguments::AngleBracketed(args) = &last.arguments else {
+        return false;
+    };
+    let type_args: Vec<_> = args
+        .args
+        .iter()
+        .filter_map(|a| {
+            if let GenericArgument::Type(_) = a {
+                Some(())
+            } else {
+                None
+            }
+        })
+        .collect();
+    type_args.len() == 1
+}
+
 /// Derive macro for `ClapMcpConfigProvider` and `ClapMcpToolExecutor`.
 ///
 /// Use on a clap `Parser` enum to expose it over MCP. Implements execution safety
@@ -135,7 +186,10 @@ fn get_clap_mcp_output_type(attrs: &[syn::Attribute]) -> Option<syn::Ident> {
 ///     Add { #[arg(long)] a: i32, #[arg(long)] b: i32 },
 /// }
 /// ```
-#[proc_macro_derive(ClapMcp, attributes(clap_mcp, clap_mcp_output, clap_mcp_output_type))]
+#[proc_macro_derive(
+    ClapMcp,
+    attributes(clap_mcp, clap_mcp_output, clap_mcp_output_type, command)
+)]
 pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
@@ -206,6 +260,52 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                         }
                     }
                 }
+            }
+        }
+        syn::Data::Struct(data) => {
+            let subcommand_field = data
+                .fields
+                .iter()
+                .find(|f| field_has_command_subcommand(&f.attrs));
+            match subcommand_field {
+                Some(field) => {
+                    let field_ident = match &field.ident {
+                        Some(id) => id.clone(),
+                        None => {
+                            let err = syn::Error::new_spanned(
+                                field,
+                                "clap_mcp: subcommand field must be named",
+                            );
+                            return TokenStream::from(err.to_compile_error());
+                        }
+                    };
+                    let body = if is_option_type(&field.ty) {
+                        quote! {
+                            self.#field_ident.map_or_else(
+                                || clap_mcp::ClapMcpToolOutput::Text(String::new()),
+                                |c| c.execute_for_mcp(),
+                            )
+                        }
+                    } else {
+                        quote! {
+                            self.#field_ident.execute_for_mcp()
+                        }
+                    };
+                    quote! {
+                        impl clap_mcp::ClapMcpToolExecutor for #name {
+                            fn execute_for_mcp(self) -> clap_mcp::ClapMcpToolOutput {
+                                #body
+                            }
+                        }
+                    }
+                }
+                None => quote! {
+                    impl clap_mcp::ClapMcpToolExecutor for #name {
+                        fn execute_for_mcp(self) -> clap_mcp::ClapMcpToolOutput {
+                            clap_mcp::ClapMcpToolOutput::Text(format!("{:?}", self))
+                        }
+                    }
+                },
             }
         }
         _ => quote! {

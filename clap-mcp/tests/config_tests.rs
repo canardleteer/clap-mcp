@@ -1,6 +1,6 @@
 //! Tests for ClapMcpConfig and configuration possibilities.
 
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, Parser, Subcommand};
 use clap_mcp::ClapMcp;
 use clap_mcp::{
     ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpToolExecutor, ClapMcpToolOutput,
@@ -59,6 +59,36 @@ enum TestCliStructured {
 #[command(name = "test-cli-share-runtime")]
 enum TestCliShareRuntime {
     Foo,
+}
+
+// Struct root with required subcommand
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(parallel_safe = false, reinvocation_safe)]
+#[command(name = "test-struct-cli")]
+struct TestStructCli {
+    #[command(subcommand)]
+    command: TestStructCommands,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+enum TestStructCommands {
+    #[clap_mcp_output = "format!(\"sum: {}\", a + b)"]
+    Add { a: i32, b: i32 },
+}
+
+// Struct root with optional subcommand
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(parallel_safe = false, reinvocation_safe)]
+#[command(name = "test-struct-optional-cli", subcommand_required = false)]
+struct TestStructOptionalCli {
+    #[command(subcommand)]
+    command: Option<TestStructOptionalCommands>,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+enum TestStructOptionalCommands {
+    #[clap_mcp_output = "\"done\".into()"]
+    Done,
 }
 
 #[test]
@@ -290,3 +320,37 @@ fn test_run_async_tool_returns_complex_type() {
 // Shared runtime path (reinvocation_safe=true + share_runtime=true) is exercised
 // via integration: run the async_sleep example with share_runtime in #[clap_mcp].
 // Unit-testing it would require block_on from within a tokio worker, which panics.
+
+// --- struct root with #[command(subcommand)] ---
+
+#[test]
+fn test_struct_cli_config_provider() {
+    let config = TestStructCli::clap_mcp_config();
+    assert!(config.reinvocation_safe);
+    assert!(!config.parallel_safe);
+}
+
+#[test]
+fn test_struct_cli_executor_delegates() {
+    let cli = TestStructCli {
+        command: TestStructCommands::Add { a: 3, b: 7 },
+    };
+    let out = cli.execute_for_mcp();
+    assert_eq!(out.as_text(), Some("sum: 10"));
+}
+
+#[test]
+fn test_struct_optional_cli_executor_some() {
+    let cli = TestStructOptionalCli {
+        command: Some(TestStructOptionalCommands::Done),
+    };
+    let out = cli.execute_for_mcp();
+    assert_eq!(out.as_text(), Some("done"));
+}
+
+#[test]
+fn test_struct_optional_cli_executor_none() {
+    let cli = TestStructOptionalCli { command: None };
+    let out = cli.execute_for_mcp();
+    assert_eq!(out.as_text(), Some(""));
+}
