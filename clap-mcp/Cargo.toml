@@ -29,12 +29,12 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 libc = "0.2"
 
 # Optional dependencies
-clap-mcp-macros = { path = "macros", optional = true }
+clap-mcp-macros = { workspace = true, optional = true }
 schemars = { version = "0.8", optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, features = ["registry", "fmt"] }
 log = { version = "0.4", optional = true }
 
 [dev-dependencies]
-clap-mcp-macros = { path = "macros" }
+clap-mcp-macros = { workspace = true }
 schemars = "0.8"
