@@ -4,8 +4,6 @@
 
 [![crates.io](https://img.shields.io/crates/v/clap-mcp.svg)](https://crates.io/crates/clap-mcp)
 [![docs.rs](https://docs.rs/clap-mcp/badge.svg)](https://docs.rs/clap-mcp)
-[![crates.io (clap-mcp-macros)](https://img.shields.io/crates/v/clap-mcp-macros.svg)](https://crates.io/crates/clap-mcp-macros)
-[![docs.rs (clap-mcp-macros)](https://docs.rs/clap-mcp-macros/badge.svg)](https://docs.rs/clap-mcp-macros)
 
 ## Usage
 
