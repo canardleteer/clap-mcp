@@ -5,35 +5,35 @@ use clap_mcp::ClapMcp;
 use clap_mcp::{
     ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpSchemaMetadata,
     ClapMcpSchemaMetadataProvider, ClapMcpToolExecutor, ClapMcpToolOutput,
-    LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, PROMPT_LOGGING_GUIDE, run_async_tool,
-    schema_from_command, schema_from_command_with_metadata, tools_from_schema_with_config,
-    tools_from_schema_with_config_and_metadata,
+    LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, PROMPT_LOGGING_GUIDE, ParseOrServeMcp,
+    run_async_tool, schema_from_command, schema_from_command_with_metadata,
+    tools_from_schema_with_config, tools_from_schema_with_config_and_metadata,
 };
 use serde::Serialize;
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(parallel_safe = false, reinvocation_safe = false)]
+#[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
 #[command(name = "test-cli")]
 enum TestCliDefaults {
     Foo,
 }
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(parallel_safe, reinvocation_safe)]
+#[clap_mcp(reinvocation_safe, parallel_safe)]
 #[command(name = "test-cli-both-true")]
 enum TestCliBothTrue {
     Bar,
 }
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(parallel_safe = true, reinvocation_safe = false)]
+#[clap_mcp(reinvocation_safe = false, parallel_safe = true)]
 #[command(name = "test-cli-parallel-only")]
 enum TestCliParallelOnly {
     Baz,
 }
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(parallel_safe = false, reinvocation_safe)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
 #[command(name = "test-cli-reinvoke-only")]
 enum TestCliReinvokeOnly {
     #[clap_mcp_output = "format!(\"result: {}\", x)"]
@@ -119,7 +119,7 @@ enum TestCliShareRuntime {
 
 // Struct root with required subcommand
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(parallel_safe = false, reinvocation_safe)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
 #[command(name = "test-struct-cli")]
 struct TestStructCli {
     #[command(subcommand)]
@@ -134,7 +134,7 @@ enum TestStructCommands {
 
 // Struct root with optional subcommand
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(parallel_safe = false, reinvocation_safe)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
 #[command(name = "test-struct-optional-cli", subcommand_required = false)]
 struct TestStructOptionalCli {
     #[command(subcommand)]
@@ -265,6 +265,7 @@ fn test_tools_from_schema_with_config_meta() {
         reinvocation_safe: true,
         parallel_safe: false,
         share_runtime: true,
+        ..Default::default()
     };
     let tools = tools_from_schema_with_config(&schema, &config_share_runtime);
     for tool in &tools {
@@ -330,6 +331,15 @@ fn test_clap_mcp_tool_executor_structured() {
     assert_eq!(v.get("subtrahend").and_then(|x| x.as_i64()), Some(3));
 }
 
+/// ParseOrServeMcp is implemented for types that derive ClapMcp with the right bounds.
+#[test]
+fn test_parse_or_serve_mcp_trait_implemented() {
+    fn require_parse_or_serve_mcp<T: ParseOrServeMcp>() {}
+    require_parse_or_serve_mcp::<TestCliOutputFrom>();
+    require_parse_or_serve_mcp::<TestStructOptionalCli>();
+    require_parse_or_serve_mcp::<TestStructCli>();
+}
+
 #[test]
 fn test_clap_mcp_output_from_text() {
     let cli = TestCliOutputFrom::TextOut { x: 42 };
@@ -382,6 +392,7 @@ fn test_run_async_tool_dedicated_thread_reinvocation_safe_false() {
         reinvocation_safe: false,
         parallel_safe: false,
         share_runtime: true, // ignored
+        ..Default::default()
     };
     let result = run_async_tool(&config, || async { 42 });
     assert_eq!(result, 42);
@@ -394,6 +405,7 @@ fn test_run_async_tool_dedicated_thread_share_runtime_false() {
         reinvocation_safe: true,
         parallel_safe: false,
         share_runtime: false,
+        ..Default::default()
     };
     let result = run_async_tool(&config, || async { 99 });
     assert_eq!(result, 99);
@@ -406,6 +418,7 @@ fn test_run_async_tool_dedicated_thread_share_runtime_true_but_reinvoke_false() 
         reinvocation_safe: false,
         parallel_safe: true,
         share_runtime: true,
+        ..Default::default()
     };
     let result = run_async_tool(&config, || async { "hello".to_string() });
     assert_eq!(result, "hello");
@@ -459,7 +472,7 @@ fn test_struct_optional_cli_executor_none() {
 // --- #[clap_mcp(skip)] and #[clap_mcp(requires)] ---
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(parallel_safe = false, reinvocation_safe)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
 #[command(name = "test-skip-requires")]
 enum TestSkipRequires {
     #[clap_mcp_output_literal = "exposed"]

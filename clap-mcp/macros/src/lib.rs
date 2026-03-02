@@ -10,11 +10,14 @@ use syn::{
     parse_macro_input,
 };
 
-/// Parses `#[clap_mcp(...)]` attributes to extract parallel_safe, reinvocation_safe, and share_runtime.
-fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> (Option<bool>, Option<bool>, Option<bool>) {
+/// Parses `#[clap_mcp(...)]` attributes to extract parallel_safe, reinvocation_safe, share_runtime, and catch_in_process_panics.
+fn parse_clap_mcp_attrs(
+    attrs: &[syn::Attribute],
+) -> (Option<bool>, Option<bool>, Option<bool>, Option<bool>) {
     let mut parallel_safe = None;
     let mut reinvocation_safe = None;
     let mut share_runtime = None;
+    let mut catch_in_process_panics = None;
 
     for attr in attrs {
         if !attr.path().is_ident("clap_mcp") {
@@ -43,12 +46,24 @@ fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> (Option<bool>, Option<bool>
                 } else {
                     share_runtime = Some(true); // shorthand
                 }
+            } else if meta.path.is_ident("catch_in_process_panics") {
+                if meta.input.peek(syn::token::Eq) {
+                    let value: Expr = meta.value()?.parse()?;
+                    catch_in_process_panics = Some(expr_to_bool(&value));
+                } else {
+                    catch_in_process_panics = Some(true); // shorthand
+                }
             }
             Ok(())
         });
     }
 
-    (parallel_safe, reinvocation_safe, share_runtime)
+    (
+        parallel_safe,
+        reinvocation_safe,
+        share_runtime,
+        catch_in_process_panics,
+    )
 }
 
 fn expr_to_bool(expr: &Expr) -> bool {
@@ -303,6 +318,51 @@ fn get_clap_mcp_requires(attrs: &[syn::Attribute]) -> Option<String> {
     None
 }
 
+/// Returns true if the field has #[arg(long)] or #[arg(short)] (i.e. is a flag/option, not positional).
+fn field_has_arg_long_or_short(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("arg") {
+            continue;
+        }
+        let mut has = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("long") || meta.path.is_ident("short") {
+                has = true;
+            }
+            Ok(())
+        });
+        if has {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns true if the field has #[arg(index = ...)].
+fn field_has_arg_index(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("arg") {
+            continue;
+        }
+        let mut has = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("index") {
+                has = true;
+            }
+            Ok(())
+        });
+        if has {
+            return true;
+        }
+    }
+    false
+}
+
+/// Heuristic: true if the field looks like a positional (no long/short, or has index).
+fn field_looks_positional(attrs: &[syn::Attribute]) -> bool {
+    field_has_arg_index(attrs) || !field_has_arg_long_or_short(attrs)
+}
+
 /// Gets command name from #[command(name = "x")] or converts ident to kebab-case.
 fn get_command_name(attrs: &[syn::Attribute], ident: &syn::Ident) -> String {
     for attr in attrs {
@@ -395,6 +455,13 @@ fn is_option_type(ty: &Type) -> bool {
 /// Use on a clap `Parser` enum to expose it over MCP. Implements execution safety
 /// config and tool output generation.
 ///
+/// ## Struct root with subcommand
+///
+/// When your CLI has a **struct root** with `#[command(subcommand)]` (e.g. `command: Option<Commands>`),
+/// derive `ClapMcp` on **both** the root struct and the subcommand enum. Put
+/// `#[clap_mcp_output_from = "run"]` and execution config (`#[clap_mcp(...)]`) on the **subcommand**
+/// enum; the root's derive provides schema metadata and delegates tool execution to the subcommand.
+///
 /// # Attributes
 ///
 /// ## `#[clap_mcp(...)]` (on the enum)
@@ -404,6 +471,9 @@ fn is_option_type(ty: &Type) -> bool {
 /// - `share_runtime` / `share_runtime = true|false` — When reinvocation_safe, whether async tools
 ///   (via `clap_mcp::run_async_tool`) share the MCP server's tokio runtime (`true`) or use a
 ///   dedicated thread (`false`, default). Ignored when reinvocation_safe is false.
+/// - `catch_in_process_panics` / `catch_in_process_panics = true|false` — When reinvocation_safe,
+///   if true, panics in tool code are caught and returned as MCP errors instead of crashing the
+///   server. Default is false. See [`ClapMcpConfig::catch_in_process_panics`].
 ///
 /// ## `#[clap_mcp_output_from = "run"]` (on the enum)
 ///
@@ -498,7 +568,8 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     let name = &input.ident;
-    let (parallel_safe, reinvocation_safe, share_runtime) = parse_clap_mcp_attrs(&input.attrs);
+    let (parallel_safe, reinvocation_safe, share_runtime, catch_in_process_panics) =
+        parse_clap_mcp_attrs(&input.attrs);
 
     let parallel_safe_expr = parallel_safe
         .map(|b| quote! { #b })
@@ -509,6 +580,9 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     let share_runtime_expr = share_runtime
         .map(|b| quote! { #b })
         .unwrap_or_else(|| quote! { clap_mcp::ClapMcpConfig::default().share_runtime });
+    let catch_in_process_panics_expr = catch_in_process_panics
+        .map(|b| quote! { #b })
+        .unwrap_or_else(|| quote! { clap_mcp::ClapMcpConfig::default().catch_in_process_panics });
 
     let config_provider = quote! {
         impl clap_mcp::ClapMcpConfigProvider for #name {
@@ -517,6 +591,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                     parallel_safe: #parallel_safe_expr,
                     reinvocation_safe: #reinvocation_safe_expr,
                     share_runtime: #share_runtime_expr,
+                    catch_in_process_panics: #catch_in_process_panics_expr,
                 }
             }
         }
@@ -655,6 +730,13 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         std::collections::HashMap::new();
     let mut requires_args: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
+    let mut warn_optional_positional = false;
+
+    let optional_positional_warn_block: proc_macro2::TokenStream = quote! {
+        #[deprecated(note = "optional positional argument(s) without #[clap_mcp(requires)] or #[clap_mcp(skip)] may expose stdin to MCP; add one of these attributes for intentional behavior (see clap_mcp docs)")]
+        fn _clap_mcp_optional_positional_warn() {}
+        _clap_mcp_optional_positional_warn();
+    };
 
     let output_schema_assign: proc_macro2::TokenStream =
         if let Some(types) = get_clap_mcp_output_one_of(&input.attrs) {
@@ -673,21 +755,28 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         syn::Data::Enum(data) => {
             for v in &data.variants {
                 let cmd_name = get_command_name(&v.attrs, &v.ident);
+                let variant_reqs = get_clap_mcp_requires_variant(&v.attrs).unwrap_or_default();
                 if has_clap_mcp_skip(&v.attrs) {
                     skip_commands.push(cmd_name.clone());
                 }
-                if let Some(variant_reqs) = get_clap_mcp_requires_variant(&v.attrs) {
-                    requires_args
-                        .entry(cmd_name.clone())
-                        .or_default()
-                        .extend(variant_reqs);
-                }
+                requires_args
+                    .entry(cmd_name.clone())
+                    .or_default()
+                    .extend(variant_reqs.clone());
                 for (i, f) in v.fields.iter().enumerate() {
                     let arg_id = f
                         .ident
                         .as_ref()
                         .map(|i| i.to_string())
                         .unwrap_or_else(|| format!("__f{i}"));
+                    if is_option_type(&f.ty)
+                        && field_looks_positional(&f.attrs)
+                        && !has_clap_mcp_skip(&f.attrs)
+                        && get_clap_mcp_requires(&f.attrs).is_none()
+                        && !variant_reqs.contains(&arg_id)
+                    {
+                        warn_optional_positional = true;
+                    }
                     if has_clap_mcp_skip(&f.attrs) {
                         skip_args
                             .entry(cmd_name.clone())
@@ -718,6 +807,13 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     continue;
                 };
                 let arg_id = field_ident.to_string();
+                if is_option_type(&f.ty)
+                    && field_looks_positional(&f.attrs)
+                    && !has_clap_mcp_skip(&f.attrs)
+                    && get_clap_mcp_requires(&f.attrs).is_none()
+                {
+                    warn_optional_positional = true;
+                }
                 if has_clap_mcp_skip(&f.attrs) {
                     skip_args
                         .entry(root_name.clone())
@@ -768,9 +864,15 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 m.requires_args.entry(#k_lit.to_string()).or_default().extend([#(#vs),*]);
                             }
                         });
+                        let warn_block = if warn_optional_positional {
+                            optional_positional_warn_block.clone()
+                        } else {
+                            quote! {}
+                        };
                         return quote! {
                             impl clap_mcp::ClapMcpSchemaMetadataProvider for #name {
                                 fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
+                                    #warn_block
                                     let mut m = <#sub_path as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata();
                                     m.skip_commands.extend([#(#skip_commands_lit),*]);
                                     #(#skip_args_entries)*
@@ -781,9 +883,15 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                             }
                         };
                     } else {
+                        let warn_block = if warn_optional_positional {
+                            optional_positional_warn_block.clone()
+                        } else {
+                            quote! {}
+                        };
                         return quote! {
                             impl clap_mcp::ClapMcpSchemaMetadataProvider for #name {
                                 fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
+                                    #warn_block
                                     let mut m = <#sub_path as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata();
                                     #output_schema_assign
                                     m
@@ -822,9 +930,16 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         }
     });
 
+    let warn_block = if warn_optional_positional {
+        optional_positional_warn_block
+    } else {
+        quote! {}
+    };
+
     quote! {
         impl clap_mcp::ClapMcpSchemaMetadataProvider for #name {
             fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
+                #warn_block
                 let mut m = clap_mcp::ClapMcpSchemaMetadata::default();
                 m.skip_commands.extend([#(#skip_commands_lit),*]);
                 #(#skip_args_entries)*

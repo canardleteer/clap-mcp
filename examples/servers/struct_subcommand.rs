@@ -1,7 +1,7 @@
-//! Example CLI with struct root and #[command(subcommand)].
-//! Shows ClapMcpConfigProvider on the struct, delegation to subcommand,
-//! and optional subcommand support.
-//! Uses `#[clap_mcp_output_from = "run"]` on the subcommand enum.
+//! Example CLI with struct root and `#[command(subcommand)]`.
+//! Demonstrates the **Struct root with subcommand** pattern: derive `ClapMcp` on both
+//! root and subcommand; put `#[clap_mcp_output_from = "run"]` on the subcommand enum.
+//! See the crate README section "Struct root with subcommand" / "Dual derive (root + subcommand)".
 
 use clap::{Parser, Subcommand};
 use clap_mcp::{ClapMcp, ClapMcpToolError, ClapMcpToolOutput};

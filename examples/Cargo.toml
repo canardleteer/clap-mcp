@@ -58,6 +58,14 @@ name = "result_output"
 path = "servers/result_output.rs"
 
 [[bin]]
+name = "subprocess_exit_handling"
+path = "servers/subprocess_exit_handling.rs"
+
+[[bin]]
+name = "panic_catch_opt_in"
+path = "servers/panic_catch_opt_in.rs"
+
+[[bin]]
 name = "client"
 path = "client.rs"
 required-features = ["tracing"]

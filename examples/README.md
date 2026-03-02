@@ -5,7 +5,14 @@ This directory contains example CLIs that demonstrate clap-mcp capabilities.
 Run all commands from the **workspace root** (the parent of this `examples/` directory). The examples depend on `clap-mcp` via a path dependency.
 
 - **`client.rs`** — MCP client that exercises the server examples (easiest way to see everything working)
-- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, result_output, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared)
+- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, result_output, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared, **subprocess_exit_handling**, **panic_catch_opt_in**)
+
+## Crash / panic behavior
+
+When a tool fails internally, behavior depends on execution mode:
+
+- **Subprocess (`reinvocation_safe = false`):** If the tool process exits with a non-zero status, the server returns a tool result with `is_error: true` and a message that includes the exit code (and stderr when non-empty). See **subprocess_exit_handling**.
+- **In-process (`reinvocation_safe = true`):** By default, a panic in tool code crashes the server. With **`catch_in_process_panics = true`** (opt-in), panics are caught and returned as an MCP error; the server stays up. After a caught panic, the process may no longer be reinvocation_safe — consider restarting the server. See **panic_catch_opt_in** and [`ClapMcpConfig::catch_in_process_panics`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#structfield.catch_in_process_panics).
 
 ## Testing with the Client Example
 
@@ -173,6 +180,36 @@ cargo run -p clap-mcp-examples --bin async_sleep_shared -- sleep-demo
 cargo run -p clap-mcp-examples --bin async_sleep_shared -- --mcp
 ```
 
+### subprocess_exit_handling
+
+Subprocess execution (`reinvocation_safe = false`) with a tool that exits non-zero.
+When the tool process exits with a non-zero status, the MCP server returns a tool
+result with `is_error: true` and a message that includes the exit code (and stderr).
+
+```bash
+# Normal CLI usage
+cargo run -p clap-mcp-examples --bin subprocess_exit_handling -- succeed
+cargo run -p clap-mcp-examples --bin subprocess_exit_handling -- exit-fail   # exits with code 1
+
+# MCP server mode (calling exit-fail returns is_error: true)
+cargo run -p clap-mcp-examples --bin subprocess_exit_handling -- --mcp
+```
+
+### panic_catch_opt_in
+
+In-process execution with `catch_in_process_panics = true`. Panics in tool code
+are caught and returned as an MCP error instead of crashing the server. After a
+caught panic, the process may no longer be reinvocation_safe — consider restarting.
+
+```bash
+# Normal CLI usage
+cargo run -p clap-mcp-examples --bin panic_catch_opt_in -- succeed
+cargo run -p clap-mcp-examples --bin panic_catch_opt_in -- panic-demo   # panics
+
+# MCP server mode (calling panic-demo returns is_error: true, server stays up)
+cargo run -p clap-mcp-examples --bin panic_catch_opt_in -- --mcp
+```
+
 ### log_bridge
 
 CLI with `log` crate integration. Uses `ClapMcpLogBridge` — a `log::Log`
@@ -201,6 +238,8 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **log_bridge**     | `servers/log_bridge.rs`      | `log` crate integration, MCP log forwarding       |
 | **async_sleep**       | `servers/async_sleep.rs`        | Async tokio, 3 sleep tasks, `share_runtime = false` |
 | **async_sleep_shared** | `servers/async_sleep_shared.rs` | Same, `share_runtime = true` (shares `async_sleep_common`) |
+| **subprocess_exit_handling** | `servers/subprocess_exit_handling.rs` | Subprocess non-zero exit → MCP `is_error: true` |
+| **panic_catch_opt_in** | `servers/panic_catch_opt_in.rs` | In-process panic catching (opt-in), server stays up |
 | **client**            | `client.rs`                    | MCP client that exercises the server examples      |
 
 ## Async tools and share_runtime
