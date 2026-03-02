@@ -18,6 +18,10 @@ struct Cli {
     #[arg(long, global = true)]
     verbose: bool,
 
+    #[clap_mcp(skip)]
+    #[arg(long)]
+    out: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }

@@ -477,7 +477,7 @@ pub enum ClapMcpError {
 ///     ..Default::default()
 /// };
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ClapMcpConfig {
     /// If true, the CLI can be invoked multiple times without tearing down the process.
     /// When false (default), each tool call spawns a fresh subprocess.
@@ -506,6 +506,24 @@ pub struct ClapMcpConfig {
     /// state (e.g. static or process-wide resources) could be left in an inconsistent state.
     /// For reliability, restart the MCP server after a caught panic when using in-process execution.
     pub catch_in_process_panics: bool,
+
+    /// When true (default), `myapp --mcp` starts the MCP server even when the root has
+    /// `subcommand_required = true`, by checking argv before calling clap. Set to false to
+    /// require a subcommand (and thus `Option<Commands>` + `subcommand_required = false`) for
+    /// `--mcp` to parse.
+    pub allow_mcp_without_subcommand: bool,
+}
+
+impl Default for ClapMcpConfig {
+    fn default() -> Self {
+        Self {
+            reinvocation_safe: false,
+            parallel_safe: false,
+            share_runtime: false,
+            catch_in_process_panics: false,
+            allow_mcp_without_subcommand: true,
+        }
+    }
 }
 
 /// Optional configuration for MCP serve behavior (logging, etc.).
@@ -591,6 +609,10 @@ pub struct ClapMcpSchemaMetadata {
     pub skip_args: std::collections::HashMap<String, Vec<String>>,
     /// Per-command arg ids to treat as required in MCP (command_name -> arg_ids).
     pub requires_args: std::collections::HashMap<String, Vec<String>>,
+    /// When `true` and the root command has subcommands, the root is excluded from the
+    /// MCP tool list (only subcommands become tools). Use when the meaningful tools are
+    /// the leaf subcommands (e.g. explain, compare, sort) and the root is rarely invoked.
+    pub skip_root_command_when_subcommands: bool,
     /// Optional JSON schema for tool output. When set (e.g. via `#[clap_mcp_output_type]` or
     /// `#[clap_mcp_output_one_of]` with the `output-schema` feature), this schema is attached
     /// to each tool's `output_schema` field.
@@ -717,14 +739,26 @@ pub fn tools_from_schema_with_config(schema: &ClapSchema, config: &ClapMcpConfig
 
 /// Builds MCP tools from a clap schema with config and optional metadata.
 /// When `metadata.output_schema` is set, each tool's `output_schema` field is set to that value.
+/// When `metadata.skip_root_command_when_subcommands` is true and the root has subcommands,
+/// the root command is excluded from the tool list (only subcommands become tools).
 pub fn tools_from_schema_with_config_and_metadata(
     schema: &ClapSchema,
     config: &ClapMcpConfig,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Vec<Tool> {
-    schema
-        .root
-        .all_commands()
+    let commands: Vec<&ClapCommand> = if metadata.skip_root_command_when_subcommands
+        && !schema.root.subcommands.is_empty()
+    {
+        schema
+            .root
+            .subcommands
+            .iter()
+            .flat_map(|c| c.all_commands())
+            .collect()
+    } else {
+        schema.root.all_commands()
+    };
+    commands
         .into_iter()
         .map(|cmd| command_to_tool_with_config(cmd, config, metadata.output_schema.as_ref()))
         .collect()
@@ -851,6 +885,20 @@ pub fn command_with_mcp_flag(mut cmd: Command) -> Command {
     );
 
     cmd
+}
+
+/// Returns true if argv contains `--mcp` and no token is a root-level subcommand name.
+/// Used to start MCP server before calling get_matches() when subcommand_required would otherwise fail.
+fn argv_requests_mcp_without_subcommand(cmd: &Command) -> bool {
+    let argv: Vec<String> = std::env::args().collect();
+    let args = &argv[1..];
+    let subcommand_names: std::collections::HashSet<String> = cmd
+        .get_subcommands()
+        .map(|s| s.get_name().to_string())
+        .collect();
+    let has_mcp = args.iter().any(|a| a == "--mcp");
+    let has_subcommand = args.iter().any(|a| subcommand_names.contains(a.as_str()));
+    has_mcp && !has_subcommand
 }
 
 /// Extracts a serializable schema from a `clap::Command` (imperative clap usage).
@@ -982,6 +1030,21 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
 ) -> clap::ArgMatches {
     let schema = schema_from_command_with_metadata(&cmd, metadata);
     let cmd = command_with_mcp_flag(cmd);
+
+    if config.allow_mcp_without_subcommand && argv_requests_mcp_without_subcommand(&cmd) {
+        let schema_json =
+            serde_json::to_string_pretty(&schema).expect("schema JSON must serialize");
+        serve_schema_json_over_stdio_blocking(
+            schema_json,
+            None,
+            config,
+            None,
+            ClapMcpServeOptions::default(),
+            &ClapMcpSchemaMetadata::default(),
+        )
+        .expect("MCP server must start");
+        std::process::exit(0);
+    }
 
     let matches = cmd.get_matches();
     if matches.get_flag(MCP_FLAG_LONG) {
@@ -1180,6 +1243,72 @@ where
 {
     let mut cmd = T::command();
     cmd = command_with_mcp_flag(cmd);
+
+    if config.allow_mcp_without_subcommand && argv_requests_mcp_without_subcommand(&cmd) {
+        let base_cmd = T::command();
+        let metadata = T::clap_mcp_schema_metadata();
+        let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
+        let schema_json =
+            serde_json::to_string_pretty(&schema).expect("schema JSON must serialize");
+        let exe = std::env::current_exe().ok();
+
+        let in_process_handler = if config.reinvocation_safe {
+            let schema = schema.clone();
+            #[cfg(unix)]
+            let capture_stdout = serve_options.capture_stdout;
+            #[cfg(not(unix))]
+            let capture_stdout = false;
+            Some(Arc::new(
+                move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
+                    validate_required_args(&schema, cmd, &args).map_err(ClapMcpToolError::text)?;
+                    let argv = build_argv_for_clap(&schema, cmd, args.clone());
+                    let matches = T::command()
+                        .try_get_matches_from(&argv)
+                        .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
+                    let cli = T::from_arg_matches(&matches)
+                        .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
+
+                    if capture_stdout {
+                        let (result, captured) = run_with_stdout_capture(|| {
+                            <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
+                        });
+                        match result {
+                            Ok(ClapMcpToolOutput::Text(s)) if !captured.is_empty() => {
+                                let merged = if s.is_empty() {
+                                    captured.trim().to_string()
+                                } else {
+                                    let cap = captured.trim();
+                                    if cap.is_empty() {
+                                        s
+                                    } else {
+                                        format!("{s}\n{cap}")
+                                    }
+                                };
+                                Ok(ClapMcpToolOutput::Text(merged))
+                            }
+                            other => other,
+                        }
+                    } else {
+                        <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
+                    }
+                },
+            ) as InProcessToolHandler)
+        } else {
+            None
+        };
+
+        serve_schema_json_over_stdio_blocking(
+            schema_json,
+            if config.reinvocation_safe { None } else { exe },
+            config,
+            in_process_handler,
+            serve_options,
+            &metadata,
+        )
+        .expect("MCP server must start");
+
+        std::process::exit(0);
+    }
 
     let matches = cmd.get_matches();
     let mcp_requested = matches.get_flag(MCP_FLAG_LONG);

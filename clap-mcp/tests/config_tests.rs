@@ -162,6 +162,10 @@ fn test_config_default() {
         !config.share_runtime,
         "share_runtime should default to false"
     );
+    assert!(
+        config.allow_mcp_without_subcommand,
+        "allow_mcp_without_subcommand should default to true"
+    );
 }
 
 #[test]
@@ -471,6 +475,24 @@ fn test_struct_optional_cli_executor_none() {
 
 // --- #[clap_mcp(skip)] and #[clap_mcp(requires)] ---
 
+// Root-level skip: struct with subcommand and a root field hidden from MCP
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[command(name = "test-root-skip")]
+struct TestRootSkip {
+    #[clap_mcp(skip)]
+    #[arg(long)]
+    out: Option<String>,
+    #[command(subcommand)]
+    command: TestRootSkipCommands,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+enum TestRootSkipCommands {
+    #[clap_mcp_output_literal = "ok"]
+    Foo,
+}
+
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
 #[command(name = "test-skip-requires")]
@@ -507,6 +529,40 @@ fn test_clap_mcp_skip_command() {
     assert!(names.contains(&"exposed"));
     assert!(names.contains(&"read"));
     assert!(!names.contains(&"hidden"));
+}
+
+#[test]
+fn test_clap_mcp_skip_root_struct_field() {
+    let cmd = TestRootSkip::command();
+    let metadata = TestRootSkip::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    // Root command should not include the skipped "out" arg in MCP schema
+    let root = &schema.root;
+    assert_eq!(root.name, "test-root-skip");
+    let out_arg = root.args.iter().find(|a| a.id == "out");
+    assert!(
+        out_arg.is_none(),
+        "root-level #[clap_mcp(skip)] field 'out' should be excluded from MCP schema"
+    );
+}
+
+#[test]
+fn test_skip_root_command_when_subcommands() {
+    let cmd = TestStructOptionalCli::command();
+    let mut metadata = TestStructOptionalCli::clap_mcp_schema_metadata();
+    metadata.skip_root_command_when_subcommands = true;
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let config = ClapMcpConfig::default();
+    let tools = tools_from_schema_with_config_and_metadata(&schema, &config, &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
+    assert!(
+        !names.contains(&"test-struct-optional-cli"),
+        "root should be excluded when skip_root_command_when_subcommands is true"
+    );
+    assert!(
+        names.contains(&"done"),
+        "subcommand 'done' should still be in tool list"
+    );
 }
 
 #[test]
