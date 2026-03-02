@@ -233,10 +233,16 @@ enum Cli {
 }
 ```
 
-**Variant-level** (prefer when declaring multiple required args):
+**Variant-level** (one or more args; use a single name or comma-separated list — the MCP schema marks each as required):
 ```rust
 #[derive(Parser, ClapMcp)]
 enum Cli {
+    // Single optional positional made required in MCP
+    #[clap_mcp(requires = "versions")]
+    #[clap_mcp_output = "format!(\"{:?}\", versions)"]
+    Sort { versions: Option<String> },
+
+    // Multiple optional args
     #[clap_mcp(requires = "path, input")]  // both become required in MCP
     #[clap_mcp_output = "format!(\"{:?}\", (path, input))"]
     Process {
@@ -288,7 +294,7 @@ When the client omits a required argument, the tool returns a clear error:
 
 When you use a **struct root** with `#[command(subcommand)]` (e.g. `command: Option<Commands>`), derive `ClapMcp` on **both** the root struct and the subcommand enum. Put `#[clap_mcp_output_from = "run"]` and execution config (`#[clap_mcp(...)]`) on the **subcommand** enum only. The root's derive provides schema metadata and delegates tool execution to the subcommand's executor. In `main`, parse the root with `parse_or_serve_mcp_attr::<Root>()` then run with `run(cli.command)` or `match cli.command { ... }`. You can keep **`subcommand_required = true`** if you want; `myapp --mcp` alone is valid and starts the MCP server (clap-mcp handles `--mcp` before clap's subcommand check). See [Struct root with subcommand](#struct-root-with-subcommand) and the **struct_subcommand** example in [examples/README.md](examples/README.md).
 
-**MCP tool list:** The tool list includes the root command and all subcommands. If your CLI has `subcommand_required = true`, the root command still appears as a tool but has no subcommand in the MCP invocation model and is rarely used by clients; the meaningful tools are the subcommands (e.g. explain, compare, sort). To exclude the root from the tool list when it has subcommands, set [`ClapMcpSchemaMetadata::skip_root_command_when_subcommands`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.skip_root_command_when_subcommands) to `true` (e.g. via the derive’s schema metadata or imperatively).
+**MCP tool list:** The tool list includes the root command and all subcommands. If your CLI has `subcommand_required = true`, the root command still appears as a tool but has no subcommand in the MCP invocation model and is rarely used by clients; the meaningful tools are the subcommands (e.g. explain, compare, sort). To exclude the root from the tool list when it has subcommands, set [`ClapMcpSchemaMetadata::skip_root_command_when_subcommands`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.skip_root_command_when_subcommands) to `true` via the derive with `#[clap_mcp(skip_root_when_subcommands)]` on the root struct, or imperatively (e.g. implement `ClapMcpSchemaMetadataProvider` for the root and set the field, or build metadata manually).
 
 ### Runtime config
 

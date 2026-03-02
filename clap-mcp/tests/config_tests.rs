@@ -147,6 +147,16 @@ enum TestStructOptionalCommands {
     Done,
 }
 
+// Root struct with #[clap_mcp(skip_root_when_subcommands)] — root excluded from MCP tool list via derive
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp(skip_root_when_subcommands)]
+#[command(name = "test-root-skip-when-subcommands", subcommand_required = false)]
+struct TestRootSkipWhenSubcommands {
+    #[command(subcommand)]
+    command: Option<TestStructOptionalCommands>,
+}
+
 #[test]
 fn test_config_default() {
     let config = ClapMcpConfig::default();
@@ -517,6 +527,12 @@ enum TestSkipRequires {
         #[arg(long)]
         input: Option<String>,
     },
+    /// Single optional positional made required in MCP via variant-level requires = "versions"
+    #[clap_mcp(requires = "versions")]
+    #[clap_mcp_output = "format!(\"versions: {:?}\", versions)"]
+    Sort {
+        versions: Option<String>,
+    },
 }
 
 #[test]
@@ -566,6 +582,28 @@ fn test_skip_root_command_when_subcommands() {
 }
 
 #[test]
+fn test_skip_root_when_subcommands_derive() {
+    let cmd = TestRootSkipWhenSubcommands::command();
+    let metadata = TestRootSkipWhenSubcommands::clap_mcp_schema_metadata();
+    assert!(
+        metadata.skip_root_command_when_subcommands,
+        "derive with #[clap_mcp(skip_root_when_subcommands)] should set the flag"
+    );
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let config = ClapMcpConfig::default();
+    let tools = tools_from_schema_with_config_and_metadata(&schema, &config, &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
+    assert!(
+        !names.contains(&"test-root-skip-when-subcommands"),
+        "root should be excluded when using #[clap_mcp(skip_root_when_subcommands)]"
+    );
+    assert!(
+        names.contains(&"done"),
+        "subcommand 'done' should still be in tool list"
+    );
+}
+
+#[test]
 fn test_clap_mcp_requires_arg() {
     let cmd = TestSkipRequires::command();
     let metadata = TestSkipRequires::clap_mcp_schema_metadata();
@@ -581,6 +619,27 @@ fn test_clap_mcp_requires_arg() {
         .find(|a| a.id == "path")
         .expect("path arg");
     assert!(path_arg.required, "path should be required in MCP schema");
+}
+
+#[test]
+fn test_clap_mcp_requires_arg_single_positional() {
+    let cmd = TestSkipRequires::command();
+    let metadata = TestSkipRequires::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let commands = schema.root.all_commands();
+    let sort_cmd = commands
+        .iter()
+        .find(|c| c.name == "sort")
+        .expect("sort command");
+    let versions_arg = sort_cmd
+        .args
+        .iter()
+        .find(|a| a.id == "versions")
+        .expect("versions arg");
+    assert!(
+        versions_arg.required,
+        "variant-level #[clap_mcp(requires = \"versions\")] should mark versions required in MCP schema"
+    );
 }
 
 // --- #[clap_mcp_output_result] Result<T, E> support ---

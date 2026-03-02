@@ -210,6 +210,27 @@ fn has_clap_mcp_skip(attrs: &[syn::Attribute]) -> bool {
     false
 }
 
+/// Parses #[clap_mcp(skip_root_when_subcommands)] from root struct attributes.
+/// When present on a struct root with a subcommand, the root is excluded from the MCP tool list.
+fn has_clap_mcp_skip_root_when_subcommands(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let mut found = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("skip_root_when_subcommands") {
+                found = true;
+            }
+            Ok(())
+        });
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
 /// Parses variant-level #[clap_mcp(requires = "arg1,arg2")] - comma-separated list.
 fn get_clap_mcp_requires_variant(attrs: &[syn::Attribute]) -> Option<Vec<String>> {
     for attr in attrs {
@@ -535,6 +556,12 @@ fn is_option_type(ty: &Type) -> bool {
 ///
 /// Exclude the subcommand or argument from MCP exposure.
 ///
+/// ## `#[clap_mcp(skip_root_when_subcommands)]` (on root struct with subcommand)
+///
+/// When present on a struct root that has `#[command(subcommand)]`, the root command
+/// is excluded from the MCP tool list; only subcommands appear as tools. Equivalent to
+/// setting `ClapMcpSchemaMetadata::skip_root_command_when_subcommands = true` imperatively.
+///
 /// ## `#[clap_mcp(requires)]` / `#[clap_mcp(requires = "arg_name")]` (on field)
 ///
 /// Make the argument required in the MCP tool schema even if optional in clap.
@@ -542,7 +569,8 @@ fn is_option_type(ty: &Type) -> bool {
 ///
 /// ## `#[clap_mcp(requires = "arg1,arg2")]` (on variant)
 ///
-/// Variant-level alternative: comma-separated list of optional args to make required.
+/// Variant-level alternative: one or more optional args to make required (single name or
+/// comma-separated list). The MCP tool schema will mark each listed argument as required.
 /// Prefer this when declaring multiple required args. When the client omits a required
 /// arg, a clear error is returned.
 ///
@@ -848,6 +876,11 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 let sub_ty = inner_type_if_option(&sub_field.ty).unwrap_or(&sub_field.ty);
                 if let syn::Type::Path(tp) = sub_ty {
                     let sub_path = &tp.path;
+                    let skip_root_assign = if has_clap_mcp_skip_root_when_subcommands(&input.attrs) {
+                        quote! { m.skip_root_command_when_subcommands = true; }
+                    } else {
+                        quote! {}
+                    };
                     let merge = !skip_commands.is_empty()
                         || !skip_args.is_empty()
                         || !requires_args.is_empty();
@@ -893,6 +926,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     m.skip_commands.extend([#(#skip_commands_lit),*]);
                                     #(#skip_args_entries)*
                                     #(#requires_args_entries)*
+                                    #skip_root_assign
                                     #output_schema_assign
                                     m
                                 }
@@ -909,6 +943,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
                                     #warn_block
                                     let mut m = <#sub_path as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata();
+                                    #skip_root_assign
                                     #output_schema_assign
                                     m
                                 }
