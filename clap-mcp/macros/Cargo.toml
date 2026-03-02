@@ -1,6 +1,6 @@
 [package]
 name = "clap-mcp-macros"
-version = "0.0.1-rc.5"
+version = "0.0.2-rc.1" # not a workspace member, so shouldn't be relevant with release-plz
 edition = "2024"
 license = "MIT"
 description = "Procedural macros for clap-mcp"

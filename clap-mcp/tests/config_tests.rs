@@ -530,9 +530,7 @@ enum TestSkipRequires {
     /// Single optional positional made required in MCP via variant-level requires = "versions"
     #[clap_mcp(requires = "versions")]
     #[clap_mcp_output = "format!(\"versions: {:?}\", versions)"]
-    Sort {
-        versions: Option<String>,
-    },
+    Sort { versions: Option<String> },
 }
 
 #[test]

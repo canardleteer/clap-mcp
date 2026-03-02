@@ -20,6 +20,9 @@ Run all tests (including feature-gated logging tests):
 cargo test --all-features
 ```
 
+Release prep includes building and running all example binaries (CI runs each
+with `--help` as a smoke test); see [examples/README.md](examples/README.md).
+
 ## Design
 
 Compared to a Command Line Interface, I'm not a huge fan of the [Model Context
@@ -171,7 +174,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-clap-mcp = { version = "0.0.1-rc.5", features = ["tracing"] }
+clap-mcp = { version = "0.0.2-rc.1", features = ["tracing"] }
 ```
 
 ## Execution safety configuration

@@ -36,55 +36,53 @@ async fn launch_and_call_tool(
     tool_name: &str,
     arguments: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> SdkResult<rust_mcp_sdk::schema::CallToolResult> {
-    let _guard = LAUNCH_LOCK.lock().unwrap();
+    let client = {
+        let _guard = LAUNCH_LOCK.lock().unwrap();
 
-    // Always build so we pick up latest library and example code.
-    let status = std::process::Command::new("cargo")
-        .args(["build", "-p", "clap-mcp-examples", "--bin", bin])
-        .current_dir(workspace_root())
-        .status()
-        .expect("cargo build for example should run");
-    assert!(
-        status.success(),
-        "cargo build -p clap-mcp-examples --bin {} must succeed",
-        bin
-    );
+        // Always build so we pick up latest library and example code.
+        let status = std::process::Command::new("cargo")
+            .args(["build", "-p", "clap-mcp-examples", "--bin", bin])
+            .current_dir(workspace_root())
+            .status()
+            .expect("cargo build for example should run");
+        assert!(
+            status.success(),
+            "cargo build -p clap-mcp-examples --bin {} must succeed",
+            bin
+        );
 
-    let bin_path = example_binary_path(bin);
-    assert!(
-        bin_path.exists(),
-        "example binary must exist at {:?}",
-        bin_path
-    );
+        let path = example_binary_path(bin);
+        assert!(path.exists(), "example binary must exist at {:?}", path);
 
-    let client_details = InitializeRequestParams {
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "crash-panic-test".into(),
-            version: "0.1.0".into(),
-            title: None,
-            description: None,
-            icons: vec![],
-            website_url: None,
-        },
-        protocol_version: LATEST_PROTOCOL_VERSION.into(),
-        meta: None,
+        let client_details = InitializeRequestParams {
+            capabilities: ClientCapabilities::default(),
+            client_info: Implementation {
+                name: "crash-panic-test".into(),
+                version: "0.1.0".into(),
+                title: None,
+                description: None,
+                icons: vec![],
+                website_url: None,
+            },
+            protocol_version: LATEST_PROTOCOL_VERSION.into(),
+            meta: None,
+        };
+
+        let transport = StdioTransport::create_with_server_launch(
+            path.to_string_lossy().to_string(),
+            vec!["succeed".into(), "--mcp".into()],
+            None,
+            TransportOptions::default(),
+        )?;
+
+        client_runtime::create_client(McpClientOptions {
+            client_details,
+            transport,
+            handler: NoOpHandler.to_mcp_client_handler(),
+            task_store: None,
+            server_task_store: None,
+        })
     };
-
-    let transport = StdioTransport::create_with_server_launch(
-        bin_path.to_string_lossy().to_string(),
-        vec!["succeed".into(), "--mcp".into()],
-        None,
-        TransportOptions::default(),
-    )?;
-
-    let client = client_runtime::create_client(McpClientOptions {
-        client_details,
-        transport,
-        handler: NoOpHandler.to_mcp_client_handler(),
-        task_store: None,
-        server_task_store: None,
-    });
 
     client.clone().start().await?;
 
