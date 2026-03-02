@@ -70,7 +70,9 @@ cargo run -p clap-mcp-examples --bin subcommands -- --mcp
 
 Struct root with `#[command(subcommand)]`, optional subcommand
 (`Option<Commands>`), and `#[clap_mcp(...)]` on the struct. Output attributes
-live on the subcommand enum variants.
+live on the subcommand enum variants. Also demonstrates **root-level
+`#[clap_mcp(skip)]`**: the `--out` option is available to the CLI but hidden
+from MCP tool schemas.
 
 ```bash
 # Normal CLI usage (no subcommand)
@@ -185,6 +187,8 @@ cargo run -p clap-mcp-examples --bin async_sleep_shared -- --mcp
 Subprocess execution (`reinvocation_safe = false`) with a tool that exits non-zero.
 When the tool process exits with a non-zero status, the MCP server returns a tool
 result with `is_error: true` and a message that includes the exit code (and stderr).
+Uses **`subcommand_required = true`**; `--mcp` alone is valid and starts the MCP server
+(clap-mcp handles `--mcp` before clap's subcommand check).
 
 ```bash
 # Normal CLI usage
@@ -200,6 +204,7 @@ cargo run -p clap-mcp-examples --bin subprocess_exit_handling -- --mcp
 In-process execution with `catch_in_process_panics = true`. Panics in tool code
 are caught and returned as an MCP error instead of crashing the server. After a
 caught panic, the process may no longer be reinvocation_safe — consider restarting.
+Uses **`subcommand_required = true`**; `--mcp` alone is valid and starts the MCP server.
 
 ```bash
 # Normal CLI usage

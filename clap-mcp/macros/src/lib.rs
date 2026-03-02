@@ -10,14 +10,15 @@ use syn::{
     parse_macro_input,
 };
 
-/// Parses `#[clap_mcp(...)]` attributes to extract parallel_safe, reinvocation_safe, share_runtime, and catch_in_process_panics.
+/// Parses `#[clap_mcp(...)]` attributes to extract parallel_safe, reinvocation_safe, share_runtime, catch_in_process_panics, and allow_mcp_without_subcommand.
 fn parse_clap_mcp_attrs(
     attrs: &[syn::Attribute],
-) -> (Option<bool>, Option<bool>, Option<bool>, Option<bool>) {
+) -> (Option<bool>, Option<bool>, Option<bool>, Option<bool>, Option<bool>) {
     let mut parallel_safe = None;
     let mut reinvocation_safe = None;
     let mut share_runtime = None;
     let mut catch_in_process_panics = None;
+    let mut allow_mcp_without_subcommand = None;
 
     for attr in attrs {
         if !attr.path().is_ident("clap_mcp") {
@@ -53,6 +54,13 @@ fn parse_clap_mcp_attrs(
                 } else {
                     catch_in_process_panics = Some(true); // shorthand
                 }
+            } else if meta.path.is_ident("allow_mcp_without_subcommand") {
+                if meta.input.peek(syn::token::Eq) {
+                    let value: Expr = meta.value()?.parse()?;
+                    allow_mcp_without_subcommand = Some(expr_to_bool(&value));
+                } else {
+                    allow_mcp_without_subcommand = Some(true); // shorthand
+                }
             }
             Ok(())
         });
@@ -63,6 +71,7 @@ fn parse_clap_mcp_attrs(
         reinvocation_safe,
         share_runtime,
         catch_in_process_panics,
+        allow_mcp_without_subcommand,
     )
 }
 
@@ -474,6 +483,9 @@ fn is_option_type(ty: &Type) -> bool {
 /// - `catch_in_process_panics` / `catch_in_process_panics = true|false` — When reinvocation_safe,
 ///   if true, panics in tool code are caught and returned as MCP errors instead of crashing the
 ///   server. Default is false. See [`ClapMcpConfig::catch_in_process_panics`].
+/// - `allow_mcp_without_subcommand` / `allow_mcp_without_subcommand = true|false` — When true
+///   (default), `myapp --mcp` starts the MCP server even when the root has `subcommand_required = true`.
+///   See [`ClapMcpConfig::allow_mcp_without_subcommand`].
 ///
 /// ## `#[clap_mcp_output_from = "run"]` (on the enum)
 ///
@@ -568,7 +580,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     let name = &input.ident;
-    let (parallel_safe, reinvocation_safe, share_runtime, catch_in_process_panics) =
+    let (parallel_safe, reinvocation_safe, share_runtime, catch_in_process_panics, allow_mcp_without_subcommand) =
         parse_clap_mcp_attrs(&input.attrs);
 
     let parallel_safe_expr = parallel_safe
@@ -583,6 +595,9 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     let catch_in_process_panics_expr = catch_in_process_panics
         .map(|b| quote! { #b })
         .unwrap_or_else(|| quote! { clap_mcp::ClapMcpConfig::default().catch_in_process_panics });
+    let allow_mcp_without_subcommand_expr = allow_mcp_without_subcommand
+        .map(|b| quote! { #b })
+        .unwrap_or_else(|| quote! { clap_mcp::ClapMcpConfig::default().allow_mcp_without_subcommand });
 
     let config_provider = quote! {
         impl clap_mcp::ClapMcpConfigProvider for #name {
@@ -592,6 +607,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                     reinvocation_safe: #reinvocation_safe_expr,
                     share_runtime: #share_runtime_expr,
                     catch_in_process_panics: #catch_in_process_panics_expr,
+                    allow_mcp_without_subcommand: #allow_mcp_without_subcommand_expr,
                 }
             }
         }
