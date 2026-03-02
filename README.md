@@ -45,15 +45,14 @@ ecosystem.
 
 ## Quick start
 
-Add `clap-mcp` and `clap-mcp-macros` to your `Cargo.toml`:
+Add `clap-mcp` to your `Cargo.toml` (the default `derive` feature includes the macro):
 
 ```toml
 [dependencies]
-clap-mcp = "0.0.1-rc.5"
-clap-mcp-macros = "0.0.1-rc.5"
+clap-mcp = "0.0.2-rc.1"
 ```
 
-For derive usage, `use clap_mcp_macros::ClapMcp` for brevity so you can write `#[derive(ClapMcp)]`.
+For derive usage, `use clap_mcp::ClapMcp` so you can write `#[derive(ClapMcp)]`.
 
 ### Imperative (existing clap CLI)
 
@@ -79,7 +78,7 @@ tool. This uses default config (subprocess execution, serialized tool calls):
 
 ```rust
 use clap::Parser;
-use clap_mcp_macros::ClapMcp;
+use clap_mcp::ClapMcp;
 
 #[derive(Debug, Parser, ClapMcp)]
 #[command(name = "myapp")]
@@ -104,7 +103,7 @@ Use `#[clap_mcp(...)]` to declare execution safety, and
 `parse_or_serve_mcp_attr` to pick up that config automatically:
 
 ```rust
-use clap_mcp_macros::ClapMcp;
+use clap_mcp::ClapMcp;
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
@@ -195,7 +194,7 @@ CLIs differ in how safely they can be invoked over MCP. Two flags control this:
 Use `#[derive(ClapMcp)]` and `#[clap_mcp(...)]` on your CLI type:
 
 ```rust
-use clap_mcp_macros::ClapMcp;
+use clap_mcp::ClapMcp;
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
