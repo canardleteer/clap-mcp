@@ -4,8 +4,30 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
+  release-plz-dry-run:
+    name: Release-plz dry-run
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Release-plz release (dry-run)
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+          dry_run: true
+          config: release-plz.toml
+
   release-plz-release:
     name: Release-plz release
     runs-on: ubuntu-latest
