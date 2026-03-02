@@ -30,6 +30,7 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Build and run examples (release validation)
+        shell: bash
         run: |
           cargo build -p clap-mcp-examples --all-features
           for bin in subcommands structured tracing_bridge log_bridge async_sleep async_sleep_shared struct_subcommand optional_commands_and_args result_output subprocess_exit_handling panic_catch_opt_in client; do
@@ -37,4 +38,6 @@ jobs:
           done
 
       - name: Check rustdoc (no warnings)
-        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p clap-mcp --all-features
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps -p clap-mcp --all-features

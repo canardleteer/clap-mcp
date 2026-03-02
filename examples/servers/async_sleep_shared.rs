@@ -44,7 +44,8 @@ fn main() {
 
     let serve_options = clap_mcp::ClapMcpServeOptions {
         log_rx: Some(log_rx),
-        ..Default::default()
+        #[cfg(unix)]
+        capture_stdout: false,
     };
 
     let cli = clap_mcp::parse_or_serve_mcp_with_config_and_options::<Cli>(
