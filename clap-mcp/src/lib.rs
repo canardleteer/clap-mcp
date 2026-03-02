@@ -746,18 +746,17 @@ pub fn tools_from_schema_with_config_and_metadata(
     config: &ClapMcpConfig,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Vec<Tool> {
-    let commands: Vec<&ClapCommand> = if metadata.skip_root_command_when_subcommands
-        && !schema.root.subcommands.is_empty()
-    {
-        schema
-            .root
-            .subcommands
-            .iter()
-            .flat_map(|c| c.all_commands())
-            .collect()
-    } else {
-        schema.root.all_commands()
-    };
+    let commands: Vec<&ClapCommand> =
+        if metadata.skip_root_command_when_subcommands && !schema.root.subcommands.is_empty() {
+            schema
+                .root
+                .subcommands
+                .iter()
+                .flat_map(|c| c.all_commands())
+                .collect()
+        } else {
+            schema.root.all_commands()
+        };
     commands
         .into_iter()
         .map(|cmd| command_to_tool_with_config(cmd, config, metadata.output_schema.as_ref()))
@@ -1532,21 +1531,6 @@ fn format_panic_payload(payload: &(dyn std::any::Any + Send)) -> String {
     "<panic>".to_string()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_format_panic_payload() {
-        let s: Box<dyn std::any::Any + Send> = Box::new("hello");
-        assert_eq!(format_panic_payload(s.as_ref()), "hello");
-        let s: Box<dyn std::any::Any + Send> = Box::new("world".to_string());
-        assert_eq!(format_panic_payload(s.as_ref()), "world");
-        let n: Box<dyn std::any::Any + Send> = Box::new(42i32);
-        assert_eq!(format_panic_payload(n.as_ref()), "<panic>");
-    }
-}
-
 fn value_to_string(v: &serde_json::Value) -> Option<String> {
     if v.is_null() {
         return None;
@@ -2116,5 +2100,20 @@ where
             .join()
             .expect("async tool thread must not panic")
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_panic_payload() {
+        let s: Box<dyn std::any::Any + Send> = Box::new("hello");
+        assert_eq!(format_panic_payload(s.as_ref()), "hello");
+        let s: Box<dyn std::any::Any + Send> = Box::new("world".to_string());
+        assert_eq!(format_panic_payload(s.as_ref()), "world");
+        let n: Box<dyn std::any::Any + Send> = Box::new(42i32);
+        assert_eq!(format_panic_payload(n.as_ref()), "<panic>");
     }
 }

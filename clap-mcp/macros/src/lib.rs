@@ -10,10 +10,17 @@ use syn::{
     parse_macro_input,
 };
 
+/// Parsed `#[clap_mcp(...)]` config: parallel_safe, reinvocation_safe, share_runtime, catch_in_process_panics, allow_mcp_without_subcommand.
+type ClapMcpAttrs = (
+    Option<bool>,
+    Option<bool>,
+    Option<bool>,
+    Option<bool>,
+    Option<bool>,
+);
+
 /// Parses `#[clap_mcp(...)]` attributes to extract parallel_safe, reinvocation_safe, share_runtime, catch_in_process_panics, and allow_mcp_without_subcommand.
-fn parse_clap_mcp_attrs(
-    attrs: &[syn::Attribute],
-) -> (Option<bool>, Option<bool>, Option<bool>, Option<bool>, Option<bool>) {
+fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> ClapMcpAttrs {
     let mut parallel_safe = None;
     let mut reinvocation_safe = None;
     let mut share_runtime = None;
@@ -608,8 +615,13 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     let name = &input.ident;
-    let (parallel_safe, reinvocation_safe, share_runtime, catch_in_process_panics, allow_mcp_without_subcommand) =
-        parse_clap_mcp_attrs(&input.attrs);
+    let (
+        parallel_safe,
+        reinvocation_safe,
+        share_runtime,
+        catch_in_process_panics,
+        allow_mcp_without_subcommand,
+    ) = parse_clap_mcp_attrs(&input.attrs);
 
     let parallel_safe_expr = parallel_safe
         .map(|b| quote! { #b })
@@ -625,7 +637,9 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
         .unwrap_or_else(|| quote! { clap_mcp::ClapMcpConfig::default().catch_in_process_panics });
     let allow_mcp_without_subcommand_expr = allow_mcp_without_subcommand
         .map(|b| quote! { #b })
-        .unwrap_or_else(|| quote! { clap_mcp::ClapMcpConfig::default().allow_mcp_without_subcommand });
+        .unwrap_or_else(
+            || quote! { clap_mcp::ClapMcpConfig::default().allow_mcp_without_subcommand },
+        );
 
     let config_provider = quote! {
         impl clap_mcp::ClapMcpConfigProvider for #name {
@@ -876,7 +890,8 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 let sub_ty = inner_type_if_option(&sub_field.ty).unwrap_or(&sub_field.ty);
                 if let syn::Type::Path(tp) = sub_ty {
                     let sub_path = &tp.path;
-                    let skip_root_assign = if has_clap_mcp_skip_root_when_subcommands(&input.attrs) {
+                    let skip_root_assign = if has_clap_mcp_skip_root_when_subcommands(&input.attrs)
+                    {
                         quote! { m.skip_root_command_when_subcommands = true; }
                     } else {
                         quote! {}
