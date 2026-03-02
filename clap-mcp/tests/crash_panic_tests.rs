@@ -23,8 +23,10 @@ fn workspace_root() -> std::path::PathBuf {
 }
 
 /// Path to the built example binary (built in workspace target dir).
+/// Uses platform executable suffix (e.g. `.exe` on Windows).
 fn example_binary_path(bin: &str) -> std::path::PathBuf {
-    workspace_root().join("target").join("debug").join(bin)
+    let name = format!("{}{}", bin, std::env::consts::EXE_SUFFIX);
+    workspace_root().join("target").join("debug").join(name)
 }
 
 /// Serializes tests that launch the server so they don't run in parallel (avoids port/cwd issues).
@@ -37,7 +39,7 @@ async fn launch_and_call_tool(
     arguments: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> SdkResult<rust_mcp_sdk::schema::CallToolResult> {
     let client = {
-        let _guard = LAUNCH_LOCK.lock().unwrap();
+        let _guard = LAUNCH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         // Always build so we pick up latest library and example code.
         let status = std::process::Command::new("cargo")
