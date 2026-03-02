@@ -49,6 +49,32 @@ pub mod logging;
 #[cfg(feature = "derive")]
 pub use clap_mcp_macros::ClapMcp;
 
+/// Convenience macro for struct root + subcommand CLIs: parse root then run.
+///
+/// Expands to: parse the root with [`parse_or_serve_mcp_attr`], then evaluate the given
+/// expression (which can use `args` for the parsed root). Use in `main` so the pattern
+/// is one line and hard to forget.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// fn main() {
+///     clap_mcp_main!(Cli, match args.command {
+///         None => println!("No subcommand"),
+///         Some(cmd) => println!("{}", run(cmd)),
+///     });
+/// }
+/// ```
+///
+/// For `Result`-returning run logic, use `?` in main or call [`run_or_serve_mcp`].
+#[macro_export]
+macro_rules! clap_mcp_main {
+    ($root:ty, $run_expr:expr) => {{
+        let args = $crate::parse_or_serve_mcp_attr::<$root>();
+        $run_expr
+    }};
+}
+
 /// Long flag that triggers MCP server mode. Add to your CLI via [`command_with_mcp_flag`].
 pub const MCP_FLAG_LONG: &str = "mcp";
 
@@ -66,7 +92,7 @@ pub const MCP_RESOURCE_URI_SCHEMA: &str = "clap://schema";
 /// use clap_mcp::ClapMcp;
 ///
 /// #[derive(Debug, Parser, ClapMcp)]
-/// #[clap_mcp(parallel_safe = false, reinvocation_safe)]
+/// #[clap_mcp(reinvocation_safe, parallel_safe = false)]
 /// enum MyCli { Foo }
 ///
 /// let config = MyCli::clap_mcp_config();
@@ -144,6 +170,9 @@ impl From<&str> for ClapMcpToolError {
 /// - [`AsStructured`]`<T>` where `T: Serialize` → structured JSON output
 /// - `Option<O>` → `None` → empty text; `Some(o)` → `o.into_tool_result()`
 /// - `Result<O, E>` → `Ok(o)` → output; `Err(e)` → `ClapMcpToolError`
+///
+/// `Result<AsStructured<T>, E>` is fully supported as a `run` return type; use it when you want
+/// structured success payloads and a separate error type.
 pub trait IntoClapMcpResult {
     fn into_tool_result(self) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError>;
 }
@@ -162,6 +191,10 @@ impl IntoClapMcpResult for &str {
 
 /// Wrapper for structured (JSON) output when using `#[clap_mcp_output_from]`.
 /// Use when your `run` function returns a type that implements `Serialize` but is not `String`/`&str`.
+///
+/// Fully supported when used as the `Ok` type in `Result<AsStructured<T>, E>`; there are no known
+/// limitations for mixed success/error types. [`IntoClapMcpResult`] is implemented for
+/// `AsStructured<T>` where `T: Serialize`.
 ///
 /// # Example
 ///
@@ -418,6 +451,17 @@ pub enum ClapMcpError {
 /// Use this to declare whether your CLI tool can be safely invoked multiple times,
 /// whether it can run in parallel with other tool calls, and how async tools run.
 ///
+/// # Crash and panic behavior
+///
+/// - **Subprocess (`reinvocation_safe` = false):** If the tool process exits with a non-zero
+///   status, the server returns an MCP tool result with `is_error: true` and a message
+///   that includes the exit code (and stderr when non-empty).
+/// - **In-process (`reinvocation_safe` = true), `catch_in_process_panics` = false:** Any panic
+///   in tool code (including from [`run_async_tool`]) crashes the server.
+/// - **In-process, `catch_in_process_panics` = true:** Panics are caught and returned as an
+///   MCP error; the server stays up. After a caught panic, the process may no longer be
+///   reinvocation_safe (global state may be corrupted); consider restarting the server.
+///
 /// # Example
 ///
 /// ```
@@ -454,6 +498,14 @@ pub struct ClapMcpConfig {
     ///
     /// Use with [`run_async_tool`] in `#[clap_mcp_output]` for async subcommands.
     pub share_runtime: bool,
+
+    /// When true and `reinvocation_safe` is true, panics in tool code are caught and returned
+    /// as an MCP error (`is_error: true`) instead of crashing the server. Default is `false` (opt-in).
+    ///
+    /// **Warning:** After a caught panic, the process may no longer be reinvocation_safe: global
+    /// state (e.g. static or process-wide resources) could be left in an inconsistent state.
+    /// For reliability, restart the MCP server after a caught panic when using in-process execution.
+    pub catch_in_process_panics: bool,
 }
 
 /// Optional configuration for MCP serve behavior (logging, etc.).
@@ -549,7 +601,7 @@ pub struct ClapMcpSchemaMetadata {
 /// When the `output-schema` feature is enabled and `T: schemars::JsonSchema`, returns the schema; otherwise returns `None`.
 #[cfg(feature = "output-schema")]
 pub fn output_schema_for_type<T: schemars::JsonSchema>() -> Option<serde_json::Value> {
-    serde_json::to_value(&schemars::schema_for!(T)).ok()
+    serde_json::to_value(schemars::schema_for!(T)).ok()
 }
 
 #[cfg(not(feature = "output-schema"))]
@@ -950,6 +1002,45 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
     matches
 }
 
+/// Canonical entrypoint for derive-based CLIs: parse (or serve if `--mcp`) and return self.
+///
+/// With the trait in scope, use `Args::parse_or_serve_mcp()` instead of
+/// `parse_or_serve_mcp_attr::<Args>()`. Equivalent to calling [`parse_or_serve_mcp_attr`];
+/// that free function remains available if you prefer it.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use clap::Parser;
+/// use clap_mcp::{ClapMcp, ParseOrServeMcp};
+///
+/// #[derive(Parser, ClapMcp)]
+/// #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+/// enum Cli { Foo }
+///
+/// fn main() {
+///     let cli = Cli::parse_or_serve_mcp();
+///     // ...
+/// }
+/// ```
+pub trait ParseOrServeMcp {
+    fn parse_or_serve_mcp() -> Self;
+}
+
+impl<T> ParseOrServeMcp for T
+where
+    T: ClapMcpConfigProvider
+        + ClapMcpSchemaMetadataProvider
+        + ClapMcpToolExecutor
+        + clap::Parser
+        + clap::CommandFactory
+        + clap::FromArgMatches,
+{
+    fn parse_or_serve_mcp() -> Self {
+        parse_or_serve_mcp_attr::<T>()
+    }
+}
+
 /// High-level helper for `clap` derive-based CLIs.
 ///
 /// - Adds `--mcp` to the command
@@ -958,6 +1049,10 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
 ///
 /// Uses default [`ClapMcpConfig`]. For config from `#[clap_mcp(...)]` attributes,
 /// use [`parse_or_serve_mcp_attr`].
+///
+/// For a **struct root with subcommand**, parse the root type then call your run
+/// logic on the subcommand (e.g. `run(args.command)`). See the crate README
+/// section "Struct root with subcommand".
 ///
 /// # Example
 ///
@@ -986,8 +1081,12 @@ where
 
 /// High-level helper for `clap` derive-based CLIs with config from `#[clap_mcp(...)]` attributes.
 ///
-/// Use `#[derive(ClapMcp)]` and `#[clap_mcp(parallel_safe = false, reinvocation_safe)]` on your CLI type,
+/// Use `#[derive(ClapMcp)]` and `#[clap_mcp(reinvocation_safe, parallel_safe = false)]` on your CLI type,
 /// then call this instead of [`parse_or_serve_mcp`]. Config is taken from `T::clap_mcp_config()`.
+///
+/// For a **struct root with subcommand**, parse the root type then call your run
+/// logic on the subcommand (e.g. `run(args.command)` or `match args.command { ... }`).
+/// See the crate README section "Struct root with subcommand" and [`ParseOrServeMcp`].
 ///
 /// # Example
 ///
@@ -1017,6 +1116,35 @@ where
         + clap::FromArgMatches,
 {
     parse_or_serve_mcp_with_config::<T>(T::clap_mcp_config())
+}
+
+/// Run parsed CLI through a closure, or serve MCP if `--mcp` is present.
+///
+/// If `--mcp` is passed, starts the MCP server and does not return. Otherwise,
+/// parses the CLI type `A`, calls `f(args)`, and returns the result. Use this
+/// when you want the "parse then run" flow in one place (e.g. `run_or_serve_mcp::<Cli, _>(|c| Ok(run(c)))`)
+/// instead of parsing and then calling `run` in main. For a simple "parse then branch"
+/// style, use [`ParseOrServeMcp::parse_or_serve_mcp`] or [`parse_or_serve_mcp_attr`].
+///
+/// # Example
+///
+/// ```rust,ignore
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     clap_mcp::run_or_serve_mcp::<Cli, _, _, _>(|cli| Ok(run(cli)))
+/// }
+/// ```
+pub fn run_or_serve_mcp<A, F, R, E>(f: F) -> Result<R, E>
+where
+    A: ClapMcpConfigProvider
+        + ClapMcpSchemaMetadataProvider
+        + ClapMcpToolExecutor
+        + clap::Parser
+        + clap::CommandFactory
+        + clap::FromArgMatches,
+    F: FnOnce(A) -> Result<R, E>,
+{
+    let args = parse_or_serve_mcp_attr::<A>();
+    f(args)
 }
 
 /// High-level helper for `clap` derive-based CLIs with execution safety configuration.
@@ -1265,6 +1393,31 @@ pub type InProcessToolHandler = Arc<
         + Sync,
 >;
 
+fn format_panic_payload(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        return (*s).to_string();
+    }
+    if let Some(s) = payload.downcast_ref::<String>() {
+        return s.clone();
+    }
+    "<panic>".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_panic_payload() {
+        let s: Box<dyn std::any::Any + Send> = Box::new("hello");
+        assert_eq!(format_panic_payload(s.as_ref()), "hello");
+        let s: Box<dyn std::any::Any + Send> = Box::new("world".to_string());
+        assert_eq!(format_panic_payload(s.as_ref()), "world");
+        let n: Box<dyn std::any::Any + Send> = Box::new(42i32);
+        assert_eq!(format_panic_payload(n.as_ref()), "<panic>");
+    }
+}
+
 fn value_to_string(v: &serde_json::Value) -> Option<String> {
     if v.is_null() {
         return None;
@@ -1362,6 +1515,7 @@ pub async fn serve_schema_json_over_stdio(
         root_name: String,
         tool_execution_lock: Option<Arc<tokio::sync::Mutex<()>>>,
         runtime_tx: RuntimeTx,
+        catch_in_process_panics: bool,
     }
 
     #[async_trait]
@@ -1502,8 +1656,15 @@ pub async fn serve_schema_json_over_stdio(
             };
 
             if let Some(ref handler) = self.in_process_handler {
-                match handler(&params.name, args_map) {
-                    Ok(output) => {
+                let name = params.name.clone();
+                let args = args_map;
+                let result = if self.catch_in_process_panics {
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler(&name, args)))
+                } else {
+                    Ok(handler(&name, args))
+                };
+                match result {
+                    Ok(Ok(output)) => {
                         let (content, structured_content) = match &output {
                             ClapMcpToolOutput::Text(s) => {
                                 (vec![ContentBlock::text_content(s.clone())], None)
@@ -1522,7 +1683,7 @@ pub async fn serve_schema_json_over_stdio(
                             structured_content,
                         });
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         let structured_content =
                             e.structured.as_ref().and_then(|v| v.as_object().cloned());
                         return Ok(CallToolResult {
@@ -1530,6 +1691,18 @@ pub async fn serve_schema_json_over_stdio(
                             is_error: Some(true),
                             meta: None,
                             structured_content,
+                        });
+                    }
+                    Err(panic_payload) => {
+                        let msg = format_panic_payload(panic_payload.as_ref());
+                        return Ok(CallToolResult {
+                            content: vec![ContentBlock::text_content(format!(
+                                "Tool panicked: {}",
+                                msg
+                            ))],
+                            is_error: Some(true),
+                            meta: None,
+                            structured_content: None,
                         });
                     }
                 }
@@ -1584,6 +1757,27 @@ pub async fn serve_schema_json_over_stdio(
                                     meta: Some(meta),
                                 })
                                 .await;
+                        }
+                        if !output.status.success() {
+                            let code = output
+                                .status
+                                .code()
+                                .map(|c| c.to_string())
+                                .unwrap_or_else(|| "unknown".to_string());
+                            let mut msg = format!(
+                                "Tool process exited with non-zero status (code: {})",
+                                code
+                            );
+                            if !err.is_empty() {
+                                msg.push_str("\nstderr:\n");
+                                msg.push_str(err.trim());
+                            }
+                            return Ok(CallToolResult {
+                                content: vec![ContentBlock::text_content(msg)],
+                                is_error: Some(true),
+                                meta: None,
+                                structured_content: None,
+                            });
                         }
                         let text = if err.is_empty() {
                             out.trim().to_string()
@@ -1681,6 +1875,7 @@ pub async fn serve_schema_json_over_stdio(
         root_name,
         tool_execution_lock,
         runtime_tx,
+        catch_in_process_panics: config.catch_in_process_panics,
     }
     .to_mcp_server_handler();
     let server = server_runtime::create_server(McpServerOptions {

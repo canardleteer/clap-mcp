@@ -11,7 +11,7 @@ use serde::Serialize;
 /// This CLI is both parallel_safe and reinvocation_safe, but we configure the harder case
 /// (parallel_safe=false, reinvocation_safe=false) to demonstrate subprocess-based execution.
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(parallel_safe = false, reinvocation_safe = false)]
+#[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
 #[clap_mcp_output_from = "run"]
 #[command(
     name = "clap-mcp-derive-example",

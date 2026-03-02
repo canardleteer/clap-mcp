@@ -93,7 +93,7 @@ enum Cli {
 }
 
 fn main() {
-    let cli = clap_mcp::parse_or_serve_mcp::<Cli>();
+    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
     // Normal CLI logic here...
 }
 ```
@@ -107,7 +107,7 @@ Use `#[clap_mcp(...)]` to declare execution safety, and
 use clap_mcp_macros::ClapMcp;
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(parallel_safe = false, reinvocation_safe)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
 #[command(name = "myapp")]
 enum Cli {
     #[clap_mcp_output = "format!(\"{}\", a + b)"]
@@ -116,6 +116,47 @@ enum Cli {
 
 let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
 ```
+
+### Struct root with subcommand
+
+When your CLI has a **struct root** with `#[command(subcommand)]` and an enum of commands, derive `ClapMcp` on **both** the root struct and the subcommand enum. Put `#[clap_mcp_output_from = "run"]` and execution config (`#[clap_mcp(...)]`) on the **subcommand** enum. In `main`, parse the root then call your run logic on the subcommand (e.g. `run(cli.command)` or `match cli.command { ... }`).
+
+```rust
+use clap::{Parser, Subcommand};
+use clap_mcp::ClapMcp;
+
+#[derive(Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[command(subcommand_required = false)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, ClapMcp)]
+#[clap_mcp_output_from = "run"]
+enum Commands {
+    Greet { #[arg(long)] name: Option<String> },
+    Add { #[arg(long)] a: i32, #[arg(long)] b: i32 },
+}
+
+fn run(cmd: Commands) -> String {
+    match cmd {
+        Commands::Greet { name } => format!("Hello, {}!", name.as_deref().unwrap_or("world")),
+        Commands::Add { a, b } => format!("{}", a + b),
+    }
+}
+
+fn main() {
+    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+    match cli.command {
+        None => println!("No subcommand"),
+        Some(cmd) => println!("{}", run(cmd)),
+    }
+}
+```
+
+See [Dual derive (root + subcommand)](#dual-derive-root--subcommand) below and the **struct_subcommand** example in [examples/README.md](examples/README.md).
 
 ## Feature flags
 
@@ -157,7 +198,7 @@ Use `#[derive(ClapMcp)]` and `#[clap_mcp(...)]` on your CLI type:
 use clap_mcp_macros::ClapMcp;
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(parallel_safe = false, reinvocation_safe)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
 #[command(...)]
 enum Cli {
     #[clap_mcp_output = "format!(\"{}\", a + b)"]
@@ -174,6 +215,9 @@ Use `#[clap_mcp(skip)]` to exclude subcommands or arguments from MCP exposure.
 Use `#[clap_mcp(requires)]` or `#[clap_mcp(requires = "arg_name")]` to make an optional
 argument required in the MCP tool schema (useful for positional args that may trigger
 stdin behavior when omitted). When the client omits a required arg, a clear error is returned.
+
+For **optional positional arguments** that might read from stdin when omitted, prefer an
+explicit `#[clap_mcp(requires)]` or `#[clap_mcp(skip)]` so MCP behavior is intentional.
 
 **Argument-level** (on each field):
 ```rust
@@ -225,6 +269,10 @@ let schema = schema_from_command_with_metadata(&cmd, &metadata);
 When the client omits a required argument, the tool returns a clear error:
 `"Missing required argument(s): path. The MCP tool schema marks these as required."`
 
+### Dual derive (root + subcommand)
+
+When you use a **struct root** with `#[command(subcommand)]` (e.g. `command: Option<Commands>`), derive `ClapMcp` on **both** the root struct and the subcommand enum. Put `#[clap_mcp_output_from = "run"]` and execution config (`#[clap_mcp(...)]`) on the **subcommand** enum only. The root's derive provides schema metadata and delegates tool execution to the subcommand's executor. In `main`, parse the root with `parse_or_serve_mcp_attr::<Root>()` then run with `run(cli.command)` or `match cli.command { ... }`. See [Struct root with subcommand](#struct-root-with-subcommand) and the **struct_subcommand** example in [examples/README.md](examples/README.md).
+
 ### Runtime config
 
 Use `ClapMcpConfig` with `parse_or_serve_mcp_with_config` or `get_matches_or_serve_mcp_with_config`:
@@ -238,6 +286,12 @@ clap_mcp::parse_or_serve_mcp_with_config::<Cli>(clap_mcp::ClapMcpConfig {
 ```
 
 Tools include `meta.clapMcp` with these hints for clients.
+
+### Crash and panic behavior
+
+- **Subprocess (`reinvocation_safe` = false):** If the tool process exits with a non-zero status, the server returns a tool result with `is_error: true` and a message that includes the exit code (and stderr when non-empty).
+- **In-process (`reinvocation_safe` = true), `catch_in_process_panics` = false (default):** Any panic in tool code (including from `run_async_tool`) crashes the server.
+- **In-process, `catch_in_process_panics` = true:** Panics are caught and returned as an MCP error; the server stays up. After a caught panic, the process may no longer be reinvocation_safe (global state may be corrupted) — consider restarting the server. See [`ClapMcpConfig::catch_in_process_panics`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#structfield.catch_in_process_panics) and the **panic_catch_opt_in** and **subprocess_exit_handling** examples in [examples/README.md](examples/README.md).
 
 ### Async tools and share_runtime
 
@@ -325,6 +379,8 @@ Use the same `run` in `main` so CLI and MCP share the same logic.
 - A type that implements [`IntoClapMcpResult`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.IntoClapMcpResult.html) (e.g. a custom enum for mixed text/structured)
 - `Option<O>` → `None` becomes empty text; `Some(o)` → `o.into_tool_result()`
 - `Result<O, E>` → `Ok(o)` → output; `Err(e)` → MCP error. `E` must implement [`IntoClapMcpToolError`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.IntoClapMcpToolError.html) (e.g. `String`, or your type for structured errors)
+
+`Result<AsStructured<T>, E>` is fully supported when you want structured success payloads and a separate error type; [`IntoClapMcpResult`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.IntoClapMcpResult.html) is implemented for `AsStructured<T: Serialize>`.
 
 **Example:**
 
