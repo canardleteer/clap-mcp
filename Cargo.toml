@@ -3,7 +3,7 @@ resolver = "3"
 members = ["clap-mcp", "clap-mcp/macros", "examples"]
 
 [workspace.package]
-version = "0.0.2-rc.1"
+version = "0.0.2-rc.2"
 
 [workspace.dependencies]
 clap-mcp-macros = { path = "clap-mcp/macros", version = "0.0.2-rc.1" }

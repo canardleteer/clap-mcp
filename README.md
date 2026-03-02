@@ -50,7 +50,7 @@ Add `clap-mcp` to your `Cargo.toml` (the default `derive` feature includes the m
 
 ```toml
 [dependencies]
-clap-mcp = "0.0.2-rc.1"
+clap-mcp = "0.0.2-rc.2"
 ```
 
 For derive usage, `use clap_mcp::ClapMcp` so you can write `#[derive(ClapMcp)]`.
@@ -172,7 +172,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-clap-mcp = { version = "0.0.2-rc.1", features = ["tracing"] }
+clap-mcp = { version = "0.0.2-rc.2", features = ["tracing"] }
 ```
 
 ## Execution safety configuration
