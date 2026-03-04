@@ -175,6 +175,72 @@ Enable features in `Cargo.toml`:
 clap-mcp = { version = "0.0.2-rc.2", features = ["tracing"] }
 ```
 
+## Custom resources and prompts
+
+In addition to the built-in **`clap://schema`** resource and the optional **logging guide** prompt, you can expose custom MCP resources and prompts. Add them to [`ClapMcpServeOptions`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html) and pass that into `parse_or_serve_mcp_with_config_and_options` or `serve_schema_json_over_stdio_blocking`.
+
+### Custom resources
+
+Set [`custom_resources`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html#structfield.custom_resources) to a list of [`CustomResource`](https://docs.rs/clap-mcp/latest/clap_mcp/content/struct.CustomResource.html) values. Each has:
+
+- **Identity:** `uri`, `name`, optional `title`, `description`, `mime_type`. Use a stable URI (e.g. `myapp://config`) so clients can list and read.
+- **Content:** Either **static** (`ResourceContent::Static(String)`) or **dynamic** (`ResourceContent::Dynamic(Arc<dyn ResourceContentProvider>)`). Dynamic content uses the async [`ResourceContentProvider::read`](https://docs.rs/clap-mcp/latest/clap_mcp/content/trait.ResourceContentProvider.html#tymethod.read) so the handler can await it.
+
+Example (static):
+
+```rust
+use clap_mcp::content::{CustomResource, ResourceContent};
+
+let mut opts = clap_mcp::ClapMcpServeOptions::default();
+opts.custom_resources.push(CustomResource {
+    uri: "myapp://readme".into(),
+    name: "readme".into(),
+    title: Some("Readme".into()),
+    description: Some("Project readme".into()),
+    mime_type: Some("text/markdown".into()),
+    content: ResourceContent::Static("# Hello\n".into()),
+});
+```
+
+For dynamic content, implement [`ResourceContentProvider`](https://docs.rs/clap-mcp/latest/clap_mcp/content/trait.ResourceContentProvider.html) (async `read(uri)`).
+
+### Custom prompts
+
+Set [`custom_prompts`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html#structfield.custom_prompts) to a list of [`CustomPrompt`](https://docs.rs/clap-mcp/latest/clap_mcp/content/struct.CustomPrompt.html) values. Each has:
+
+- **Identity:** `name`, optional `title`, `description`, optional `arguments` (MCP prompt argument descriptors).
+- **Content:** Either **static** (`PromptContent::Static(Vec<PromptMessage>)`) or **dynamic** (`PromptContent::Dynamic(Arc<dyn PromptContentProvider>)`). Dynamic uses the async [`PromptContentProvider::get`](https://docs.rs/clap-mcp/latest/clap_mcp/content/trait.PromptContentProvider.html#tymethod.get).
+
+The built-in **`clap-mcp-logging-guide`** prompt is only listed when logging is enabled (`serve_options.log_rx.is_some()`). Custom prompts are always merged into the list.
+
+### URI and name conventions
+
+Prefer a stable prefix (e.g. `myapp://`) for custom resource URIs so they don’t clash with the built-in `clap://schema`. Prompt names must be unique; avoid `clap-mcp-logging-guide` for custom prompts.
+
+## Exporting agent skills
+
+You can generate **Cursor Agent Skills** (SKILL.md) from the same tools, resources, and prompts that the MCP server exposes. This is useful for documenting your CLI for AI agents.
+
+### The `--export-skills` flag
+
+Add the flag with [`command_with_export_skills_flag`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.command_with_export_skills_flag.html) or use [`command_with_mcp_and_export_skills_flags`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.command_with_mcp_and_export_skills_flags.html) to add both `--mcp` and `--export-skills`:
+
+- **`--export-skills`** — Generate skills into the default directory (see below) and exit.
+- **`--export-skills=DIR`** — Generate skills into `DIR` (e.g. `--export-skills=./out`) and exit.
+
+When both `--mcp` and `--export-skills` are present, **`--export-skills` wins**: the process exports and exits without starting the MCP server.
+
+### Default output directory
+
+Default directory is **`.agent/skills/<app_name>`**, where `<app_name>` is your clap root command name. This follows a project-local layout (`.agent` is preferred over `.cursor` for agent/skills). Override with `--export-skills=DIR`.
+
+### What gets generated
+
+- One skill per **tool** (from your clap schema), with name/description and usage hints.
+- A combined **resources-and-prompts** skill when you have custom resources or prompts.
+
+Generated files follow the Cursor skill format (YAML frontmatter `name`, `description`; markdown body). You can also call [`content::export_skills`](https://docs.rs/clap-mcp/latest/clap_mcp/content/fn.export_skills.html) programmatically with schema, tools, custom resources, and custom prompts.
+
 ## Execution safety configuration
 
 CLIs differ in how safely they can be invoked over MCP. Two flags control this:

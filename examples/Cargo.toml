@@ -66,6 +66,10 @@ name = "panic_catch_opt_in"
 path = "servers/panic_catch_opt_in.rs"
 
 [[bin]]
+name = "custom_resources_prompts"
+path = "servers/custom_resources_prompts.rs"
+
+[[bin]]
 name = "client"
 path = "client.rs"
 required-features = ["tracing"]

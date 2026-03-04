@@ -46,6 +46,9 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 #[cfg(any(feature = "tracing", feature = "log"))]
 pub mod logging;
 
+/// Custom MCP resources and prompts, and skill export.
+pub mod content;
+
 #[cfg(feature = "derive")]
 pub use clap_mcp_macros::ClapMcp;
 
@@ -77,6 +80,9 @@ macro_rules! clap_mcp_main {
 
 /// Long flag that triggers MCP server mode. Add to your CLI via [`command_with_mcp_flag`].
 pub const MCP_FLAG_LONG: &str = "mcp";
+
+/// Long flag that triggers skill export (generates SKILL.md). Add via [`command_with_export_skills_flag`].
+pub const EXPORT_SKILLS_FLAG_LONG: &str = "export-skills";
 
 /// URI for the clap schema resource exposed by the MCP server.
 pub const MCP_RESOURCE_URI_SCHEMA: &str = "clap://schema";
@@ -444,6 +450,8 @@ pub enum ClapMcpError {
     Transport(#[from] rust_mcp_sdk::TransportError),
     #[error("MCP runtime error: {0}")]
     McpSdk(#[from] rust_mcp_sdk::error::McpSdkError),
+    #[error("I/O error during skill export: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// Configuration for execution safety when exposing a CLI over MCP.
@@ -553,6 +561,12 @@ pub struct ClapMcpServeOptions {
     /// setting it will fail to compile on Windows).
     #[cfg(unix)]
     pub capture_stdout: bool,
+
+    /// Custom MCP resources (static or async dynamic). Merged with the built-in `clap://schema` resource.
+    pub custom_resources: Vec<content::CustomResource>,
+
+    /// Custom MCP prompts (static or async dynamic). Merged with the built-in logging guide when logging is enabled.
+    pub custom_prompts: Vec<content::CustomPrompt>,
 }
 
 /// Log interpretation hint for MCP clients (included in `instructions` when logging is enabled).
@@ -686,7 +700,10 @@ impl ClapCommand {
 
 /// Arg IDs that are omitted from MCP tool arguments (built-in / default options).
 fn is_builtin_arg(id: &str) -> bool {
-    matches!(id, "help" | "version" | MCP_FLAG_LONG)
+    matches!(
+        id,
+        "help" | "version" | MCP_FLAG_LONG | EXPORT_SKILLS_FLAG_LONG
+    )
 }
 
 /// Builds MCP tools from a clap schema.
@@ -886,6 +903,47 @@ pub fn command_with_mcp_flag(mut cmd: Command) -> Command {
     cmd
 }
 
+/// Adds a root-level `--export-skills` flag (optional value for output directory) to a `clap::Command`.
+///
+/// When present, the CLI should generate Cursor Agent Skills (SKILL.md) and exit.
+/// If an arg with `--export-skills` already exists, this is a no-op.
+///
+/// # Example
+///
+/// ```rust
+/// use clap::Command;
+/// use clap_mcp::command_with_export_skills_flag;
+///
+/// let cmd = Command::new("myapp");
+/// let cmd = command_with_export_skills_flag(cmd);
+/// ```
+pub fn command_with_export_skills_flag(mut cmd: Command) -> Command {
+    let already = cmd
+        .get_arguments()
+        .any(|a| a.get_long().is_some_and(|l| l == EXPORT_SKILLS_FLAG_LONG));
+    if already {
+        return cmd;
+    }
+
+    cmd = cmd.arg(
+        Arg::new(EXPORT_SKILLS_FLAG_LONG)
+            .long(EXPORT_SKILLS_FLAG_LONG)
+            .value_name("DIR")
+            .help("Generate Cursor Agent Skills (SKILL.md) from tools, resources, and prompts, then exit")
+            .action(ArgAction::Set)
+            .required(false)
+            .global(true),
+    );
+
+    cmd
+}
+
+/// Adds both `--mcp` and `--export-skills` flags to the command.
+/// Use this so schema extraction omits both; check for export-skills before mcp in the parse flow.
+pub fn command_with_mcp_and_export_skills_flags(cmd: Command) -> Command {
+    command_with_export_skills_flag(command_with_mcp_flag(cmd))
+}
+
 /// Returns true if argv contains `--mcp` and no token is a root-level subcommand name.
 /// Used to start MCP server before calling get_matches() when subcommand_required would otherwise fail.
 fn argv_requests_mcp_without_subcommand(cmd: &Command) -> bool {
@@ -898,6 +956,26 @@ fn argv_requests_mcp_without_subcommand(cmd: &Command) -> bool {
     let has_mcp = args.iter().any(|a| a == "--mcp");
     let has_subcommand = args.iter().any(|a| subcommand_names.contains(a.as_str()));
     has_mcp && !has_subcommand
+}
+
+/// Returns `Some(None)` if argv contains `--export-skills` with no value (use default dir),
+/// `Some(Some(path))` if `--export-skills=DIR` is present, and `None` if the flag is not present.
+fn argv_export_skills_dir() -> Option<Option<std::path::PathBuf>> {
+    let argv: Vec<String> = std::env::args().collect();
+    let args = &argv[1..];
+    for (i, arg) in args.iter().enumerate() {
+        if arg == "--export-skills" {
+            return Some(
+                args.get(i + 1)
+                    .filter(|s| !s.starts_with('-'))
+                    .map(std::path::PathBuf::from),
+            );
+        }
+        if let Some(dir) = arg.strip_prefix("--export-skills=") {
+            return Some(Some(std::path::PathBuf::from(dir)));
+        }
+    }
+    None
 }
 
 /// Extracts a serializable schema from a `clap::Command` (imperative clap usage).
@@ -943,7 +1021,10 @@ fn command_to_schema_with_metadata(
 ) -> ClapCommand {
     let mut args: Vec<ClapArg> = cmd
         .get_arguments()
-        .filter(|a| a.get_long() != Some(MCP_FLAG_LONG))
+        .filter(|a| {
+            let long = a.get_long();
+            long != Some(MCP_FLAG_LONG) && long != Some(EXPORT_SKILLS_FLAG_LONG)
+        })
         .map(arg_to_schema)
         .collect();
 
@@ -1028,7 +1109,27 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
     metadata: &ClapMcpSchemaMetadata,
 ) -> clap::ArgMatches {
     let schema = schema_from_command_with_metadata(&cmd, metadata);
-    let cmd = command_with_mcp_flag(cmd);
+    let cmd = command_with_mcp_and_export_skills_flags(cmd);
+
+    if let Some(maybe_dir) = argv_export_skills_dir() {
+        let tools = tools_from_schema_with_config_and_metadata(&schema, &config, metadata);
+        let output_dir = maybe_dir.unwrap_or_else(|| PathBuf::from(".agent").join("skills"));
+        let app_name = schema.root.name.as_str();
+        let serve_options = ClapMcpServeOptions::default();
+        if let Err(e) = content::export_skills(
+            &schema,
+            metadata,
+            &tools,
+            &serve_options.custom_resources,
+            &serve_options.custom_prompts,
+            &output_dir,
+            app_name,
+        ) {
+            eprintln!("export-skills failed: {}", e);
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
 
     if config.allow_mcp_without_subcommand && argv_requests_mcp_without_subcommand(&cmd) {
         let schema_json =
@@ -1241,7 +1342,29 @@ where
         + clap::FromArgMatches,
 {
     let mut cmd = T::command();
-    cmd = command_with_mcp_flag(cmd);
+    cmd = command_with_mcp_and_export_skills_flags(cmd);
+
+    if let Some(maybe_dir) = argv_export_skills_dir() {
+        let base_cmd = T::command();
+        let metadata = T::clap_mcp_schema_metadata();
+        let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
+        let tools = tools_from_schema_with_config_and_metadata(&schema, &config, &metadata);
+        let output_dir = maybe_dir.unwrap_or_else(|| PathBuf::from(".agent").join("skills"));
+        let app_name = schema.root.name.as_str();
+        if let Err(e) = content::export_skills(
+            &schema,
+            &metadata,
+            &tools,
+            &serve_options.custom_resources,
+            &serve_options.custom_prompts,
+            &output_dir,
+            app_name,
+        ) {
+            eprintln!("export-skills failed: {}", e);
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
 
     if config.allow_mcp_without_subcommand && argv_requests_mcp_without_subcommand(&cmd) {
         let base_cmd = T::command();
@@ -1629,6 +1752,9 @@ pub async fn serve_schema_json_over_stdio(
         tool_execution_lock: Option<Arc<tokio::sync::Mutex<()>>>,
         runtime_tx: RuntimeTx,
         catch_in_process_panics: bool,
+        custom_resources: Vec<content::CustomResource>,
+        custom_prompts: Vec<content::CustomPrompt>,
+        logging_enabled: bool,
     }
 
     #[async_trait]
@@ -1638,18 +1764,22 @@ pub async fn serve_schema_json_over_stdio(
             _params: Option<PaginatedRequestParams>,
             _runtime: Arc<dyn rust_mcp_sdk::McpServer>,
         ) -> std::result::Result<ListResourcesResult, RpcError> {
+            let mut resources = vec![Resource {
+                name: "clap-schema".into(),
+                uri: MCP_RESOURCE_URI_SCHEMA.into(),
+                title: Some("Clap CLI schema".into()),
+                description: Some("JSON schema extracted from clap Command definitions".into()),
+                mime_type: Some("application/json".into()),
+                annotations: None,
+                icons: vec![],
+                meta: None,
+                size: None,
+            }];
+            for r in &self.custom_resources {
+                resources.push(r.to_list_resource());
+            }
             Ok(ListResourcesResult {
-                resources: vec![Resource {
-                    name: "clap-schema".into(),
-                    uri: MCP_RESOURCE_URI_SCHEMA.into(),
-                    title: Some("Clap CLI schema".into()),
-                    description: Some("JSON schema extracted from clap Command definitions".into()),
-                    mime_type: Some("application/json".into()),
-                    annotations: None,
-                    icons: vec![],
-                    meta: None,
-                    size: None,
-                }],
+                resources,
                 meta: None,
                 next_cursor: None,
             })
@@ -1660,17 +1790,31 @@ pub async fn serve_schema_json_over_stdio(
             params: ReadResourceRequestParams,
             _runtime: Arc<dyn rust_mcp_sdk::McpServer>,
         ) -> std::result::Result<ReadResourceResult, RpcError> {
-            if params.uri != MCP_RESOURCE_URI_SCHEMA {
+            if params.uri == MCP_RESOURCE_URI_SCHEMA {
+                return Ok(ReadResourceResult {
+                    contents: vec![ReadResourceContent::TextResourceContents(
+                        TextResourceContents {
+                            uri: params.uri,
+                            mime_type: Some("application/json".into()),
+                            text: self.schema_json.clone(),
+                            meta: None,
+                        },
+                    )],
+                    meta: None,
+                });
+            }
+            let custom = self.custom_resources.iter().find(|r| r.uri == params.uri);
+            let Some(r) = custom else {
                 return Err(RpcError::invalid_params()
                     .with_message(format!("unknown resource uri: {}", params.uri)));
-            }
-
+            };
+            let text = content::resolve_resource_content(r, &params.uri).await?;
             Ok(ReadResourceResult {
                 contents: vec![ReadResourceContent::TextResourceContents(
                     TextResourceContents {
-                        uri: params.uri,
-                        mime_type: Some("application/json".into()),
-                        text: self.schema_json.clone(),
+                        uri: params.uri.clone(),
+                        mime_type: r.mime_type.clone(),
+                        text,
                         meta: None,
                     },
                 )],
@@ -1695,8 +1839,9 @@ pub async fn serve_schema_json_over_stdio(
             _params: Option<PaginatedRequestParams>,
             _runtime: Arc<dyn rust_mcp_sdk::McpServer>,
         ) -> std::result::Result<ListPromptsResult, RpcError> {
-            Ok(ListPromptsResult {
-                prompts: vec![Prompt {
+            let mut prompts = Vec::new();
+            if self.logging_enabled {
+                prompts.push(Prompt {
                     name: PROMPT_LOGGING_GUIDE.to_string(),
                     description: Some(
                         "How to interpret log messages from this clap-mcp server".to_string(),
@@ -1705,7 +1850,13 @@ pub async fn serve_schema_json_over_stdio(
                     icons: vec![],
                     meta: None,
                     title: Some("clap-mcp Logging Guide".to_string()),
-                }],
+                });
+            }
+            for p in &self.custom_prompts {
+                prompts.push(p.to_list_prompt());
+            }
+            Ok(ListPromptsResult {
+                prompts,
                 meta: None,
                 next_cursor: None,
             })
@@ -1716,18 +1867,40 @@ pub async fn serve_schema_json_over_stdio(
             params: GetPromptRequestParams,
             _runtime: Arc<dyn rust_mcp_sdk::McpServer>,
         ) -> std::result::Result<GetPromptResult, RpcError> {
-            if params.name != PROMPT_LOGGING_GUIDE {
+            if params.name == PROMPT_LOGGING_GUIDE {
+                if !self.logging_enabled {
+                    return Err(RpcError::invalid_params()
+                        .with_message(format!("unknown prompt: {}", params.name)));
+                }
+                return Ok(GetPromptResult {
+                    description: Some(
+                        "How to interpret log messages from this clap-mcp server".to_string(),
+                    ),
+                    messages: vec![PromptMessage {
+                        content: ContentBlock::text_content(LOGGING_GUIDE_CONTENT.to_string()),
+                        role: Role::User,
+                    }],
+                    meta: None,
+                });
+            }
+            let custom = self.custom_prompts.iter().find(|p| p.name == params.name);
+            let Some(p) = custom else {
                 return Err(RpcError::invalid_params()
                     .with_message(format!("unknown prompt: {}", params.name)));
-            }
+            };
+            let arguments: serde_json::Map<String, serde_json::Value> = params
+                .arguments
+                .as_ref()
+                .map(|m| {
+                    m.iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let messages = content::resolve_prompt_content(p, &params.name, &arguments).await?;
             Ok(GetPromptResult {
-                description: Some(
-                    "How to interpret log messages from this clap-mcp server".to_string(),
-                ),
-                messages: vec![PromptMessage {
-                    content: ContentBlock::text_content(LOGGING_GUIDE_CONTENT.to_string()),
-                    role: Role::User,
-                }],
+                description: p.description.clone(),
+                messages,
                 meta: None,
             })
         }
@@ -1989,6 +2162,9 @@ pub async fn serve_schema_json_over_stdio(
         tool_execution_lock,
         runtime_tx,
         catch_in_process_panics: config.catch_in_process_panics,
+        custom_resources: serve_options.custom_resources.clone(),
+        custom_prompts: serve_options.custom_prompts.clone(),
+        logging_enabled,
     }
     .to_mcp_server_handler();
     let server = server_runtime::create_server(McpServerOptions {
