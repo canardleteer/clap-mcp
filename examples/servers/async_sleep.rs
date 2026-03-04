@@ -45,6 +45,8 @@ fn main() {
         log_rx: Some(log_rx),
         #[cfg(unix)]
         capture_stdout: false,
+        custom_resources: vec![],
+        custom_prompts: vec![],
     };
 
     let cli = clap_mcp::parse_or_serve_mcp_with_config_and_options::<Cli>(

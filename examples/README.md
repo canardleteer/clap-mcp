@@ -5,7 +5,7 @@ This directory contains example CLIs that demonstrate clap-mcp capabilities.
 Run all commands from the **workspace root** (the parent of this `examples/` directory). The examples depend on `clap-mcp` via a path dependency.
 
 - **`client.rs`** — MCP client that exercises the server examples (easiest way to see everything working)
-- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, result_output, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared, **subprocess_exit_handling**, **panic_catch_opt_in**)
+- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, result_output, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared, **subprocess_exit_handling**, **panic_catch_opt_in**, **custom_resources_prompts**)
 
 ## Crash / panic behavior
 
@@ -45,6 +45,24 @@ cargo run -p clap-mcp-examples --bin client -- async-sleep-shared
 
 # Test log_bridge
 cargo run -p clap-mcp-examples --bin client -- log-bridge
+```
+
+### custom_resources_prompts
+
+Custom MCP resources and prompts, and the `--export-skills` flag. Adds a static resource (`example://readme`) and a static prompt (`example-prompt`) via `ClapMcpServeOptions`. When run with `--mcp`, clients can list/read the extra resource and list/get the prompt. When run with `--export-skills` (or `--export-skills=DIR`), generates Cursor Agent Skills (SKILL.md) into `.agent/skills/<app_name>` or the given directory.
+
+```bash
+# Normal CLI
+cargo run -p clap-mcp-examples --bin custom_resources_prompts -- echo --message "hi"
+
+# MCP server (includes custom resource and prompt)
+cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --mcp
+
+# Export agent skills (default: .agent/skills/custom-resources-prompts/)
+cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --export-skills
+
+# Export to a specific directory
+cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --export-skills=./out
 ```
 
 ## Running Server Examples Directly
