@@ -81,7 +81,7 @@ macro_rules! clap_mcp_main {
 /// Long flag that triggers MCP server mode. Add to your CLI via [`command_with_mcp_flag`].
 pub const MCP_FLAG_LONG: &str = "mcp";
 
-/// Long flag that triggers skill export (generates SKILL.md). Add via [`command_with_export_skills_flag`].
+/// Long flag that triggers [Agent Skills](https://agentskills.io/specification) export (generates SKILL.md). Add via [`command_with_export_skills_flag`].
 pub const EXPORT_SKILLS_FLAG_LONG: &str = "export-skills";
 
 /// URI for the clap schema resource exposed by the MCP server.
@@ -967,8 +967,8 @@ pub fn command_with_mcp_flag(mut cmd: Command) -> Command {
 
 /// Adds a root-level `--export-skills` flag (optional value for output directory) to a `clap::Command`.
 ///
-/// When present, the CLI should generate Cursor Agent Skills (SKILL.md) and exit.
-/// If an arg with `--export-skills` already exists, this is a no-op.
+/// When present, the CLI should generate [Agent Skills](https://agentskills.io/specification)
+/// (SKILL.md) and exit. If an arg with `--export-skills` already exists, this is a no-op.
 ///
 /// # Example
 ///
@@ -991,7 +991,7 @@ pub fn command_with_export_skills_flag(mut cmd: Command) -> Command {
         Arg::new(EXPORT_SKILLS_FLAG_LONG)
             .long(EXPORT_SKILLS_FLAG_LONG)
             .value_name("DIR")
-            .help("Generate Cursor Agent Skills (SKILL.md) from tools, resources, and prompts, then exit")
+            .help("Generate Agent Skills (SKILL.md) from tools, resources, and prompts, then exit")
             .action(ArgAction::Set)
             .required(false)
             .global(true),

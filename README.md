@@ -219,7 +219,7 @@ Prefer a stable prefix (e.g. `myapp://`) for custom resource URIs so they don’
 
 ## Exporting agent skills
 
-You can generate **Cursor Agent Skills** (SKILL.md) from the same tools, resources, and prompts that the MCP server exposes. This is useful for documenting your CLI for AI agents.
+You can generate **[Agent Skills](https://agentskills.io/specification)** (SKILL.md) from the same tools, resources, and prompts that the MCP server exposes. This is useful for documenting your CLI for AI agents.
 
 ### The `--export-skills` flag
 
@@ -232,14 +232,14 @@ When both `--mcp` and `--export-skills` are present, **`--export-skills` wins**:
 
 ### Default output directory
 
-Default directory is **`.agent/skills/<app_name>`**, where `<app_name>` is your clap root command name. This follows a project-local layout (`.agent` is preferred over `.cursor` for agent/skills). Override with `--export-skills=DIR`.
+Default directory is **`.agent/skills/`**, where each skill gets a subdirectory named after the app or tool. Override with `--export-skills=DIR`.
 
 ### What gets generated
 
 - One skill per **tool** (from your clap schema), with name/description and usage hints.
 - A combined **resources-and-prompts** skill when you have custom resources or prompts.
 
-Generated files follow the Cursor skill format (YAML frontmatter `name`, `description`; markdown body). You can also call [`content::export_skills`](https://docs.rs/clap-mcp/latest/clap_mcp/content/fn.export_skills.html) programmatically with schema, tools, custom resources, and custom prompts.
+Generated files follow the [Agent Skills specification](https://agentskills.io/specification) (YAML frontmatter with `name`, `description`, and `allowed-tools`; markdown body with usage instructions). The `name` field matches the parent directory name as required by the spec. Each tool skill includes `allowed-tools` listing the MCP tool it describes; note that this field is still experimental in the spec with no defined syntax convention. You can also call [`content::export_skills`](https://docs.rs/clap-mcp/latest/clap_mcp/content/fn.export_skills.html) programmatically with schema, tools, custom resources, and custom prompts.
 
 ## Execution safety configuration
 

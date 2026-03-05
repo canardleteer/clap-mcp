@@ -49,7 +49,7 @@ cargo run -p clap-mcp-examples --bin client -- log-bridge
 
 ### custom_resources_prompts
 
-Custom MCP resources and prompts, and the `--export-skills` flag. Adds a static resource (`example://readme`) and a static prompt (`example-prompt`) via `ClapMcpServeOptions`. When run with `--mcp`, clients can list/read the extra resource and list/get the prompt. When run with `--export-skills` (or `--export-skills=DIR`), generates Cursor Agent Skills (SKILL.md) into `.agent/skills/<app_name>` or the given directory.
+Custom MCP resources and prompts, and the `--export-skills` flag. Adds a static resource (`example://readme`) and a static prompt (`example-prompt`) via `ClapMcpServeOptions`. When run with `--mcp`, clients can list/read the extra resource and list/get the prompt. When run with `--export-skills` (or `--export-skills=DIR`), generates [Agent Skills](https://agentskills.io/specification) (SKILL.md) into `.agent/skills/` or the given directory.
 
 ```bash
 # Normal CLI
