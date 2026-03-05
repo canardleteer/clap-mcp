@@ -795,17 +795,22 @@ fn command_to_tool_with_config(
         HashMap::new();
     for arg in &args {
         let mut prop = serde_json::Map::new();
-        prop.insert(
-            "type".to_string(),
-            serde_json::Value::String("string".to_string()),
-        );
+        let (json_type, items) = mcp_type_for_arg(arg);
+        prop.insert("type".to_string(), json_type);
+        if let Some(items) = items {
+            prop.insert("items".to_string(), items);
+        }
         let desc = arg
             .long_help
             .as_deref()
             .or(arg.help.as_deref())
             .map(String::from);
-        if let Some(d) = desc {
-            prop.insert("description".to_string(), serde_json::Value::String(d));
+        let mut desc = desc.unwrap_or_default();
+        if let Some(hint) = mcp_action_description_hint(arg) {
+            desc.push_str(&hint);
+        }
+        if !desc.is_empty() {
+            prop.insert("description".to_string(), serde_json::Value::String(desc));
         }
         properties.insert(arg.id.clone(), prop);
     }
@@ -867,6 +872,63 @@ pub struct ClapArg {
     pub action: Option<String>,
     pub value_names: Vec<String>,
     pub num_args: Option<String>,
+}
+
+/// Returns the MCP input schema type for an argument based on its action (and num_args).
+/// - SetTrue / SetFalse: boolean
+/// - Count: integer
+/// - Append (or multi-value num_args): array of strings
+/// - Set / default: string
+///
+/// When the arg has a single value_name (e.g. VERSION), the array items schema gets a description
+/// so clients know what each element represents.
+fn mcp_type_for_arg(arg: &ClapArg) -> (serde_json::Value, Option<serde_json::Value>) {
+    let action = arg.action.as_deref().unwrap_or("Set");
+    let is_multi = matches!(action, "Append")
+        || arg
+            .num_args
+            .as_deref()
+            .is_some_and(|n| n.contains("..") && !n.contains("=1"));
+    let (json_type, items) = if matches!(action, "SetTrue" | "SetFalse") {
+        (serde_json::json!("boolean"), None)
+    } else if action == "Count" {
+        (serde_json::json!("integer"), None)
+    } else if is_multi {
+        let item_desc = arg
+            .value_names
+            .first()
+            .map(|name| format!("A {} value", name));
+        let items_schema = match item_desc {
+            Some(desc) => serde_json::json!({ "type": "string", "description": desc }),
+            None => serde_json::json!({ "type": "string" }),
+        };
+        (serde_json::json!("array"), Some(items_schema))
+    } else {
+        (serde_json::json!("string"), None)
+    };
+    (json_type, items)
+}
+
+/// Optional description suffix so MCP clients know what to pass for flags/count/list.
+fn mcp_action_description_hint(arg: &ClapArg) -> Option<String> {
+    let action = arg.action.as_deref()?;
+    let hint: String = match action {
+        "SetTrue" => " Boolean flag: set to true to pass this flag.".into(),
+        "SetFalse" => " Boolean flag: set to false to pass this flag (e.g. --no-xxx).".into(),
+        "Count" => " Number of times the flag is passed (e.g. -vvv).".into(),
+        "Append" => {
+            if let Some(name) = arg.value_names.first() {
+                format!(
+                    " List of {} values; pass a JSON array (e.g. [\"a\", \"b\"]).",
+                    name
+                )
+            } else {
+                " List of values; pass a JSON array (e.g. [\"a\", \"b\"]).".into()
+            }
+        }
+        _ => return None,
+    };
+    Some(hint)
 }
 
 /// Adds a root-level `--mcp` flag to a `clap::Command` (imperative clap usage).
@@ -1547,11 +1609,18 @@ fn validate_required_args(
             if !a.required || is_builtin_arg(a.id.as_str()) {
                 return false;
             }
-            let has_value = arguments
-                .get(&a.id)
-                .and_then(value_to_string)
-                .is_some_and(|s| !s.is_empty());
-            !has_value
+            let has_value = arguments.get(&a.id).map(|v| {
+                let action = a.action.as_deref().unwrap_or("Set");
+                if matches!(action, "SetTrue" | "SetFalse" | "Count") {
+                    // Flag/count: key present is enough (value can be false/0)
+                    true
+                } else if action == "Append" || v.is_array() {
+                    !value_to_strings(v).is_some_and(|s| s.is_empty())
+                } else {
+                    value_to_string(v).is_some_and(|s| !s.is_empty())
+                }
+            });
+            !has_value.unwrap_or(false)
         })
         .map(|a| a.id.clone())
         .collect();
@@ -1613,18 +1682,62 @@ fn build_tool_argv(
 
     for arg in positionals {
         if let Some(v) = arguments.get(&arg.id)
-            && let Some(s) = value_to_string(v)
+            && let Some(strings) = value_to_strings(v)
         {
-            out.push(s);
+            for s in strings {
+                out.push(s);
+            }
         }
     }
     for arg in optionals {
-        if let Some(long) = &arg.long
-            && let Some(v) = arguments.get(&arg.id)
-            && let Some(s) = value_to_string(v)
-        {
-            out.push(format!("--{long}"));
-            out.push(s);
+        if let Some(long) = &arg.long {
+            let action = arg.action.as_deref().unwrap_or("Set");
+            let v = arguments.get(&arg.id);
+            match action {
+                "SetTrue" => {
+                    if v.and_then(value_to_string).is_some_and(|s| s == "true")
+                        || v.and_then(|x| x.as_bool()).is_some_and(|b| b)
+                    {
+                        out.push(format!("--{long}"));
+                    }
+                }
+                "SetFalse" => {
+                    if v.and_then(value_to_string).is_some_and(|s| s == "false")
+                        || v.and_then(|x| x.as_bool()).is_some_and(|b| !b)
+                    {
+                        out.push(format!("--{long}"));
+                    }
+                }
+                "Count" => {
+                    let n = v.and_then(|x| x.as_i64()).unwrap_or(0).clamp(0, i64::MAX) as usize;
+                    for _ in 0..n {
+                        out.push(format!("--{long}"));
+                    }
+                }
+                "Append" => {
+                    if let Some(v) = v.and_then(value_to_strings) {
+                        for s in v {
+                            if !s.is_empty() {
+                                out.push(format!("--{long}"));
+                                out.push(s);
+                            }
+                        }
+                    } else if let Some(s) = v.and_then(value_to_string)
+                        && !s.is_empty()
+                    {
+                        out.push(format!("--{long}"));
+                        out.push(s);
+                    }
+                }
+                _ => {
+                    if let Some(s) = v.and_then(value_to_string)
+                        && !s.is_empty()
+                    {
+                        out.push(format!("--{long}"));
+                        out.push(s);
+                    }
+                }
+            }
         }
     }
 
@@ -1664,6 +1777,24 @@ fn value_to_string(v: &serde_json::Value) -> Option<String> {
         serde_json::Value::Bool(b) => b.to_string(),
         other => other.to_string(),
     })
+}
+
+/// Returns one or more string values for MCP input. For arrays, returns each element as string; otherwise single value.
+fn value_to_strings(v: &serde_json::Value) -> Option<Vec<String>> {
+    if v.is_null() {
+        return None;
+    }
+    match v {
+        serde_json::Value::Array(arr) => {
+            let out: Vec<String> = arr
+                .iter()
+                .filter_map(value_to_string)
+                .filter(|s| !s.is_empty())
+                .collect();
+            Some(out)
+        }
+        _ => value_to_string(v).map(|s| vec![s]),
+    }
 }
 
 /// Starts an MCP server over stdio exposing `clap://schema` with the provided JSON payload.
