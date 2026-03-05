@@ -70,6 +70,10 @@ name = "custom_resources_prompts"
 path = "servers/custom_resources_prompts.rs"
 
 [[bin]]
+name = "vec_and_flags"
+path = "servers/vec_and_flags.rs"
+
+[[bin]]
 name = "client"
 path = "client.rs"
 required-features = ["tracing"]

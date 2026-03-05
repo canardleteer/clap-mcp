@@ -5,7 +5,7 @@ This directory contains example CLIs that demonstrate clap-mcp capabilities.
 Run all commands from the **workspace root** (the parent of this `examples/` directory). The examples depend on `clap-mcp` via a path dependency.
 
 - **`client.rs`** — MCP client that exercises the server examples (easiest way to see everything working)
-- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, result_output, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared, **subprocess_exit_handling**, **panic_catch_opt_in**, **custom_resources_prompts**)
+- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, result_output, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared, **subprocess_exit_handling**, **panic_catch_opt_in**, **custom_resources_prompts**, **vec_and_flags**)
 
 ## Crash / panic behavior
 
@@ -63,6 +63,18 @@ cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --export-skills
 
 # Export to a specific directory
 cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --export-skills=./out
+```
+
+### vec_and_flags
+
+Demonstrates **Vec (list)** and **action-based** args in MCP: `--files` and positional `versions` are exposed as arrays, `dry_run` as boolean, and `verbose` as integer (count). Plain text output only.
+
+```bash
+# Normal CLI: option list (--files a --files b), positional list (1.0 2.0)
+cargo run -p clap-mcp-examples --bin vec_and_flags -- run --files a --files b --files c 1.0 2.0 --dry-run -vv
+
+# MCP server mode (inspect tool schema: files and versions = array, dry_run = boolean, verbose = integer)
+cargo run -p clap-mcp-examples --bin vec_and_flags -- --mcp
 ```
 
 ## Running Server Examples Directly
