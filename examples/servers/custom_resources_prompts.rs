@@ -3,7 +3,7 @@
 //! Run:
 //! - `cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --help`
 //! - `cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --mcp` (MCP server with extra resource and prompt)
-//! - `cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --export-skills` (generate SKILL.md into .agent/skills/)
+//! - `cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --export-skills` (generate SKILL.md into .agents/skills/)
 //! - `cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --export-skills=./out` (generate into ./out)
 
 use clap::Parser;
