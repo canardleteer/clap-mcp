@@ -232,7 +232,7 @@ When both `--mcp` and `--export-skills` are present, **`--export-skills` wins**:
 
 ### Default output directory
 
-Default directory is **`.agent/skills/`**, where each skill gets a subdirectory named after the app or tool. Override with `--export-skills=DIR`.
+Default directory is **`.agents/skills/`**, where each skill gets a subdirectory named after the app or tool. Override with `--export-skills=DIR`.
 
 ### What gets generated
 

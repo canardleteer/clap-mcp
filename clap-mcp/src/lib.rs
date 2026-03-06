@@ -1175,7 +1175,7 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
 
     if let Some(maybe_dir) = argv_export_skills_dir() {
         let tools = tools_from_schema_with_config_and_metadata(&schema, &config, metadata);
-        let output_dir = maybe_dir.unwrap_or_else(|| PathBuf::from(".agent").join("skills"));
+        let output_dir = maybe_dir.unwrap_or_else(|| PathBuf::from(".agents").join("skills"));
         let app_name = schema.root.name.as_str();
         let serve_options = ClapMcpServeOptions::default();
         if let Err(e) = content::export_skills(
@@ -1411,7 +1411,7 @@ where
         let metadata = T::clap_mcp_schema_metadata();
         let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
         let tools = tools_from_schema_with_config_and_metadata(&schema, &config, &metadata);
-        let output_dir = maybe_dir.unwrap_or_else(|| PathBuf::from(".agent").join("skills"));
+        let output_dir = maybe_dir.unwrap_or_else(|| PathBuf::from(".agents").join("skills"));
         let app_name = schema.root.name.as_str();
         if let Err(e) = content::export_skills(
             &schema,

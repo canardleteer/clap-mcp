@@ -162,7 +162,7 @@ pub async fn resolve_prompt_content(
 /// Export [Agent Skills](https://agentskills.io/specification) (SKILL.md) from the given
 /// schema, tools, custom resources, and prompts.
 ///
-/// Writes into `output_dir` (e.g. `.agent/skills/`). Each tool gets its own skill
+/// Writes into `output_dir` (e.g. `.agents/skills/`). Each tool gets its own skill
 /// directory with a SKILL.md; resources and prompts are grouped into a single skill.
 ///
 /// Generated files follow the [Agent Skills specification](https://agentskills.io/specification):
