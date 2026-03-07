@@ -408,7 +408,7 @@ fn test_run_async_tool_dedicated_thread_reinvocation_safe_false() {
         share_runtime: true, // ignored
         ..Default::default()
     };
-    let result = run_async_tool(&config, || async { 42 });
+    let result = run_async_tool(&config, || async { 42 }).expect("runtime ok");
     assert_eq!(result, 42);
 }
 
@@ -421,7 +421,7 @@ fn test_run_async_tool_dedicated_thread_share_runtime_false() {
         share_runtime: false,
         ..Default::default()
     };
-    let result = run_async_tool(&config, || async { 99 });
+    let result = run_async_tool(&config, || async { 99 }).expect("runtime ok");
     assert_eq!(result, 99);
 }
 
@@ -434,14 +434,14 @@ fn test_run_async_tool_dedicated_thread_share_runtime_true_but_reinvoke_false() 
         share_runtime: true,
         ..Default::default()
     };
-    let result = run_async_tool(&config, || async { "hello".to_string() });
+    let result = run_async_tool(&config, || async { "hello".to_string() }).expect("runtime ok");
     assert_eq!(result, "hello");
 }
 
 #[test]
 fn test_run_async_tool_returns_complex_type() {
     let config = ClapMcpConfig::default();
-    let result = run_async_tool(&config, || async { vec![1u8, 2, 3] });
+    let result = run_async_tool(&config, || async { vec![1u8, 2, 3] }).expect("runtime ok");
     assert_eq!(result, vec![1, 2, 3]);
 }
 

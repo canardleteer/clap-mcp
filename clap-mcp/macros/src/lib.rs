@@ -581,18 +581,24 @@ fn is_option_type(ty: &Type) -> bool {
 /// Prefer this when declaring multiple required args. When the client omits a required
 /// arg, a clear error is returned.
 ///
-/// # Example
+/// # Example (idiomatic: single `run` function, no duplicated logic)
 ///
 /// ```rust,ignore
 /// use clap::Parser;
 ///
 /// #[derive(Debug, Parser, clap_mcp::ClapMcp)]
 /// #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+/// #[clap_mcp_output_from = "run"]
 /// enum Cli {
-///     #[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
 ///     Greet { #[arg(long)] name: Option<String> },
-///     #[clap_mcp_output_json = "SumResult { sum: a + b }"]
 ///     Add { #[arg(long)] a: i32, #[arg(long)] b: i32 },
+/// }
+///
+/// fn run(cmd: Cli) -> String {
+///     match cmd {
+///         Cli::Greet { name } => format!("Hello, {}!", name.as_deref().unwrap_or("world")),
+///         Cli::Add { a, b } => (a + b).to_string(),
+///     }
 /// }
 /// ```
 #[proc_macro_derive(
@@ -694,8 +700,16 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                                     })
                                 })
                                 .collect();
-                            let pat = quote! { #name::#variant_name { #(#names),* } };
-                            let default_out = quote! { format!("{:?}", self) };
+                            let pat = match &v.fields {
+                                syn::Fields::Named(_) => {
+                                    quote! { #name::#variant_name { #(#names),* } }
+                                }
+                                syn::Fields::Unnamed(_) => {
+                                    quote! { #name::#variant_name ( #(#names),* ) }
+                                }
+                                syn::Fields::Unit => unreachable!("unit variants handled above"),
+                            };
+                            let default_out = quote! { __clap_mcp_debug.clone() };
                             let out = build_output_expr(v, default_out);
                             (pat, out)
                         };
@@ -706,6 +720,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                 quote! {
                     impl clap_mcp::ClapMcpToolExecutor for #name {
                         fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+                            let __clap_mcp_debug = format!("{:?}", &self);
                             match self {
                                 #(#arms),*
                             }

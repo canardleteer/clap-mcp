@@ -74,6 +74,26 @@ name = "vec_and_flags"
 path = "servers/vec_and_flags.rs"
 
 [[bin]]
+name = "capture_stdout"
+path = "servers/capture_stdout.rs"
+
+[[bin]]
+name = "nested_subcommands"
+path = "servers/nested_subcommands.rs"
+
+[[bin]]
+name = "placeholder_server"
+path = "servers/placeholder_server.rs"
+
+[[bin]]
+name = "invalid_executable_server"
+path = "servers/invalid_executable_server.rs"
+
+[[bin]]
+name = "stderr_success"
+path = "servers/stderr_success.rs"
+
+[[bin]]
 name = "client"
 path = "client.rs"
 required-features = ["tracing"]

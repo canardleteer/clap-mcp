@@ -24,7 +24,7 @@ use clap_mcp::ClapMcpConfigProvider;
 )]
 enum Cli {
     /// Run 3 concurrent sleep tasks and return structured result.
-    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo())"]
+    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo()).expect(\"async tool failed\")"]
     SleepDemo,
 }
 

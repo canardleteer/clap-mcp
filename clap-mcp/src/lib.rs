@@ -4,22 +4,29 @@
 //!
 //! ## Quick start
 //!
+//! Prefer a single `run` function with `#[clap_mcp_output_from = "run"]` so CLI and MCP
+//! share one implementation (no duplicated logic).
+//!
 //! ```rust,ignore
 //! use clap::Parser;
 //! use clap_mcp::ClapMcp;
 //!
 //! #[derive(Parser, ClapMcp)]
 //! #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+//! #[clap_mcp_output_from = "run"]
 //! enum Cli {
-//!     #[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
 //!     Greet { #[arg(long)] name: Option<String> },
+//! }
+//!
+//! fn run(cmd: Cli) -> String {
+//!     match cmd {
+//!         Cli::Greet { name } => format!("Hello, {}!", name.as_deref().unwrap_or("world")),
+//!     }
 //! }
 //!
 //! fn main() {
 //!     let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
-//!     match cli {
-//!         Cli::Greet { name } => println!("Hello, {}!", name.as_deref().unwrap_or("world")),
-//!     }
+//!     println!("{}", run(cli));
 //! }
 //! ```
 //!
@@ -62,7 +69,7 @@ pub use clap_mcp_macros::ClapMcp;
 ///
 /// ```rust,ignore
 /// fn main() {
-///     clap_mcp_main!(Cli, match args.command {
+///     clap_mcp_main!(Cli, |args| match args.command {
 ///         None => println!("No subcommand"),
 ///         Some(cmd) => println!("{}", run(cmd)),
 ///     });
@@ -72,9 +79,18 @@ pub use clap_mcp_macros::ClapMcp;
 /// For `Result`-returning run logic, use `?` in main or call [`run_or_serve_mcp`].
 #[macro_export]
 macro_rules! clap_mcp_main {
-    ($root:ty, $run_expr:expr) => {{
-        let args = $crate::parse_or_serve_mcp_attr::<$root>();
+    ($root:ty, |$args:ident| $run_expr:expr) => {{
+        let $args = $crate::parse_or_serve_mcp_attr::<$root>();
         $run_expr
+    }};
+    ($root:ty, $run_expr:expr) => {{
+        macro_rules! __clap_mcp_with_args {
+            ($args:ident, $expr:expr) => {{
+                let $args = $crate::parse_or_serve_mcp_attr::<$root>();
+                $expr
+            }};
+        }
+        __clap_mcp_with_args!(args, $run_expr)
     }};
 }
 
@@ -259,9 +275,12 @@ impl<O: IntoClapMcpResult, E: IntoClapMcpToolError> IntoClapMcpResult for Result
     }
 }
 
-/// Helper for unwrapping `Option` in `#[clap_mcp_output]` expressions.
+/// Helper for unwrapping `Option` in per-variant `#[clap_mcp_output]` expressions.
 ///
-/// Use in format strings to avoid `as_deref().unwrap_or("default")` boilerplate.
+/// **For new code**, prefer `#[clap_mcp_output_from = "run"]` and use
+/// `name.as_deref().unwrap_or("default")` (or similar) inside your `run` function,
+/// so CLI and MCP share one implementation. This helper exists for legacy or
+/// per-variant inline expressions when `output_from` is not used.
 ///
 /// # Example
 ///
@@ -288,6 +307,10 @@ where
     use std::io::{Read, Write};
     use std::os::unix::io::FromRawFd;
 
+    // SAFETY: We use a pipe and dup2 to temporarily redirect stdout. All fds are either
+    // created by pipe()/dup() or are well-known (STDOUT_FILENO). We close or restore every
+    // fd on every path (success or error); from_raw_fd(read_fd) takes ownership of read_fd
+    // so it is not double-closed. No fd is used after being closed.
     let mut fds: [libc::c_int; 2] = [0, 0];
     if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
         return (f(), String::new());
@@ -340,7 +363,8 @@ where
 /// Output produced by a CLI command for MCP tool results.
 ///
 /// Use `Text` for plain string output; use `Structured` for serializable JSON
-/// (when using `#[clap_mcp_output_json = "expr"]`).
+/// (e.g. when using `#[clap_mcp_output_from = "run"]` with `AsStructured<T>`, or
+/// per-variant `#[clap_mcp_output_json = "expr"]`).
 ///
 /// # Example
 ///
@@ -421,11 +445,12 @@ impl ClapMcpToolOutput {
 ///
 /// Implemented by the `#[derive(ClapMcp)]` macro. Used for in-process execution.
 ///
-/// When using **`#[clap_mcp_output_from = "run"]`** on the enum, the macro implements this trait
-/// by calling `run(self)` and converting the result via [`IntoClapMcpResult`].
+/// When using **`#[clap_mcp_output_from = "run"]`** on the enum (recommended), the macro
+/// implements this trait by calling `run(self)` and converting the result via [`IntoClapMcpResult`].
+/// That way CLI and MCP share a single implementation.
 ///
-/// When not using `output_from`, use `#[clap_mcp_output = "expr"]` for text output, or
-/// `#[clap_mcp_output_json = "expr"]` for structured JSON output.
+/// When not using `output_from`, per-variant attributes apply: `#[clap_mcp_output = "expr"]`
+/// for text, or `#[clap_mcp_output_json = "expr"]` for structured JSON (see crate docs).
 ///
 /// When using `#[clap_mcp_output_result]` with `Result<T, E>` expressions, `Err(e)` yields
 /// [`ClapMcpToolError`] and the MCP client receives an error response (`is_error: true`).
@@ -452,6 +477,10 @@ pub enum ClapMcpError {
     McpSdk(#[from] rust_mcp_sdk::error::McpSdkError),
     #[error("I/O error during skill export: {0}")]
     Io(#[from] std::io::Error),
+    #[error("tokio runtime context: {0}")]
+    RuntimeContext(String),
+    #[error("async tool thread panicked or failed: {0}")]
+    ToolThread(String),
 }
 
 /// Configuration for execution safety when exposing a CLI over MCP.
@@ -1194,33 +1223,47 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
     }
 
     if config.allow_mcp_without_subcommand && argv_requests_mcp_without_subcommand(&cmd) {
-        let schema_json =
-            serde_json::to_string_pretty(&schema).expect("schema JSON must serialize");
-        serve_schema_json_over_stdio_blocking(
+        let schema_json = match serde_json::to_string_pretty(&schema) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to serialize CLI schema: {}", e);
+                std::process::exit(1);
+            }
+        };
+        if let Err(e) = serve_schema_json_over_stdio_blocking(
             schema_json,
             None,
             config,
             None,
             ClapMcpServeOptions::default(),
-            &ClapMcpSchemaMetadata::default(),
-        )
-        .expect("MCP server must start");
+            metadata,
+        ) {
+            eprintln!("MCP server error: {}", e);
+            std::process::exit(1);
+        }
         std::process::exit(0);
     }
 
     let matches = cmd.get_matches();
     if matches.get_flag(MCP_FLAG_LONG) {
-        let schema_json =
-            serde_json::to_string_pretty(&schema).expect("schema JSON must serialize");
-        serve_schema_json_over_stdio_blocking(
+        let schema_json = match serde_json::to_string_pretty(&schema) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to serialize CLI schema: {}", e);
+                std::process::exit(1);
+            }
+        };
+        if let Err(e) = serve_schema_json_over_stdio_blocking(
             schema_json,
             None,
             config,
             None,
             ClapMcpServeOptions::default(),
-            &ClapMcpSchemaMetadata::default(),
-        )
-        .expect("MCP server must start");
+            metadata,
+        ) {
+            eprintln!("MCP server error: {}", e);
+            std::process::exit(1);
+        }
         std::process::exit(0);
     }
 
@@ -1259,7 +1302,8 @@ where
         + ClapMcpToolExecutor
         + clap::Parser
         + clap::CommandFactory
-        + clap::FromArgMatches,
+        + clap::FromArgMatches
+        + 'static,
 {
     fn parse_or_serve_mcp() -> Self {
         parse_or_serve_mcp_attr::<T>()
@@ -1299,7 +1343,8 @@ where
         + ClapMcpToolExecutor
         + clap::Parser
         + clap::CommandFactory
-        + clap::FromArgMatches,
+        + clap::FromArgMatches
+        + 'static,
 {
     parse_or_serve_mcp_with_config::<T>(ClapMcpConfig::default())
 }
@@ -1338,7 +1383,8 @@ where
         + ClapMcpToolExecutor
         + clap::Parser
         + clap::CommandFactory
-        + clap::FromArgMatches,
+        + clap::FromArgMatches
+        + 'static,
 {
     parse_or_serve_mcp_with_config::<T>(T::clap_mcp_config())
 }
@@ -1365,7 +1411,8 @@ where
         + ClapMcpToolExecutor
         + clap::Parser
         + clap::CommandFactory
-        + clap::FromArgMatches,
+        + clap::FromArgMatches
+        + 'static,
     F: FnOnce(A) -> Result<R, E>,
 {
     let args = parse_or_serve_mcp_attr::<A>();
@@ -1383,7 +1430,8 @@ where
         + ClapMcpToolExecutor
         + clap::Parser
         + clap::CommandFactory
-        + clap::FromArgMatches,
+        + clap::FromArgMatches
+        + 'static,
 {
     parse_or_serve_mcp_with_config_and_options::<T>(config, ClapMcpServeOptions::default())
 }
@@ -1401,7 +1449,8 @@ where
         + ClapMcpToolExecutor
         + clap::Parser
         + clap::CommandFactory
-        + clap::FromArgMatches,
+        + clap::FromArgMatches
+        + 'static,
 {
     let mut cmd = T::command();
     cmd = command_with_mcp_and_export_skills_flags(cmd);
@@ -1432,64 +1481,36 @@ where
         let base_cmd = T::command();
         let metadata = T::clap_mcp_schema_metadata();
         let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
-        let schema_json =
-            serde_json::to_string_pretty(&schema).expect("schema JSON must serialize");
+        let schema_json = match serde_json::to_string_pretty(&schema) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to serialize CLI schema: {}", e);
+                std::process::exit(1);
+            }
+        };
         let exe = std::env::current_exe().ok();
 
         let in_process_handler = if config.reinvocation_safe {
-            let schema = schema.clone();
             #[cfg(unix)]
             let capture_stdout = serve_options.capture_stdout;
             #[cfg(not(unix))]
             let capture_stdout = false;
-            Some(Arc::new(
-                move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
-                    validate_required_args(&schema, cmd, &args).map_err(ClapMcpToolError::text)?;
-                    let argv = build_argv_for_clap(&schema, cmd, args.clone());
-                    let matches = T::command()
-                        .try_get_matches_from(&argv)
-                        .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
-                    let cli = T::from_arg_matches(&matches)
-                        .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
-
-                    if capture_stdout {
-                        let (result, captured) = run_with_stdout_capture(|| {
-                            <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
-                        });
-                        match result {
-                            Ok(ClapMcpToolOutput::Text(s)) if !captured.is_empty() => {
-                                let merged = if s.is_empty() {
-                                    captured.trim().to_string()
-                                } else {
-                                    let cap = captured.trim();
-                                    if cap.is_empty() {
-                                        s
-                                    } else {
-                                        format!("{s}\n{cap}")
-                                    }
-                                };
-                                Ok(ClapMcpToolOutput::Text(merged))
-                            }
-                            other => other,
-                        }
-                    } else {
-                        <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
-                    }
-                },
-            ) as InProcessToolHandler)
+            Some(make_in_process_handler::<T>(schema.clone(), capture_stdout))
         } else {
             None
         };
 
-        serve_schema_json_over_stdio_blocking(
+        if let Err(e) = serve_schema_json_over_stdio_blocking(
             schema_json,
             if config.reinvocation_safe { None } else { exe },
             config,
             in_process_handler,
             serve_options,
             &metadata,
-        )
-        .expect("MCP server must start");
+        ) {
+            eprintln!("MCP server error: {}", e);
+            std::process::exit(1);
+        }
 
         std::process::exit(0);
     }
@@ -1501,64 +1522,36 @@ where
         let base_cmd = T::command();
         let metadata = T::clap_mcp_schema_metadata();
         let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
-        let schema_json =
-            serde_json::to_string_pretty(&schema).expect("schema JSON must serialize");
+        let schema_json = match serde_json::to_string_pretty(&schema) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to serialize CLI schema: {}", e);
+                std::process::exit(1);
+            }
+        };
         let exe = std::env::current_exe().ok();
 
         let in_process_handler = if config.reinvocation_safe {
-            let schema = schema.clone();
             #[cfg(unix)]
             let capture_stdout = serve_options.capture_stdout;
             #[cfg(not(unix))]
             let capture_stdout = false;
-            Some(Arc::new(
-                move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
-                    validate_required_args(&schema, cmd, &args).map_err(ClapMcpToolError::text)?;
-                    let argv = build_argv_for_clap(&schema, cmd, args.clone());
-                    let matches = T::command()
-                        .try_get_matches_from(&argv)
-                        .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
-                    let cli = T::from_arg_matches(&matches)
-                        .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
-
-                    if capture_stdout {
-                        let (result, captured) = run_with_stdout_capture(|| {
-                            <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
-                        });
-                        match result {
-                            Ok(ClapMcpToolOutput::Text(s)) if !captured.is_empty() => {
-                                let merged = if s.is_empty() {
-                                    captured.trim().to_string()
-                                } else {
-                                    let cap = captured.trim();
-                                    if cap.is_empty() {
-                                        s
-                                    } else {
-                                        format!("{s}\n{cap}")
-                                    }
-                                };
-                                Ok(ClapMcpToolOutput::Text(merged))
-                            }
-                            other => other,
-                        }
-                    } else {
-                        <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
-                    }
-                },
-            ) as InProcessToolHandler)
+            Some(make_in_process_handler::<T>(schema.clone(), capture_stdout))
         } else {
             None
         };
 
-        serve_schema_json_over_stdio_blocking(
+        if let Err(e) = serve_schema_json_over_stdio_blocking(
             schema_json,
             if config.reinvocation_safe { None } else { exe },
             config,
             in_process_handler,
             serve_options,
             &metadata,
-        )
-        .expect("MCP server must start");
+        ) {
+            eprintln!("MCP server error: {}", e);
+            std::process::exit(1);
+        }
 
         std::process::exit(0);
     }
@@ -1640,14 +1633,36 @@ fn build_argv_for_clap(
     command_name: &str,
     arguments: serde_json::Map<String, serde_json::Value>,
 ) -> Vec<String> {
-    let root_name = schema.root.name.clone();
     let args = build_tool_argv(schema, command_name, arguments);
     let mut argv = vec!["cli".to_string()]; // program name for parsing
-    if command_name != root_name {
-        argv.push(command_name.to_string());
+    if let Some(path) = command_path(schema, command_name) {
+        argv.extend(path.into_iter().skip(1));
     }
     argv.extend(args);
     argv
+}
+
+fn command_path(schema: &ClapSchema, command_name: &str) -> Option<Vec<String>> {
+    fn walk(cmd: &ClapCommand, command_name: &str, path: &mut Vec<String>) -> bool {
+        path.push(cmd.name.clone());
+        if cmd.name == command_name {
+            return true;
+        }
+        for subcommand in &cmd.subcommands {
+            if walk(subcommand, command_name, path) {
+                return true;
+            }
+        }
+        path.pop();
+        false
+    }
+
+    let mut path = Vec::new();
+    if walk(&schema.root, command_name, &mut path) {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 /// Builds argv for the executable from the schema and tool arguments.
@@ -1757,6 +1772,64 @@ pub type InProcessToolHandler = Arc<
         + Sync,
 >;
 
+fn merge_captured_stdout(
+    result: Result<ClapMcpToolOutput, ClapMcpToolError>,
+    captured: String,
+) -> Result<ClapMcpToolOutput, ClapMcpToolError> {
+    match result {
+        Ok(ClapMcpToolOutput::Text(text)) if !captured.is_empty() => {
+            let merged = if text.is_empty() {
+                captured.trim().to_string()
+            } else {
+                let cap = captured.trim();
+                if cap.is_empty() {
+                    text
+                } else {
+                    format!("{text}\n{cap}")
+                }
+            };
+            Ok(ClapMcpToolOutput::Text(merged))
+        }
+        other => other,
+    }
+}
+
+fn execute_in_process_command<T>(
+    schema: &ClapSchema,
+    command_name: &str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+    capture_stdout: bool,
+) -> Result<ClapMcpToolOutput, ClapMcpToolError>
+where
+    T: ClapMcpToolExecutor + clap::CommandFactory + clap::FromArgMatches,
+{
+    validate_required_args(schema, command_name, &arguments).map_err(ClapMcpToolError::text)?;
+    let argv = build_argv_for_clap(schema, command_name, arguments.clone());
+    let matches = T::command()
+        .try_get_matches_from(&argv)
+        .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
+    let cli = T::from_arg_matches(&matches).map_err(|e| ClapMcpToolError::text(e.to_string()))?;
+
+    if capture_stdout {
+        let (result, captured) =
+            run_with_stdout_capture(|| <T as ClapMcpToolExecutor>::execute_for_mcp(cli));
+        merge_captured_stdout(result, captured)
+    } else {
+        <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
+    }
+}
+
+fn make_in_process_handler<T>(schema: ClapSchema, capture_stdout: bool) -> InProcessToolHandler
+where
+    T: ClapMcpToolExecutor + clap::CommandFactory + clap::FromArgMatches + 'static,
+{
+    Arc::new(
+        move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
+            execute_in_process_command::<T>(&schema, cmd, args, capture_stdout)
+        },
+    ) as InProcessToolHandler
+}
+
 fn format_panic_payload(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
         return (*s).to_string();
@@ -1795,6 +1868,312 @@ fn value_to_strings(v: &serde_json::Value) -> Option<Vec<String>> {
         }
         _ => value_to_string(v).map(|s| vec![s]),
     }
+}
+
+fn clap_schema_resource() -> Resource {
+    Resource {
+        name: "clap-schema".into(),
+        uri: MCP_RESOURCE_URI_SCHEMA.into(),
+        title: Some("Clap CLI schema".into()),
+        description: Some("JSON schema extracted from clap Command definitions".into()),
+        mime_type: Some("application/json".into()),
+        annotations: None,
+        icons: vec![],
+        meta: None,
+        size: None,
+    }
+}
+
+fn list_resources_result(custom_resources: &[content::CustomResource]) -> ListResourcesResult {
+    let mut resources = vec![clap_schema_resource()];
+    for resource in custom_resources {
+        resources.push(resource.to_list_resource());
+    }
+    ListResourcesResult {
+        resources,
+        meta: None,
+        next_cursor: None,
+    }
+}
+
+async fn read_resource_result(
+    schema_json: &str,
+    custom_resources: &[content::CustomResource],
+    params: ReadResourceRequestParams,
+) -> std::result::Result<ReadResourceResult, RpcError> {
+    if params.uri == MCP_RESOURCE_URI_SCHEMA {
+        return Ok(ReadResourceResult {
+            contents: vec![ReadResourceContent::TextResourceContents(
+                TextResourceContents {
+                    uri: params.uri,
+                    mime_type: Some("application/json".into()),
+                    text: schema_json.to_string(),
+                    meta: None,
+                },
+            )],
+            meta: None,
+        });
+    }
+    let custom = custom_resources
+        .iter()
+        .find(|resource| resource.uri == params.uri);
+    let Some(resource) = custom else {
+        return Err(RpcError::invalid_params()
+            .with_message(format!("unknown resource uri: {}", params.uri)));
+    };
+    let text = content::resolve_resource_content(resource, &params.uri).await?;
+    Ok(ReadResourceResult {
+        contents: vec![ReadResourceContent::TextResourceContents(
+            TextResourceContents {
+                uri: params.uri.clone(),
+                mime_type: resource.mime_type.clone(),
+                text,
+                meta: None,
+            },
+        )],
+        meta: None,
+    })
+}
+
+fn logging_guide_prompt() -> Prompt {
+    Prompt {
+        name: PROMPT_LOGGING_GUIDE.to_string(),
+        description: Some("How to interpret log messages from this clap-mcp server".to_string()),
+        arguments: vec![],
+        icons: vec![],
+        meta: None,
+        title: Some("clap-mcp Logging Guide".to_string()),
+    }
+}
+
+fn list_prompts_result(
+    logging_enabled: bool,
+    custom_prompts: &[content::CustomPrompt],
+) -> ListPromptsResult {
+    let mut prompts = Vec::new();
+    if logging_enabled {
+        prompts.push(logging_guide_prompt());
+    }
+    for prompt in custom_prompts {
+        prompts.push(prompt.to_list_prompt());
+    }
+    ListPromptsResult {
+        prompts,
+        meta: None,
+        next_cursor: None,
+    }
+}
+
+async fn get_prompt_result(
+    logging_enabled: bool,
+    custom_prompts: &[content::CustomPrompt],
+    params: GetPromptRequestParams,
+) -> std::result::Result<GetPromptResult, RpcError> {
+    if params.name == PROMPT_LOGGING_GUIDE {
+        if !logging_enabled {
+            return Err(
+                RpcError::invalid_params().with_message(format!("unknown prompt: {}", params.name))
+            );
+        }
+        return Ok(GetPromptResult {
+            description: Some(
+                "How to interpret log messages from this clap-mcp server".to_string(),
+            ),
+            messages: vec![PromptMessage {
+                content: ContentBlock::text_content(LOGGING_GUIDE_CONTENT.to_string()),
+                role: Role::User,
+            }],
+            meta: None,
+        });
+    }
+    let custom = custom_prompts
+        .iter()
+        .find(|prompt| prompt.name == params.name);
+    let Some(prompt) = custom else {
+        return Err(
+            RpcError::invalid_params().with_message(format!("unknown prompt: {}", params.name))
+        );
+    };
+    let arguments: serde_json::Map<String, serde_json::Value> = params
+        .arguments
+        .as_ref()
+        .map(|map| {
+            map.iter()
+                .map(|(key, value)| (key.clone(), serde_json::Value::String(value.clone())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let messages = content::resolve_prompt_content(prompt, &params.name, &arguments).await?;
+    Ok(GetPromptResult {
+        description: prompt.description.clone(),
+        messages,
+        meta: None,
+    })
+}
+
+fn validate_tool_argument_names(
+    tool: &Tool,
+    tool_name: &str,
+    arguments: &serde_json::Map<String, serde_json::Value>,
+) -> std::result::Result<(), CallToolError> {
+    if let Some(ref props) = tool.input_schema.properties {
+        for key in arguments.keys() {
+            if !props.contains_key(key) {
+                return Err(CallToolError::invalid_arguments(
+                    tool_name,
+                    Some(format!("unknown argument: {key}")),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn call_tool_result_from_output(output: ClapMcpToolOutput) -> CallToolResult {
+    let (content, structured_content) = match output {
+        ClapMcpToolOutput::Text(text) => (vec![ContentBlock::text_content(text)], None),
+        ClapMcpToolOutput::Structured(value) => {
+            let json_text =
+                serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
+            let structured = value.as_object().cloned();
+            (vec![ContentBlock::text_content(json_text)], structured)
+        }
+    };
+    CallToolResult {
+        content,
+        is_error: None,
+        meta: None,
+        structured_content,
+    }
+}
+
+fn call_tool_result_from_tool_error(error: ClapMcpToolError) -> CallToolResult {
+    let structured_content = error
+        .structured
+        .as_ref()
+        .and_then(|value| value.as_object().cloned());
+    CallToolResult {
+        content: vec![ContentBlock::text_content(error.message)],
+        is_error: Some(true),
+        meta: None,
+        structured_content,
+    }
+}
+
+fn call_tool_result_from_panic(panic_payload: &(dyn std::any::Any + Send)) -> CallToolResult {
+    let msg = format_panic_payload(panic_payload);
+    CallToolResult {
+        content: vec![ContentBlock::text_content(format!(
+            "Tool panicked: {}",
+            msg
+        ))],
+        is_error: Some(true),
+        meta: None,
+        structured_content: None,
+    }
+}
+
+fn schema_parse_failure_result() -> CallToolResult {
+    CallToolResult {
+        content: vec![ContentBlock::text_content("Failed to parse schema".into())],
+        is_error: Some(true),
+        meta: None,
+        structured_content: None,
+    }
+}
+
+fn command_launch_failure_result(error: &std::io::Error) -> CallToolResult {
+    CallToolResult {
+        content: vec![ContentBlock::text_content(format!(
+            "Failed to run command: {}",
+            error
+        ))],
+        is_error: Some(true),
+        meta: None,
+        structured_content: None,
+    }
+}
+
+fn placeholder_tool_result(
+    name: &str,
+    arguments: &serde_json::Map<String, serde_json::Value>,
+) -> CallToolResult {
+    let args_json = serde_json::Value::Object(arguments.clone());
+    CallToolResult::from_content(vec![ContentBlock::text_content(format!(
+        "Would invoke clap command '{name}' with arguments: {args_json:?}"
+    ))])
+}
+
+fn build_execution_command(
+    executable_path: &std::path::Path,
+    schema: &ClapSchema,
+    root_name: &str,
+    tool_name: &str,
+    arguments: &serde_json::Map<String, serde_json::Value>,
+) -> std::process::Command {
+    let argv = build_tool_argv(schema, tool_name, arguments.clone());
+    let mut command = std::process::Command::new(executable_path);
+    if let Some(path) = command_path(schema, tool_name) {
+        for segment in path.into_iter().skip(1) {
+            command.arg(segment);
+        }
+    } else if tool_name != root_name {
+        command.arg(tool_name);
+    }
+    for arg in &argv {
+        command.arg(arg);
+    }
+    command
+}
+
+fn subprocess_stderr_log_params(
+    tool_name: &str,
+    stderr: &str,
+) -> Option<LoggingMessageNotificationParams> {
+    let trimmed = stderr.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut meta = serde_json::Map::new();
+    meta.insert(
+        "tool".to_string(),
+        serde_json::Value::String(tool_name.to_string()),
+    );
+    Some(LoggingMessageNotificationParams {
+        data: serde_json::Value::String(trimmed.to_string()),
+        level: LoggingLevel::Info,
+        logger: Some("stderr".to_string()),
+        meta: Some(meta),
+    })
+}
+
+fn call_tool_result_from_subprocess_output(output: &std::process::Output) -> CallToolResult {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        let code = output
+            .status
+            .code()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let mut msg = format!("Tool process exited with non-zero status (code: {})", code);
+        if !stderr.is_empty() {
+            msg.push_str("\nstderr:\n");
+            msg.push_str(stderr.trim());
+        }
+        return CallToolResult {
+            content: vec![ContentBlock::text_content(msg)],
+            is_error: Some(true),
+            meta: None,
+            structured_content: None,
+        };
+    }
+    let text = if stderr.is_empty() {
+        stdout.trim().to_string()
+    } else {
+        format!("{}\nstderr:\n{}", stdout.trim(), stderr.trim())
+    };
+    CallToolResult::from_content(vec![ContentBlock::text_content(text)])
 }
 
 /// Starts an MCP server over stdio exposing `clap://schema` with the provided JSON payload.
@@ -1895,25 +2274,7 @@ pub async fn serve_schema_json_over_stdio(
             _params: Option<PaginatedRequestParams>,
             _runtime: Arc<dyn rust_mcp_sdk::McpServer>,
         ) -> std::result::Result<ListResourcesResult, RpcError> {
-            let mut resources = vec![Resource {
-                name: "clap-schema".into(),
-                uri: MCP_RESOURCE_URI_SCHEMA.into(),
-                title: Some("Clap CLI schema".into()),
-                description: Some("JSON schema extracted from clap Command definitions".into()),
-                mime_type: Some("application/json".into()),
-                annotations: None,
-                icons: vec![],
-                meta: None,
-                size: None,
-            }];
-            for r in &self.custom_resources {
-                resources.push(r.to_list_resource());
-            }
-            Ok(ListResourcesResult {
-                resources,
-                meta: None,
-                next_cursor: None,
-            })
+            Ok(list_resources_result(&self.custom_resources))
         }
 
         async fn handle_read_resource_request(
@@ -1921,36 +2282,7 @@ pub async fn serve_schema_json_over_stdio(
             params: ReadResourceRequestParams,
             _runtime: Arc<dyn rust_mcp_sdk::McpServer>,
         ) -> std::result::Result<ReadResourceResult, RpcError> {
-            if params.uri == MCP_RESOURCE_URI_SCHEMA {
-                return Ok(ReadResourceResult {
-                    contents: vec![ReadResourceContent::TextResourceContents(
-                        TextResourceContents {
-                            uri: params.uri,
-                            mime_type: Some("application/json".into()),
-                            text: self.schema_json.clone(),
-                            meta: None,
-                        },
-                    )],
-                    meta: None,
-                });
-            }
-            let custom = self.custom_resources.iter().find(|r| r.uri == params.uri);
-            let Some(r) = custom else {
-                return Err(RpcError::invalid_params()
-                    .with_message(format!("unknown resource uri: {}", params.uri)));
-            };
-            let text = content::resolve_resource_content(r, &params.uri).await?;
-            Ok(ReadResourceResult {
-                contents: vec![ReadResourceContent::TextResourceContents(
-                    TextResourceContents {
-                        uri: params.uri.clone(),
-                        mime_type: r.mime_type.clone(),
-                        text,
-                        meta: None,
-                    },
-                )],
-                meta: None,
-            })
+            read_resource_result(&self.schema_json, &self.custom_resources, params).await
         }
 
         async fn handle_list_tools_request(
@@ -1970,27 +2302,10 @@ pub async fn serve_schema_json_over_stdio(
             _params: Option<PaginatedRequestParams>,
             _runtime: Arc<dyn rust_mcp_sdk::McpServer>,
         ) -> std::result::Result<ListPromptsResult, RpcError> {
-            let mut prompts = Vec::new();
-            if self.logging_enabled {
-                prompts.push(Prompt {
-                    name: PROMPT_LOGGING_GUIDE.to_string(),
-                    description: Some(
-                        "How to interpret log messages from this clap-mcp server".to_string(),
-                    ),
-                    arguments: vec![],
-                    icons: vec![],
-                    meta: None,
-                    title: Some("clap-mcp Logging Guide".to_string()),
-                });
-            }
-            for p in &self.custom_prompts {
-                prompts.push(p.to_list_prompt());
-            }
-            Ok(ListPromptsResult {
-                prompts,
-                meta: None,
-                next_cursor: None,
-            })
+            Ok(list_prompts_result(
+                self.logging_enabled,
+                &self.custom_prompts,
+            ))
         }
 
         async fn handle_get_prompt_request(
@@ -1998,42 +2313,7 @@ pub async fn serve_schema_json_over_stdio(
             params: GetPromptRequestParams,
             _runtime: Arc<dyn rust_mcp_sdk::McpServer>,
         ) -> std::result::Result<GetPromptResult, RpcError> {
-            if params.name == PROMPT_LOGGING_GUIDE {
-                if !self.logging_enabled {
-                    return Err(RpcError::invalid_params()
-                        .with_message(format!("unknown prompt: {}", params.name)));
-                }
-                return Ok(GetPromptResult {
-                    description: Some(
-                        "How to interpret log messages from this clap-mcp server".to_string(),
-                    ),
-                    messages: vec![PromptMessage {
-                        content: ContentBlock::text_content(LOGGING_GUIDE_CONTENT.to_string()),
-                        role: Role::User,
-                    }],
-                    meta: None,
-                });
-            }
-            let custom = self.custom_prompts.iter().find(|p| p.name == params.name);
-            let Some(p) = custom else {
-                return Err(RpcError::invalid_params()
-                    .with_message(format!("unknown prompt: {}", params.name)));
-            };
-            let arguments: serde_json::Map<String, serde_json::Value> = params
-                .arguments
-                .as_ref()
-                .map(|m| {
-                    m.iter()
-                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let messages = content::resolve_prompt_content(p, &params.name, &arguments).await?;
-            Ok(GetPromptResult {
-                description: p.description.clone(),
-                messages,
-                meta: None,
-            })
+            get_prompt_result(self.logging_enabled, &self.custom_prompts, params).await
         }
 
         async fn handle_call_tool_request(
@@ -2055,16 +2335,7 @@ pub async fn serve_schema_json_over_stdio(
 
             // Reject unknown argument names — do not trust client to send only schema-defined args
             let args_map = params.arguments.unwrap_or_default();
-            if let Some(ref props) = tool.input_schema.properties {
-                for key in args_map.keys() {
-                    if !props.contains_key(key) {
-                        return Err(CallToolError::invalid_arguments(
-                            &params.name,
-                            Some(format!("unknown argument: {key}")),
-                        ));
-                    }
-                }
-            }
+            validate_tool_argument_names(tool, &params.name, &args_map)?;
 
             let _guard = if let Some(ref lock) = self.tool_execution_lock {
                 Some(lock.lock().await)
@@ -2081,150 +2352,40 @@ pub async fn serve_schema_json_over_stdio(
                     Ok(handler(&name, args))
                 };
                 match result {
-                    Ok(Ok(output)) => {
-                        let (content, structured_content) = match &output {
-                            ClapMcpToolOutput::Text(s) => {
-                                (vec![ContentBlock::text_content(s.clone())], None)
-                            }
-                            ClapMcpToolOutput::Structured(v) => {
-                                let json_text = serde_json::to_string_pretty(v)
-                                    .unwrap_or_else(|_| v.to_string());
-                                let structured = v.as_object().cloned();
-                                (vec![ContentBlock::text_content(json_text)], structured)
-                            }
-                        };
-                        return Ok(CallToolResult {
-                            content,
-                            is_error: None,
-                            meta: None,
-                            structured_content,
-                        });
-                    }
-                    Ok(Err(e)) => {
-                        let structured_content =
-                            e.structured.as_ref().and_then(|v| v.as_object().cloned());
-                        return Ok(CallToolResult {
-                            content: vec![ContentBlock::text_content(e.message)],
-                            is_error: Some(true),
-                            meta: None,
-                            structured_content,
-                        });
-                    }
+                    Ok(Ok(output)) => return Ok(call_tool_result_from_output(output)),
+                    Ok(Err(error)) => return Ok(call_tool_result_from_tool_error(error)),
                     Err(panic_payload) => {
-                        let msg = format_panic_payload(panic_payload.as_ref());
-                        return Ok(CallToolResult {
-                            content: vec![ContentBlock::text_content(format!(
-                                "Tool panicked: {}",
-                                msg
-                            ))],
-                            is_error: Some(true),
-                            meta: None,
-                            structured_content: None,
-                        });
+                        return Ok(call_tool_result_from_panic(panic_payload.as_ref()));
                     }
                 }
             }
 
             if let Some(ref exe) = self.executable_path {
                 let schema: ClapSchema = match serde_json::from_str(&self.schema_json) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        return Ok(CallToolResult {
-                            content: vec![ContentBlock::text_content(
-                                "Failed to parse schema".into(),
-                            )],
-                            is_error: Some(true),
-                            meta: None,
-                            structured_content: None,
-                        });
-                    }
+                    Ok(schema) => schema,
+                    Err(_) => return Ok(schema_parse_failure_result()),
                 };
                 if let Err(e) = validate_required_args(&schema, &params.name, &args_map) {
-                    return Ok(CallToolResult {
-                        content: vec![ContentBlock::text_content(e)],
-                        is_error: Some(true),
-                        meta: None,
-                        structured_content: None,
-                    });
+                    return Ok(call_tool_result_from_tool_error(ClapMcpToolError::text(e)));
                 }
-                let args = build_tool_argv(&schema, &params.name, args_map);
-                let mut cmd = std::process::Command::new(exe);
-                if params.name != self.root_name {
-                    cmd.arg(params.name.as_str());
-                }
-                for arg in &args {
-                    cmd.arg(arg);
-                }
+                let mut cmd =
+                    build_execution_command(exe, &schema, &self.root_name, &params.name, &args_map);
                 match cmd.output() {
                     Ok(output) => {
-                        let out = String::from_utf8_lossy(&output.stdout);
-                        let err = String::from_utf8_lossy(&output.stderr);
-                        if !err.is_empty() {
+                        if let Some(log_params) = subprocess_stderr_log_params(
+                            &params.name,
+                            &String::from_utf8_lossy(&output.stderr),
+                        ) {
                             // When changing stderr logging behavior, update LOG_INTERPRETATION_INSTRUCTIONS and LOGGING_GUIDE_CONTENT.
-                            let mut meta = serde_json::Map::new();
-                            meta.insert(
-                                "tool".to_string(),
-                                serde_json::Value::String(params.name.clone()),
-                            );
-                            let _ = runtime
-                                .notify_log_message(LoggingMessageNotificationParams {
-                                    data: serde_json::Value::String(err.trim().to_string()),
-                                    level: LoggingLevel::Info,
-                                    logger: Some("stderr".to_string()),
-                                    meta: Some(meta),
-                                })
-                                .await;
+                            let _ = runtime.notify_log_message(log_params).await;
                         }
-                        if !output.status.success() {
-                            let code = output
-                                .status
-                                .code()
-                                .map(|c| c.to_string())
-                                .unwrap_or_else(|| "unknown".to_string());
-                            let mut msg = format!(
-                                "Tool process exited with non-zero status (code: {})",
-                                code
-                            );
-                            if !err.is_empty() {
-                                msg.push_str("\nstderr:\n");
-                                msg.push_str(err.trim());
-                            }
-                            return Ok(CallToolResult {
-                                content: vec![ContentBlock::text_content(msg)],
-                                is_error: Some(true),
-                                meta: None,
-                                structured_content: None,
-                            });
-                        }
-                        let text = if err.is_empty() {
-                            out.trim().to_string()
-                        } else {
-                            format!("{}\nstderr:\n{}", out.trim(), err.trim())
-                        };
-                        return Ok(CallToolResult::from_content(vec![
-                            ContentBlock::text_content(text),
-                        ]));
+                        return Ok(call_tool_result_from_subprocess_output(&output));
                     }
-                    Err(e) => {
-                        return Ok(CallToolResult {
-                            content: vec![ContentBlock::text_content(format!(
-                                "Failed to run command: {}",
-                                e
-                            ))],
-                            is_error: Some(true),
-                            meta: None,
-                            structured_content: None,
-                        });
-                    }
+                    Err(error) => return Ok(command_launch_failure_result(&error)),
                 }
             }
 
-            let name = params.name;
-            let args_json = serde_json::Value::Object(args_map);
-            let text = format!("Would invoke clap command '{name}' with arguments: {args_json:?}");
-            Ok(CallToolResult::from_content(vec![
-                ContentBlock::text_content(text),
-            ]))
+            Ok(placeholder_tool_result(&params.name, &args_map))
         }
     }
 
@@ -2333,13 +2494,11 @@ pub fn serve_schema_json_over_stdio_blocking(
     let rt = if use_multi_thread {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .build()
-            .expect("tokio runtime must build")
+            .build()?
     } else {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
-            .build()
-            .expect("tokio runtime must build")
+            .build()?
     };
     rt.block_on(serve_schema_json_over_stdio(
         schema_json,
@@ -2353,8 +2512,15 @@ pub fn serve_schema_json_over_stdio_blocking(
 
 /// Runs an async future for MCP tool execution, respecting `share_runtime` in config.
 ///
-/// Use this in `#[clap_mcp_output]` when your tool does async work (e.g. `tokio::sleep`,
-/// `tokio::spawn`). The closure must return a `Future` that produces the tool output.
+/// **Idiomatic approach:** with `#[clap_mcp_output_from = "run"]`, do async work inside your
+/// `run` function (e.g. use a runtime handle or `#[tokio::main]` in tests). Use this
+/// function only when you need async in **per-variant** `#[clap_mcp_output]` /
+/// `#[clap_mcp_output_json]` (i.e. when not using `output_from`). The closure must return
+/// a `Future` that produces the tool output.
+///
+/// Returns [`Ok`] with the future's output, or [`Err`](ClapMcpError) if the runtime could
+/// not be created, the current context is invalid (`share_runtime` without a tokio runtime),
+/// or the async thread panicked.
 ///
 /// # Runtime selection
 ///
@@ -2367,45 +2533,42 @@ pub fn serve_schema_json_over_stdio_blocking(
 /// When `share_runtime` is true, uses `block_in_place` + `block_on` so the async
 /// work runs on the MCP server's multi-thread runtime without deadlock.
 ///
-/// # Example
+/// # Example (per-variant usage when not using `output_from`)
 ///
 /// ```rust,ignore
-/// use clap_mcp::ClapMcp;
-///
 /// #[derive(Parser, ClapMcp)]
 /// #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
 /// enum Cli {
-///     #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo())"]
+///     #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo()).expect(\"async tool failed\")"]
 ///     SleepDemo,
 /// }
 /// ```
-///
-/// # Panics
-///
-/// When `share_runtime` is true and `reinvocation_safe` is true, panics if not
-/// running within a tokio runtime (e.g. `Handle::try_current()` fails).
-pub fn run_async_tool<Fut, O>(config: &ClapMcpConfig, f: impl FnOnce() -> Fut + Send) -> O
+pub fn run_async_tool<Fut, O>(
+    config: &ClapMcpConfig,
+    f: impl FnOnce() -> Fut + Send,
+) -> std::result::Result<O, ClapMcpError>
 where
     Fut: std::future::Future<Output = O> + Send,
     O: Send,
 {
     if config.reinvocation_safe && config.share_runtime {
         tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::try_current()
-                .expect("share_runtime=true requires running within tokio runtime (use reinvocation_safe + share_runtime)")
-                .block_on(f())
+            let handle = tokio::runtime::Handle::try_current()
+                .map_err(|e| ClapMcpError::RuntimeContext(e.to_string()))?;
+            Ok(handle.block_on(f()))
         })
     } else {
         std::thread::scope(|s| {
-            s.spawn(|| {
-                tokio::runtime::Builder::new_current_thread()
+            let join_handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
-                    .build()
-                    .expect("tokio runtime must build")
-                    .block_on(f())
-            })
-            .join()
-            .expect("async tool thread must not panic")
+                    .build()?;
+                Ok(rt.block_on(f()))
+            });
+            match join_handle.join() {
+                Ok(inner) => inner,
+                Err(e) => Err(ClapMcpError::ToolThread(format!("{:?}", e))),
+            }
         })
     }
 }
@@ -2413,6 +2576,146 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::{ArgAction, CommandFactory};
+    use serde_json::json;
+    use std::error::Error;
+    use std::sync::Mutex;
+
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+
+    fn sample_helper_schema() -> ClapSchema {
+        schema_from_command(
+            &Command::new("sample")
+                .arg(Arg::new("input").help("Input file").required(true).index(1))
+                .arg(
+                    Arg::new("verbose")
+                        .long("verbose")
+                        .help("Verbose mode")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("no-cache")
+                        .long("no-cache")
+                        .help("Disable cache")
+                        .action(ArgAction::SetFalse),
+                )
+                .arg(
+                    Arg::new("level")
+                        .long("level")
+                        .help("Verbosity level")
+                        .action(ArgAction::Count),
+                )
+                .arg(
+                    Arg::new("tag")
+                        .long("tag")
+                        .help("Tags to include")
+                        .action(ArgAction::Append)
+                        .value_name("TAG"),
+                )
+                .arg(
+                    Arg::new("mode")
+                        .long("mode")
+                        .help("Execution mode")
+                        .action(ArgAction::Set),
+                )
+                .subcommand(Command::new("serve").about("Serve the sample app")),
+        )
+    }
+
+    fn nested_schema() -> ClapSchema {
+        schema_from_command(
+            &Command::new("sample")
+                .subcommand(
+                    Command::new("parent")
+                        .subcommand(Command::new("child").arg(Arg::new("value").long("value"))),
+                )
+                .subcommand(Command::new("echo").arg(Arg::new("message").long("message"))),
+        )
+    }
+
+    #[derive(Debug)]
+    struct TestError(&'static str);
+
+    impl std::fmt::Display for TestError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl Error for TestError {}
+
+    struct TestPromptProvider {
+        response: Result<Vec<PromptMessage>, &'static str>,
+        seen: Mutex<Vec<(String, serde_json::Map<String, serde_json::Value>)>>,
+    }
+
+    #[async_trait]
+    impl content::PromptContentProvider for TestPromptProvider {
+        async fn get(
+            &self,
+            name: &str,
+            arguments: &serde_json::Map<String, serde_json::Value>,
+        ) -> std::result::Result<Vec<PromptMessage>, Box<dyn Error + Send + Sync>> {
+            self.seen
+                .lock()
+                .expect("prompt provider mutex should lock")
+                .push((name.to_string(), arguments.clone()));
+            match &self.response {
+                Ok(messages) => Ok(messages.clone()),
+                Err(message) => Err(Box::new(TestError(message))),
+            }
+        }
+    }
+
+    struct TestResourceProvider {
+        response: Result<String, &'static str>,
+    }
+
+    #[async_trait]
+    impl content::ResourceContentProvider for TestResourceProvider {
+        async fn read(
+            &self,
+            _uri: &str,
+        ) -> std::result::Result<String, Box<dyn Error + Send + Sync>> {
+            match &self.response {
+                Ok(text) => Ok(text.clone()),
+                Err(message) => Err(Box::new(TestError(message))),
+            }
+        }
+    }
+
+    #[derive(Debug, clap::Parser)]
+    #[command(name = "exec-cli", subcommand_required = true)]
+    enum ExecCli {
+        PrintOnly,
+        PrintAndText,
+        Structured,
+        Echo {
+            #[arg(long)]
+            value: String,
+        },
+    }
+
+    impl ClapMcpToolExecutor for ExecCli {
+        fn execute_for_mcp(self) -> Result<ClapMcpToolOutput, ClapMcpToolError> {
+            match self {
+                Self::PrintOnly => {
+                    print!("captured only");
+                    Ok(ClapMcpToolOutput::Text(String::new()))
+                }
+                Self::PrintAndText => {
+                    print!("captured extra");
+                    Ok(ClapMcpToolOutput::Text("returned text".to_string()))
+                }
+                Self::Structured => {
+                    print!("ignored capture");
+                    Ok(ClapMcpToolOutput::Structured(json!({ "status": "ok" })))
+                }
+                Self::Echo { value } => Ok(ClapMcpToolOutput::Text(value)),
+            }
+        }
+    }
 
     #[test]
     fn test_format_panic_payload() {
@@ -2422,5 +2725,712 @@ mod tests {
         assert_eq!(format_panic_payload(s.as_ref()), "world");
         let n: Box<dyn std::any::Any + Send> = Box::new(42i32);
         assert_eq!(format_panic_payload(n.as_ref()), "<panic>");
+    }
+
+    #[test]
+    fn test_mcp_type_for_arg_and_description_hints() {
+        let boolean_arg = ClapArg {
+            id: "verbose".to_string(),
+            long: Some("verbose".to_string()),
+            short: None,
+            help: Some("Verbose mode".to_string()),
+            long_help: None,
+            required: false,
+            global: false,
+            index: None,
+            action: Some("SetTrue".to_string()),
+            value_names: vec![],
+            num_args: None,
+        };
+        let (json_type, items) = mcp_type_for_arg(&boolean_arg);
+        assert_eq!(json_type, json!("boolean"));
+        assert!(items.is_none());
+        assert_eq!(
+            mcp_action_description_hint(&boolean_arg),
+            Some(" Boolean flag: set to true to pass this flag.".to_string())
+        );
+
+        let false_arg = ClapArg {
+            action: Some("SetFalse".to_string()),
+            ..boolean_arg.clone()
+        };
+        assert_eq!(mcp_type_for_arg(&false_arg).0, json!("boolean"));
+        assert_eq!(
+            mcp_action_description_hint(&false_arg),
+            Some(" Boolean flag: set to false to pass this flag (e.g. --no-xxx).".to_string())
+        );
+
+        let count_arg = ClapArg {
+            action: Some("Count".to_string()),
+            ..boolean_arg.clone()
+        };
+        assert_eq!(mcp_type_for_arg(&count_arg).0, json!("integer"));
+        assert_eq!(
+            mcp_action_description_hint(&count_arg),
+            Some(" Number of times the flag is passed (e.g. -vvv).".to_string())
+        );
+
+        let append_arg = ClapArg {
+            action: Some("Append".to_string()),
+            value_names: vec!["TAG".to_string()],
+            ..boolean_arg
+        };
+        let (json_type, items) = mcp_type_for_arg(&append_arg);
+        assert_eq!(json_type, json!("array"));
+        assert_eq!(
+            items,
+            Some(json!({ "type": "string", "description": "A TAG value" }))
+        );
+        assert_eq!(
+            mcp_action_description_hint(&append_arg),
+            Some(" List of TAG values; pass a JSON array (e.g. [\"a\", \"b\"]).".to_string())
+        );
+
+        let multi_value_arg = ClapArg {
+            id: "names".to_string(),
+            long: Some("name".to_string()),
+            short: None,
+            help: None,
+            long_help: None,
+            required: false,
+            global: false,
+            index: None,
+            action: Some("Set".to_string()),
+            value_names: vec!["NAME".to_string()],
+            num_args: Some("1..".to_string()),
+        };
+        let (json_type, items) = mcp_type_for_arg(&multi_value_arg);
+        assert_eq!(json_type, json!("array"));
+        assert_eq!(
+            items,
+            Some(json!({ "type": "string", "description": "A NAME value" }))
+        );
+    }
+
+    #[test]
+    fn test_command_to_tool_with_config_reflects_arg_shapes() {
+        let schema = sample_helper_schema();
+        let tool = command_to_tool_with_config(
+            &schema.root,
+            &ClapMcpConfig {
+                reinvocation_safe: true,
+                parallel_safe: false,
+                share_runtime: true,
+                ..Default::default()
+            },
+            None,
+        );
+
+        assert_eq!(tool.name, "sample");
+        assert_eq!(tool.description, None);
+
+        let props = tool
+            .input_schema
+            .properties
+            .expect("tool should include input schema properties");
+        assert_eq!(tool.input_schema.required, vec!["input".to_string()]);
+        assert_eq!(
+            props["verbose"]
+                .get("type")
+                .and_then(|value| value.as_str()),
+            Some("boolean")
+        );
+        assert!(
+            props["verbose"]["description"]
+                .as_str()
+                .expect("verbose description")
+                .contains("Boolean flag")
+        );
+        assert_eq!(
+            props["level"].get("type").and_then(|value| value.as_str()),
+            Some("integer")
+        );
+        assert_eq!(
+            props["tag"].get("type").and_then(|value| value.as_str()),
+            Some("array")
+        );
+        assert_eq!(
+            props["tag"]["items"]["description"].as_str(),
+            Some("A TAG value")
+        );
+        assert_eq!(
+            tool.meta
+                .as_ref()
+                .and_then(|meta| meta.get("clapMcp"))
+                .and_then(|value| value.get("shareRuntime"))
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_validate_required_args_handles_missing_empty_and_flag_values() {
+        let schema = sample_helper_schema();
+        let mut provided = serde_json::Map::new();
+        provided.insert("verbose".to_string(), json!(false));
+        provided.insert("level".to_string(), json!(0));
+        provided.insert("input".to_string(), json!("input.txt"));
+        assert!(validate_required_args(&schema, "sample", &provided).is_ok());
+
+        let mut missing_text = serde_json::Map::new();
+        missing_text.insert("input".to_string(), json!(""));
+        let error = validate_required_args(&schema, "sample", &missing_text)
+            .expect_err("empty required string should fail");
+        assert!(error.contains("Missing required argument(s): input"));
+
+        let mut missing_array = serde_json::Map::new();
+        missing_array.insert("input".to_string(), json!([]));
+        let error = validate_required_args(&schema, "sample", &missing_array)
+            .expect_err("empty array should fail");
+        assert!(error.contains("input"));
+
+        assert!(validate_required_args(&schema, "unknown", &serde_json::Map::new()).is_ok());
+    }
+
+    #[test]
+    fn test_build_tool_argv_handles_positional_flags_and_lists() {
+        let schema = sample_helper_schema();
+        let arguments = serde_json::Map::from_iter([
+            ("input".to_string(), json!("input.txt")),
+            ("verbose".to_string(), json!(true)),
+            ("no-cache".to_string(), json!(false)),
+            ("level".to_string(), json!(2)),
+            ("tag".to_string(), json!(["alpha", "", "beta"])),
+            ("mode".to_string(), json!("fast")),
+        ]);
+
+        let argv = build_tool_argv(&schema, "sample", arguments);
+        assert_eq!(
+            argv,
+            vec![
+                "input.txt",
+                "--level",
+                "--level",
+                "--mode",
+                "fast",
+                "--no-cache",
+                "--tag",
+                "alpha",
+                "--tag",
+                "beta",
+                "--verbose",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_value_to_string_and_value_to_strings_cover_scalar_and_array_inputs() {
+        assert_eq!(value_to_string(&json!("hello")), Some("hello".to_string()));
+        assert_eq!(value_to_string(&json!(3)), Some("3".to_string()));
+        assert_eq!(value_to_string(&json!(false)), Some("false".to_string()));
+        assert_eq!(value_to_string(&serde_json::Value::Null), None);
+        assert_eq!(
+            value_to_string(&json!({"name":"sample"})),
+            Some("{\"name\":\"sample\"}".to_string())
+        );
+
+        assert_eq!(
+            value_to_strings(&json!(["alpha", "", 3, null, false])),
+            Some(vec![
+                "alpha".to_string(),
+                "3".to_string(),
+                "false".to_string()
+            ])
+        );
+        assert_eq!(
+            value_to_strings(&json!("solo")),
+            Some(vec!["solo".to_string()])
+        );
+        assert_eq!(value_to_strings(&serde_json::Value::Null), None);
+    }
+
+    #[test]
+    fn test_command_flag_helpers_are_idempotent() {
+        let cmd = command_with_mcp_flag(command_with_mcp_flag(Command::new("sample")));
+        let mcp_args = cmd
+            .get_arguments()
+            .filter(|arg| arg.get_long() == Some(MCP_FLAG_LONG))
+            .count();
+        assert_eq!(mcp_args, 1);
+
+        let cmd = command_with_export_skills_flag(command_with_export_skills_flag(Command::new(
+            "sample",
+        )));
+        let export_args = cmd
+            .get_arguments()
+            .filter(|arg| arg.get_long() == Some(EXPORT_SKILLS_FLAG_LONG))
+            .count();
+        assert_eq!(export_args, 1);
+    }
+
+    #[tokio::test]
+    async fn test_resource_helpers_cover_builtin_custom_and_error_paths() {
+        let custom = vec![content::CustomResource {
+            uri: "test://dynamic".to_string(),
+            name: "dynamic".to_string(),
+            title: None,
+            description: Some("dynamic resource".to_string()),
+            mime_type: Some("text/plain".to_string()),
+            content: content::ResourceContent::Dynamic(Arc::new(TestResourceProvider {
+                response: Ok("dynamic body".to_string()),
+            })),
+        }];
+
+        let listed = list_resources_result(&custom);
+        assert_eq!(listed.resources.len(), 2);
+        assert_eq!(listed.resources[0].uri, MCP_RESOURCE_URI_SCHEMA);
+        assert_eq!(listed.resources[1].uri, "test://dynamic");
+
+        let schema_read = read_resource_result(
+            "{\"name\":\"sample\"}",
+            &custom,
+            ReadResourceRequestParams {
+                uri: MCP_RESOURCE_URI_SCHEMA.to_string(),
+                meta: None,
+            },
+        )
+        .await
+        .expect("schema resource should resolve");
+        let text = match &schema_read.contents[0] {
+            ReadResourceContent::TextResourceContents(text) => &text.text,
+            other => panic!("unexpected content: {other:?}"),
+        };
+        assert!(text.contains("\"name\":\"sample\""));
+
+        let custom_read = read_resource_result(
+            "{}",
+            &custom,
+            ReadResourceRequestParams {
+                uri: "test://dynamic".to_string(),
+                meta: None,
+            },
+        )
+        .await
+        .expect("custom resource should resolve");
+        let text = match &custom_read.contents[0] {
+            ReadResourceContent::TextResourceContents(text) => &text.text,
+            other => panic!("unexpected content: {other:?}"),
+        };
+        assert_eq!(text, "dynamic body");
+
+        let missing = read_resource_result(
+            "{}",
+            &custom,
+            ReadResourceRequestParams {
+                uri: "test://missing".to_string(),
+                meta: None,
+            },
+        )
+        .await
+        .expect_err("missing resource should error");
+        assert!(missing.message.contains("unknown resource uri"));
+
+        let failing_resources = vec![content::CustomResource {
+            uri: "test://broken".to_string(),
+            name: "broken".to_string(),
+            title: None,
+            description: None,
+            mime_type: None,
+            content: content::ResourceContent::Dynamic(Arc::new(TestResourceProvider {
+                response: Err("read failed"),
+            })),
+        }];
+        let failing = read_resource_result(
+            "{}",
+            &failing_resources,
+            ReadResourceRequestParams {
+                uri: "test://broken".to_string(),
+                meta: None,
+            },
+        )
+        .await
+        .expect_err("provider failure should map to rpc error");
+        assert_eq!(failing.message, "read failed");
+    }
+
+    #[tokio::test]
+    async fn test_prompt_helpers_cover_logging_custom_and_error_paths() {
+        let provider = Arc::new(TestPromptProvider {
+            response: Ok(vec![PromptMessage {
+                role: Role::User,
+                content: ContentBlock::text_content("dynamic prompt".to_string()),
+            }]),
+            seen: Mutex::new(Vec::new()),
+        });
+        let prompts = vec![content::CustomPrompt {
+            name: "dynamic".to_string(),
+            title: Some("Dynamic".to_string()),
+            description: Some("dynamic prompt".to_string()),
+            arguments: vec![],
+            content: content::PromptContent::Dynamic(provider.clone()),
+        }];
+
+        let listed = list_prompts_result(true, &prompts);
+        assert_eq!(listed.prompts.len(), 2);
+        assert_eq!(listed.prompts[0].name, PROMPT_LOGGING_GUIDE);
+        assert_eq!(listed.prompts[1].name, "dynamic");
+
+        let logging_prompt = get_prompt_result(
+            true,
+            &prompts,
+            GetPromptRequestParams {
+                name: PROMPT_LOGGING_GUIDE.to_string(),
+                arguments: None,
+                meta: None,
+            },
+        )
+        .await
+        .expect("logging guide should resolve");
+        assert!(
+            logging_prompt.messages[0]
+                .content
+                .as_text_content()
+                .expect("logging guide should be text")
+                .text
+                .contains("logger")
+        );
+
+        let dynamic_prompt = get_prompt_result(
+            false,
+            &prompts,
+            GetPromptRequestParams {
+                name: "dynamic".to_string(),
+                arguments: Some(std::collections::HashMap::from([(
+                    "topic".to_string(),
+                    "coverage".to_string(),
+                )])),
+                meta: None,
+            },
+        )
+        .await
+        .expect("dynamic prompt should resolve");
+        assert_eq!(
+            dynamic_prompt.description.as_deref(),
+            Some("dynamic prompt")
+        );
+        assert_eq!(
+            provider
+                .seen
+                .lock()
+                .expect("provider seen mutex should lock")[0]
+                .1
+                .get("topic")
+                .and_then(|value| value.as_str()),
+            Some("coverage")
+        );
+
+        let unknown_logging = get_prompt_result(
+            false,
+            &prompts,
+            GetPromptRequestParams {
+                name: PROMPT_LOGGING_GUIDE.to_string(),
+                arguments: None,
+                meta: None,
+            },
+        )
+        .await
+        .expect_err("logging guide should error when logging disabled");
+        assert!(unknown_logging.message.contains("unknown prompt"));
+
+        let failing_prompts = vec![content::CustomPrompt {
+            name: "broken".to_string(),
+            title: None,
+            description: None,
+            arguments: vec![],
+            content: content::PromptContent::Dynamic(Arc::new(TestPromptProvider {
+                response: Err("prompt failed"),
+                seen: Mutex::new(Vec::new()),
+            })),
+        }];
+        let failing = get_prompt_result(
+            false,
+            &failing_prompts,
+            GetPromptRequestParams {
+                name: "broken".to_string(),
+                arguments: None,
+                meta: None,
+            },
+        )
+        .await
+        .expect_err("provider failure should map to rpc error");
+        assert_eq!(failing.message, "prompt failed");
+    }
+
+    #[test]
+    fn test_call_tool_result_helpers_cover_text_structured_errors_and_panics() {
+        let text = call_tool_result_from_output(ClapMcpToolOutput::Text("hello".to_string()));
+        assert_eq!(text.is_error, None);
+        assert_eq!(
+            text.content[0]
+                .as_text_content()
+                .expect("text result should be text")
+                .text,
+            "hello"
+        );
+
+        let structured = call_tool_result_from_output(ClapMcpToolOutput::Structured(json!({
+            "sum": 5
+        })));
+        assert_eq!(
+            structured
+                .structured_content
+                .as_ref()
+                .and_then(|content| content.get("sum"))
+                .and_then(|value| value.as_i64()),
+            Some(5)
+        );
+        assert!(
+            structured.content[0]
+                .as_text_content()
+                .expect("structured result should emit text")
+                .text
+                .contains("\"sum\": 5")
+        );
+
+        let non_object = call_tool_result_from_output(ClapMcpToolOutput::Structured(json!(["a"])));
+        assert!(non_object.structured_content.is_none());
+
+        let error = call_tool_result_from_tool_error(ClapMcpToolError::structured(
+            "bad",
+            json!({ "code": 7 }),
+        ));
+        assert_eq!(error.is_error, Some(true));
+        assert_eq!(
+            error
+                .structured_content
+                .as_ref()
+                .and_then(|content| content.get("code"))
+                .and_then(|value| value.as_i64()),
+            Some(7)
+        );
+
+        let panic_payload: Box<dyn std::any::Any + Send> = Box::new("boom");
+        let panic_result = call_tool_result_from_panic(panic_payload.as_ref());
+        assert_eq!(panic_result.is_error, Some(true));
+        assert!(
+            panic_result.content[0]
+                .as_text_content()
+                .expect("panic result should be text")
+                .text
+                .contains("Tool panicked: boom")
+        );
+    }
+
+    #[test]
+    fn test_subprocess_helpers_cover_command_building_logging_and_result_shapes() {
+        let schema = nested_schema();
+        let args = serde_json::Map::from_iter([(
+            "value".to_string(),
+            serde_json::Value::String("ok".to_string()),
+        )]);
+        let command = build_execution_command(
+            std::path::Path::new("/tmp/example"),
+            &schema,
+            "sample",
+            "child",
+            &args,
+        );
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("/tmp/example"));
+        let actual_args: Vec<_> = command.get_args().collect();
+        assert_eq!(
+            actual_args,
+            vec![
+                std::ffi::OsStr::new("parent"),
+                std::ffi::OsStr::new("child"),
+                std::ffi::OsStr::new("--value"),
+                std::ffi::OsStr::new("ok"),
+            ]
+        );
+
+        let log_params = subprocess_stderr_log_params("child", "warning on stderr\n")
+            .expect("stderr should produce logging params");
+        assert_eq!(log_params.logger.as_deref(), Some("stderr"));
+        assert_eq!(
+            log_params.meta.as_ref().and_then(|meta| meta.get("tool")),
+            Some(&serde_json::Value::String("child".to_string()))
+        );
+        assert!(subprocess_stderr_log_params("child", "   ").is_none());
+
+        #[cfg(unix)]
+        {
+            let success_output = std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: b"done\n".to_vec(),
+                stderr: b"note\n".to_vec(),
+            };
+            let success = call_tool_result_from_subprocess_output(&success_output);
+            assert_eq!(success.is_error, None);
+            assert!(
+                success.content[0]
+                    .as_text_content()
+                    .expect("success result should be text")
+                    .text
+                    .contains("stderr:\nnote")
+            );
+
+            let failure_output = std::process::Output {
+                status: std::process::ExitStatus::from_raw(256),
+                stdout: Vec::new(),
+                stderr: b"boom\n".to_vec(),
+            };
+            let failure = call_tool_result_from_subprocess_output(&failure_output);
+            assert_eq!(failure.is_error, Some(true));
+            assert!(
+                failure.content[0]
+                    .as_text_content()
+                    .expect("failure result should be text")
+                    .text
+                    .contains("non-zero status")
+            );
+        }
+
+        let launch_error = command_launch_failure_result(&std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "missing",
+        ));
+        assert_eq!(launch_error.is_error, Some(true));
+        assert!(
+            launch_error.content[0]
+                .as_text_content()
+                .expect("launch error should be text")
+                .text
+                .contains("Failed to run command")
+        );
+
+        let placeholder = placeholder_tool_result(
+            "echo",
+            &serde_json::Map::from_iter([("message".to_string(), json!("hi"))]),
+        );
+        assert!(
+            placeholder.content[0]
+                .as_text_content()
+                .expect("placeholder result should be text")
+                .text
+                .contains("Would invoke clap command 'echo'")
+        );
+
+        let parse_failure = schema_parse_failure_result();
+        assert_eq!(parse_failure.is_error, Some(true));
+        assert_eq!(
+            parse_failure.content[0]
+                .as_text_content()
+                .expect("schema parse failure should be text")
+                .text,
+            "Failed to parse schema"
+        );
+    }
+
+    #[test]
+    fn test_validate_tool_argument_names_rejects_unknown_keys() {
+        let tool = command_to_tool_with_config(
+            &sample_helper_schema().root,
+            &ClapMcpConfig::default(),
+            None,
+        );
+        let ok_args = serde_json::Map::from_iter([("input".to_string(), json!("in.txt"))]);
+        assert!(validate_tool_argument_names(&tool, &tool.name, &ok_args).is_ok());
+
+        let bad_args = serde_json::Map::from_iter([("bogus".to_string(), json!(1))]);
+        let err = validate_tool_argument_names(&tool, &tool.name, &bad_args)
+            .expect_err("unknown key should error");
+        assert!(format!("{err:?}").contains("unknown argument: bogus"));
+    }
+
+    #[test]
+    fn test_into_clap_mcp_result_and_error_impls_cover_basic_conversions() {
+        assert!(matches!(
+            String::from("hello")
+                .into_tool_result()
+                .expect("string should convert"),
+            ClapMcpToolOutput::Text(text) if text == "hello"
+        ));
+        assert!(matches!(
+            "world"
+                .into_tool_result()
+                .expect("str should convert"),
+            ClapMcpToolOutput::Text(text) if text == "world"
+        ));
+
+        let structured = AsStructured(json!({ "ok": true }))
+            .into_tool_result()
+            .expect("structured value should convert");
+        assert!(matches!(structured, ClapMcpToolOutput::Structured(_)));
+
+        let empty = Option::<String>::None
+            .into_tool_result()
+            .expect("none should convert");
+        assert!(matches!(empty, ClapMcpToolOutput::Text(text) if text.is_empty()));
+
+        let some = Some("x").into_tool_result().expect("some should convert");
+        assert!(matches!(some, ClapMcpToolOutput::Text(text) if text == "x"));
+
+        let ok_result: Result<&str, &str> = Ok("done");
+        assert!(matches!(
+            ok_result.into_tool_result().expect("ok result should convert"),
+            ClapMcpToolOutput::Text(text) if text == "done"
+        ));
+
+        let err_result: Result<&str, &str> = Err("boom");
+        let err = err_result
+            .into_tool_result()
+            .expect_err("err result should map to tool error");
+        assert_eq!(err.message, "boom");
+
+        assert_eq!(ClapMcpToolError::from("oops").message, "oops");
+        assert_eq!(ClapMcpToolError::from(String::from("ouch")).message, "ouch");
+        assert_eq!(String::from("bad").into_tool_error().message, "bad");
+        assert_eq!("worse".into_tool_error().message, "worse");
+    }
+
+    #[test]
+    fn test_merge_captured_stdout_only_changes_text_outputs() {
+        let merged = merge_captured_stdout(
+            Ok(ClapMcpToolOutput::Text(String::new())),
+            "captured only\n".to_string(),
+        )
+        .expect("merge should succeed");
+        assert!(matches!(merged, ClapMcpToolOutput::Text(text) if text == "captured only"));
+
+        let appended = merge_captured_stdout(
+            Ok(ClapMcpToolOutput::Text("returned".to_string())),
+            "captured\n".to_string(),
+        )
+        .expect("append should succeed");
+        assert!(matches!(appended, ClapMcpToolOutput::Text(text) if text == "returned\ncaptured"));
+
+        let structured = merge_captured_stdout(
+            Ok(ClapMcpToolOutput::Structured(json!({"ok": true}))),
+            "captured\n".to_string(),
+        )
+        .expect("structured output should pass through");
+        assert!(matches!(structured, ClapMcpToolOutput::Structured(_)));
+    }
+
+    #[test]
+    fn test_execute_in_process_command_and_handler_cover_capture_stdout_paths() {
+        let schema = schema_from_command(&ExecCli::command());
+
+        let structured = execute_in_process_command::<ExecCli>(
+            &schema,
+            "structured",
+            serde_json::Map::new(),
+            false,
+        )
+        .expect("structured should execute");
+        assert!(matches!(structured, ClapMcpToolOutput::Structured(_)));
+
+        let echo_args = serde_json::Map::from_iter([("value".to_string(), json!("hello"))]);
+        let handler = make_in_process_handler::<ExecCli>(schema.clone(), false);
+        let echoed = handler("echo", echo_args).expect("handler should execute");
+        assert!(matches!(echoed, ClapMcpToolOutput::Text(text) if text == "hello"));
+
+        let missing =
+            execute_in_process_command::<ExecCli>(&schema, "echo", serde_json::Map::new(), false)
+                .expect_err("missing required arg should fail");
+        assert!(
+            missing
+                .message
+                .contains("Missing required argument(s): value")
+        );
     }
 }
