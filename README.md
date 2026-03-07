@@ -12,6 +12,12 @@ You can take a look at the examples, but this is a **VERY** early draft. See
 
 ## Development
 
+Contributors should follow these conventions:
+
+- Format code with `cargo fmt`. CI runs `cargo fmt --all -- --check`.
+- Run `cargo clippy --all-targets --all-features -- -D warnings` before submitting; CI enforces this.
+- Document public API items and add a `// SAFETY:` comment above any `unsafe` block explaining invariants.
+
 Run all tests (including feature-gated logging tests):
 
 ```bash
@@ -82,14 +88,20 @@ use clap::Parser;
 use clap_mcp::ClapMcp;
 
 #[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp_output_from = "run"]
 #[command(name = "myapp")]
 enum Cli {
     /// Say hello.
-    #[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
     Greet {
         #[arg(long)]
         name: Option<String>,
     },
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Greet { name } => format!("Hello, {}!", name.as_deref().unwrap_or("world")),
+    }
 }
 
 fn main() {
@@ -104,14 +116,21 @@ Use `#[clap_mcp(...)]` to declare execution safety, and
 `parse_or_serve_mcp_attr` to pick up that config automatically:
 
 ```rust
+use clap::Parser;
 use clap_mcp::ClapMcp;
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run"]
 #[command(name = "myapp")]
 enum Cli {
-    #[clap_mcp_output = "format!(\"{}\", a + b)"]
     Add { a: i32, b: i32 },
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Add { a, b } => (a + b).to_string(),
+    }
 }
 
 let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
@@ -263,15 +282,23 @@ CLIs differ in how safely they can be invoked over MCP. Two flags control this:
 Use `#[derive(ClapMcp)]` and `#[clap_mcp(...)]` on your CLI type:
 
 ```rust
+use clap::Parser;
 use clap_mcp::ClapMcp;
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run"]
 #[command(...)]
 enum Cli {
-    #[clap_mcp_output = "format!(\"{}\", a + b)"]
     Add { a: i32, b: i32 },
     // ...
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Add { a, b } => (a + b).to_string(),
+        // ...
+    }
 }
 
 let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
@@ -290,32 +317,44 @@ explicit `#[clap_mcp(requires)]` or `#[clap_mcp(skip)]` so MCP behavior is inten
 **Argument-level** (on each field):
 ```rust
 #[derive(Parser, ClapMcp)]
+#[clap_mcp_output_from = "run"]
 enum Cli {
-    #[clap_mcp_output = "path.clone()"]
     Read {
         #[clap_mcp(requires)]  // MCP schema makes path required
         #[arg(long)]
         path: Option<String>,
     },
 }
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Read { path } => path.unwrap_or_default(),
+    }
+}
 ```
 
 **Variant-level** (one or more args; use a single name or comma-separated list — the MCP schema marks each as required):
 ```rust
 #[derive(Parser, ClapMcp)]
+#[clap_mcp_output_from = "run"]
 enum Cli {
     // Single optional positional made required in MCP
     #[clap_mcp(requires = "versions")]
-    #[clap_mcp_output = "format!(\"{:?}\", versions)"]
     Sort { versions: Option<String> },
 
     // Multiple optional args
     #[clap_mcp(requires = "path, input")]  // both become required in MCP
-    #[clap_mcp_output = "format!(\"{:?}\", (path, input))"]
     Process {
         #[arg(long)] path: Option<String>,
         #[arg(long)] input: Option<String>,
     },
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Sort { versions } => format!("{versions:?}"),
+        Cli::Process { path, input } => format!("{:?}", (path, input)),
+    }
 }
 ```
 
@@ -385,9 +424,11 @@ Tools include `meta.clapMcp` with these hints for clients.
 
 ### Async tools and share_runtime
 
-When your CLI has async subcommands (e.g. `tokio::sleep`, `tokio::spawn`), use
-`clap_mcp::run_async_tool` in `#[clap_mcp_output]` and set `share_runtime` in
-`#[clap_mcp(...)]`:
+When your CLI has async subcommands (e.g. `tokio::sleep`, `tokio::spawn`), the **idiomatic**
+approach with `#[clap_mcp_output_from = "run"]` is to do async work inside your `run` function
+(e.g. with a runtime handle). When you are not using `output_from`, you can use
+`clap_mcp::run_async_tool` in per-variant `#[clap_mcp_output]` / `#[clap_mcp_output_json]` and
+set `share_runtime` in `#[clap_mcp(...)]`:
 
 | `share_runtime` | Behavior | When to use |
 |-----------------|----------|-------------|
@@ -399,7 +440,7 @@ When your CLI has async subcommands (e.g. `tokio::sleep`, `tokio::spawn`), use
 ```rust
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
 enum Cli {
-    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || my_async_fn())"]
+    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || my_async_fn()).expect(\"async tool failed\")"]
     SleepDemo,
 }
 ```
@@ -409,7 +450,7 @@ enum Cli {
 ```rust
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime)]
 enum Cli {
-    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || my_async_fn())"]
+    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || my_async_fn()).expect(\"async tool failed\")"]
     SleepDemo,
 }
 ```
@@ -453,8 +494,10 @@ limits on subprocess execution.
 ## Tool output attributes
 
 When using `#[derive(ClapMcp)]`, you control how each subcommand's output is
-returned to MCP clients. You can either use a **single output function** (recommended)
-or **per-variant output attributes**.
+returned to MCP clients. The **idiomatic** approach is a **single output function**
+(`#[clap_mcp_output_from = "run"]`): one `run` implements both CLI and MCP behavior, so you
+avoid duplicating logic. Per-variant attributes are available for edge cases but are not
+the default.
 
 ### `#[clap_mcp_output_from = "run"]` — single output function (recommended)
 
@@ -508,18 +551,22 @@ fn main() {
 When `#[clap_mcp_output_from]` is set, **per-variant** `#[clap_mcp_output]` /
 `#[clap_mcp_output_json]` / etc. are **not** used for execution.
 
-### Per-variant output (when not using `output_from`)
+### Per-variant output (advanced)
 
-When you do **not** set `#[clap_mcp_output_from]`, use these attributes on each variant:
+When you do **not** set `#[clap_mcp_output_from]`, you can attach output to each variant
+with the attributes below. This duplicates behavior: your CLI logic (e.g. in `main`) and
+the MCP tool output are declared separately, which is easy to get out of sync. Prefer
+`#[clap_mcp_output_from = "run"]` for most code.
 
-### `#[clap_mcp_output = "expr"]`
+#### `#[clap_mcp_output = "expr"]`
 
 A **Rust expression written as a string literal**. The macro destructures the
-variant's fields, so field names are directly in scope:
+variant's fields, so field names are directly in scope. Use only when the output
+logic is genuinely trivial and a separate `run` would add no value:
 
 ```rust
 enum Cli {
-    #[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
+    #[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
     Greet {
         #[arg(long)]
         name: Option<String>,   // `name` is in scope inside the expression
@@ -530,7 +577,7 @@ enum Cli {
 Variants without `#[clap_mcp_output]` default to the variant name in kebab-case
 for unit variants, or `format!("{:?}", self)` for struct variants.
 
-### `#[clap_mcp_output_json = "expr"]`
+#### `#[clap_mcp_output_json = "expr"]`
 
 Single attribute for **structured JSON** output. The expression must evaluate to
 a type that implements `Serialize`:
@@ -548,7 +595,7 @@ enum Cli {
 The MCP response will include both a `content` text block (pretty-printed JSON)
 and a `structuredContent` object.
 
-### `#[clap_mcp_output_literal = "string"]`
+#### `#[clap_mcp_output_literal = "string"]`
 
 Shorthand for constant string output. Generates `"string".to_string()`:
 
@@ -557,7 +604,7 @@ Shorthand for constant string output. Generates `"string".to_string()`:
 Public,
 ```
 
-### `ClapMcpServeOptions::capture_stdout`
+#### `ClapMcpServeOptions::capture_stdout`
 
 When `true` and running in-process, captures stdout written during tool execution
 and merges it with Text output. Only has effect when `reinvocation_safe = true`
@@ -565,18 +612,20 @@ and merges it with Text output. Only has effect when `reinvocation_safe = true`
 code that sets `capture_stdout` will not compile on Windows. Subprocess mode
 already captures stdout via `Command::output()`.
 
-### `clap_mcp::opt_str` — helper for optional args
+#### `clap_mcp::opt_str` — helper for optional args (legacy)
 
-Use in `#[clap_mcp_output]` to avoid `as_deref().unwrap_or("default")` boilerplate:
+For new code, use `#[clap_mcp_output_from = "run"]` and `name.as_deref().unwrap_or("default")`
+in your `run` function. This helper exists for per-variant `#[clap_mcp_output]` expressions
+only; it is equivalent to `name.as_deref().unwrap_or("default")`:
 
 ```rust
-#[clap_mcp_output = "format!(\"Hello, {}!\", clap_mcp::opt_str(&name, \"world\"))"]
+#[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
 Greet { #[arg(long)] name: Option<String> },
 ```
 
-### `#[clap_mcp_output_result]` — fallible output
+#### `#[clap_mcp_output_result]` — fallible per-variant output
 
-When the expression returns `Result<T, E>`, add `#[clap_mcp_output_result]`:
+When the per-variant expression returns `Result<T, E>`, add `#[clap_mcp_output_result]`:
 
 - `Ok(value)` → normal MCP output (Text or Structured)
 - `Err(e)` → MCP error response (`is_error: true`) with the error message
@@ -589,7 +638,7 @@ enum Cli {
 }
 ```
 
-### `#[clap_mcp_error_type = "TypeName"]` — structured errors
+#### `#[clap_mcp_error_type = "TypeName"]` — structured errors
 
 When `E: Serialize`, add `#[clap_mcp_error_type = "TypeName"]` to include the
 serialized error in the MCP response's `structuredContent`:

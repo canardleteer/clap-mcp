@@ -39,3 +39,4 @@ log = { version = "0.4", optional = true }
 [dev-dependencies]
 clap-mcp-macros = { workspace = true }
 schemars = "0.8"
+trybuild = "1.0.116"

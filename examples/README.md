@@ -31,7 +31,7 @@ cargo run -p clap-mcp-examples --bin client -- struct-subcommand
 # Test optional_commands_and_args
 cargo run -p clap-mcp-examples --bin client -- optional-commands-and-args
 
-# Test result_output (Result<T, E> in #[clap_mcp_output])
+# Test result_output (Result<T, E> with #[clap_mcp_output_from])
 cargo run -p clap-mcp-examples --bin client -- result-output
 
 # Test tracing_bridge
@@ -137,10 +137,10 @@ cargo run -p clap-mcp-examples --bin optional_commands_and_args -- --mcp
 
 ### result_output
 
-Demonstrates `#[clap_mcp_output_result]` for fallible tool output. When the expression
-returns `Result<T, E>`, `Ok(value)` produces normal output and `Err(e)` produces an
-MCP error response (`is_error: true`). Uses `#[clap_mcp_error_type]` for structured
-errors when `E: Serialize`.
+Demonstrates `#[clap_mcp_output_from = "run"]` with a fallible `run` that returns
+`Result<T, E>`. `Ok(value)` produces normal MCP output; `Err(e)` produces an MCP error
+response (`is_error: true`). Implements `IntoClapMcpToolError` for a custom error type
+so structured errors are sent as JSON.
 
 ```bash
 # Normal CLI usage
@@ -158,8 +158,8 @@ cargo run -p clap-mcp-examples --bin result_output -- --mcp
 
 ### structured
 
-CLI with structured JSON output via `#[clap_mcp_output_json]`. No optional
-features required.
+CLI with structured JSON output via `#[clap_mcp_output_from = "run"]` and
+`AsStructured<T>`. No optional features required.
 
 ```bash
 # Normal CLI usage
@@ -267,8 +267,8 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **subcommands**    | `servers/subcommands.rs`        | Text output, structured output, subprocess                         |
 | **struct_subcommand** | `servers/struct_subcommand.rs` | Struct root, `#[command(subcommand)]`, optional subcommand         |
 | **optional_commands_and_args** | `servers/optional_commands_and_args.rs` | `#[clap_mcp(skip)]`, `#[clap_mcp(requires)]` (arg and variant-level) |
-| **result_output**  | `servers/result_output.rs`      | `#[clap_mcp_output_result]` for `Result<T, E>`, `#[clap_mcp_error_type]` for structured errors |
-| **structured**     | `servers/structured.rs`         | Structured output only (`#[clap_mcp_output_json]`)                 |
+| **result_output**  | `servers/result_output.rs`      | `#[clap_mcp_output_from]` with `Result<T, E>`, `IntoClapMcpToolError` for structured errors |
+| **structured**     | `servers/structured.rs`         | Structured output via `#[clap_mcp_output_from]` and `AsStructured<T>` |
 | **tracing_bridge** | `servers/tracing_bridge.rs`  | Tracing integration, MCP log forwarding, prompts   |
 | **log_bridge**     | `servers/log_bridge.rs`      | `log` crate integration, MCP log forwarding       |
 | **async_sleep**       | `servers/async_sleep.rs`        | Async tokio, 3 sleep tasks, `share_runtime = false` |
@@ -279,8 +279,10 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 
 ## Async tools and share_runtime
 
-When your CLI has async subcommands (e.g. using `tokio::sleep`, `tokio::spawn`),
-use `clap_mcp::run_async_tool` in `#[clap_mcp_output_json]` and configure
+When your CLI has async subcommands (e.g. using `tokio::sleep`, `tokio::spawn`), the
+idiomatic approach is to do async work inside your `run` function when using
+`#[clap_mcp_output_from]`. When not using `output_from`, you can use
+`clap_mcp::run_async_tool` in per-variant `#[clap_mcp_output_json]` and configure
 `share_runtime` in `#[clap_mcp(...)]`:
 
 | `share_runtime` | Behavior | When to use |
@@ -293,7 +295,7 @@ use `clap_mcp::run_async_tool` in `#[clap_mcp_output_json]` and configure
 ```rust
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
 enum Cli {
-    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo())"]
+    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo()).expect(\"async tool failed\")"]
     SleepDemo,
 }
 ```
@@ -303,7 +305,7 @@ enum Cli {
 ```rust
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime)]
 enum Cli {
-    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo())"]
+    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo()).expect(\"async tool failed\")"]
     SleepDemo,
 }
 ```

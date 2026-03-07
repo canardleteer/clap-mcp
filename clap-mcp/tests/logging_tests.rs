@@ -37,3 +37,47 @@ fn test_log_channel() {
     let recv = rx.try_recv().unwrap();
     assert_eq!(recv.data.as_str(), Some("msg"));
 }
+
+#[cfg(feature = "tracing")]
+#[test]
+fn test_tracing_layer_forwards_events() {
+    use clap_mcp::logging::ClapMcpTracingLayer;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let (tx, mut rx) = log_channel(4);
+    let subscriber = tracing_subscriber::registry()
+        .with(ClapMcpTracingLayer::new(tx).with_logger_name("trace-test"));
+
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::info!("hello tracing");
+    });
+
+    let recv = rx.try_recv().unwrap();
+    assert_eq!(recv.logger.as_deref(), Some("trace-test"));
+    assert_eq!(recv.level, LoggingLevel::Info);
+    assert_eq!(recv.data.as_str(), Some("hello tracing"));
+}
+
+#[cfg(feature = "log")]
+#[test]
+fn test_log_bridge_forwards_records() {
+    use clap_mcp::logging::ClapMcpLogBridge;
+    use log::{Log, Record};
+
+    let (tx, mut rx) = log_channel(4);
+    let bridge = ClapMcpLogBridge::new(tx).with_logger_name("log-test");
+    let record = Record::builder()
+        .args(format_args!("hello log"))
+        .level(log::Level::Warn)
+        .target("logging-tests")
+        .build();
+
+    assert!(bridge.enabled(record.metadata()));
+    bridge.log(&record);
+    bridge.flush();
+
+    let recv = rx.try_recv().unwrap();
+    assert_eq!(recv.logger.as_deref(), Some("log-test"));
+    assert_eq!(recv.level, LoggingLevel::Notice);
+    assert_eq!(recv.data.as_str(), Some("hello log"));
+}
