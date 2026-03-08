@@ -1,0 +1,5 @@
+error: clap_mcp: enum must have #[clap_mcp_output_from = "run"] (or another function path). Implement a single `run(YourEnum) -> T` where T: IntoClapMcpResult and add the attribute on the enum.
+ --> tests/ui/fail/missing_output_from.rs:9:6
+  |
+9 | enum Cli {
+  |      ^^^
