@@ -21,11 +21,19 @@ struct OutputB {
 
 #[cfg(feature = "output-schema")]
 #[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp_output_from = "run"]
 #[clap_mcp_output_type = "OutputA"]
 #[clap_mcp_output_one_of = "OutputA, OutputB"]
 #[command(name = "output-one-of-pass", subcommand_required = true)]
 enum Cli {
     Foo,
+}
+
+#[cfg(feature = "output-schema")]
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Foo => "ok".to_string(),
+    }
 }
 
 #[cfg(feature = "output-schema")]

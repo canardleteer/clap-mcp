@@ -13,6 +13,7 @@ use clap_mcp::ClapMcp;
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+#[clap_mcp_output_from = "run"]
 #[command(
     name = "subprocess-exit-handling",
     about = "Example: subprocess non-zero exit returns MCP error",
@@ -25,16 +26,17 @@ enum Cli {
     ExitFail,
 }
 
-fn main() {
-    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
-
-    match cli {
-        Cli::Succeed => {
-            println!("ok");
-        }
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Succeed => "ok".to_string(),
         Cli::ExitFail => {
             eprintln!("exit-fail: exiting with code 1");
             std::process::exit(1);
         }
     }
+}
+
+fn main() {
+    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+    println!("{}", run(cli));
 }

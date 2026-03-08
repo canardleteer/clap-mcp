@@ -4,7 +4,6 @@ use clap::{Parser, Subcommand};
 use clap_mcp::{ClapMcp, ClapMcpToolExecutor};
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp_output_from = "run"]
 #[command(name = "nested-subcommands-pass", subcommand_required = true)]
 struct Cli {
     #[command(subcommand)]
@@ -12,6 +11,7 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp_output_from = "run_top_level"]
 enum TopLevel {
     Parent {
         #[command(subcommand)]
@@ -20,6 +20,7 @@ enum TopLevel {
 }
 
 #[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp_output_from = "run_child"]
 enum ChildCommand {
     Leaf {
         #[arg(long)]
@@ -27,11 +28,15 @@ enum ChildCommand {
     },
 }
 
-fn run(cli: Cli) -> String {
-    match cli.command {
-        TopLevel::Parent { command } => match command {
-            ChildCommand::Leaf { value } => format!("leaf={value}"),
-        },
+fn run_top_level(cmd: TopLevel) -> String {
+    match cmd {
+        TopLevel::Parent { command } => run_child(command),
+    }
+}
+
+fn run_child(cmd: ChildCommand) -> String {
+    match cmd {
+        ChildCommand::Leaf { value } => format!("leaf={value}"),
     }
 }
 

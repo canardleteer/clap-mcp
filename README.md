@@ -424,36 +424,29 @@ Tools include `meta.clapMcp` with these hints for clients.
 
 ### Async tools and share_runtime
 
-When your CLI has async subcommands (e.g. `tokio::sleep`, `tokio::spawn`), the **idiomatic**
-approach with `#[clap_mcp_output_from = "run"]` is to do async work inside your `run` function
-(e.g. with a runtime handle). When you are not using `output_from`, you can use
-`clap_mcp::run_async_tool` in per-variant `#[clap_mcp_output]` / `#[clap_mcp_output_json]` and
-set `share_runtime` in `#[clap_mcp(...)]`:
+When your CLI has async subcommands (e.g. `tokio::sleep`, `tokio::spawn`), do async work
+inside your `run` function (e.g. call `clap_mcp::run_async_tool` or use a runtime handle).
+Set `share_runtime` in `#[clap_mcp(...)]` to share the MCP server's tokio runtime:
 
 | `share_runtime` | Behavior | When to use |
 |-----------------|----------|-------------|
 | `false` (default) | Dedicated thread with its own tokio runtime per tool call. No nesting. | **Recommended.** Use unless you need deep integration. |
 | `true` | Shares the MCP server's tokio runtime. Requires `reinvocation_safe`; uses multi-thread runtime. | Advanced: share runtime state, spawn long-lived tasks, or integrate with other async code. |
 
-**Non-shared (default):**
+**Non-shared (default):** do async work inside your `run` function and call
+`clap_mcp::run_async_tool` from there:
 
 ```rust
-#[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
-enum Cli {
-    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || my_async_fn()).expect(\"async tool failed\")"]
-    SleepDemo,
+fn run(cmd: Cli) -> AsStructured<SleepResult> {
+    match cmd {
+        Cli::SleepDemo => AsStructured(
+            clap_mcp::run_async_tool(&Cli::clap_mcp_config(), run_sleep_demo).expect("async tool failed"),
+        ),
+    }
 }
 ```
 
-**Shared runtime:**
-
-```rust
-#[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime)]
-enum Cli {
-    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || my_async_fn()).expect(\"async tool failed\")"]
-    SleepDemo,
-}
-```
+**Shared runtime:** same pattern; set `share_runtime = true` in `#[clap_mcp(...)]`.
 
 `share_runtime` only applies when `reinvocation_safe` is true. When tools run
 in subprocesses (`reinvocation_safe = false`), `share_runtime` is ignored.
@@ -548,112 +541,17 @@ fn main() {
 }
 ```
 
-When `#[clap_mcp_output_from]` is set, **per-variant** `#[clap_mcp_output]` /
-`#[clap_mcp_output_json]` / etc. are **not** used for execution.
+Tool output is defined **only** via `#[clap_mcp_output_from = "run"]` and a single `run`
+function; there are no per-variant output attributes. Use `run(Cli) -> T` where `T`
+implements `IntoClapMcpResult` (e.g. `String`, `AsStructured<T>`, `Result<O, E>`).
 
-### Per-variant output (advanced)
-
-When you do **not** set `#[clap_mcp_output_from]`, you can attach output to each variant
-with the attributes below. This duplicates behavior: your CLI logic (e.g. in `main`) and
-the MCP tool output are declared separately, which is easy to get out of sync. Prefer
-`#[clap_mcp_output_from = "run"]` for most code.
-
-#### `#[clap_mcp_output = "expr"]`
-
-A **Rust expression written as a string literal**. The macro destructures the
-variant's fields, so field names are directly in scope. Use only when the output
-logic is genuinely trivial and a separate `run` would add no value:
-
-```rust
-enum Cli {
-    #[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
-    Greet {
-        #[arg(long)]
-        name: Option<String>,   // `name` is in scope inside the expression
-    },
-}
-```
-
-Variants without `#[clap_mcp_output]` default to the variant name in kebab-case
-for unit variants, or `format!("{:?}", self)` for struct variants.
-
-#### `#[clap_mcp_output_json = "expr"]`
-
-Single attribute for **structured JSON** output. The expression must evaluate to
-a type that implements `Serialize`:
-
-```rust
-#[derive(Serialize)]
-struct SubResult { difference: i32 }
-
-enum Cli {
-    #[clap_mcp_output_json = "SubResult { difference: a - b }"]
-    Sub { a: i32, b: i32 },
-}
-```
-
-The MCP response will include both a `content` text block (pretty-printed JSON)
-and a `structuredContent` object.
-
-#### `#[clap_mcp_output_literal = "string"]`
-
-Shorthand for constant string output. Generates `"string".to_string()`:
-
-```rust
-#[clap_mcp_output_literal = "done"]
-Public,
-```
-
-#### `ClapMcpServeOptions::capture_stdout`
+### `ClapMcpServeOptions::capture_stdout`
 
 When `true` and running in-process, captures stdout written during tool execution
 and merges it with Text output. Only has effect when `reinvocation_safe = true`
 (in-process execution). **Unix only** — the field is not present on Windows, so
 code that sets `capture_stdout` will not compile on Windows. Subprocess mode
 already captures stdout via `Command::output()`.
-
-#### `clap_mcp::opt_str` — helper for optional args (legacy)
-
-For new code, use `#[clap_mcp_output_from = "run"]` and `name.as_deref().unwrap_or("default")`
-in your `run` function. This helper exists for per-variant `#[clap_mcp_output]` expressions
-only; it is equivalent to `name.as_deref().unwrap_or("default")`:
-
-```rust
-#[clap_mcp_output = "format!(\"Hello, {}!\", name.as_deref().unwrap_or(\"world\"))"]
-Greet { #[arg(long)] name: Option<String> },
-```
-
-#### `#[clap_mcp_output_result]` — fallible per-variant output
-
-When the per-variant expression returns `Result<T, E>`, add `#[clap_mcp_output_result]`:
-
-- `Ok(value)` → normal MCP output (Text or Structured)
-- `Err(e)` → MCP error response (`is_error: true`) with the error message
-
-```rust
-enum Cli {
-    #[clap_mcp_output_result]
-    #[clap_mcp_output = "if n >= 0 { Ok(format!(\"sqrt ~{}\", n)) } else { Err(format!(\"negative: {}\", n)) }"]
-    Sqrt { #[arg(long)] n: i32 },
-}
-```
-
-#### `#[clap_mcp_error_type = "TypeName"]` — structured errors
-
-When `E: Serialize`, add `#[clap_mcp_error_type = "TypeName"]` to include the
-serialized error in the MCP response's `structuredContent`:
-
-```rust
-#[derive(Serialize)]
-struct MyError { code: i32, msg: String }
-
-enum Cli {
-    #[clap_mcp_output_result]
-    #[clap_mcp_error_type = "MyError"]
-    #[clap_mcp_output = "if x > 0 { Ok(\"ok\".into()) } else { Err(MyError { code: -1, msg: \"invalid\".into() }) }"]
-    Check { #[arg(long)] x: i32 },
-}
-```
 
 ## Output schema (oneOf) for MCP tool discovery
 

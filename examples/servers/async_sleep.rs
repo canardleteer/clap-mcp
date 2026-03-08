@@ -10,13 +10,14 @@ mod async_sleep_common;
 
 use async_sleep_common::run_sleep_demo;
 use clap::Parser;
-use clap_mcp::ClapMcp;
+use clap_mcp::{AsStructured, ClapMcp};
 
 #[cfg(feature = "tracing")]
 use clap_mcp::ClapMcpConfigProvider;
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
+#[clap_mcp_output_from = "run"]
 #[command(
     name = "async-sleep-example",
     about = "CLI with tokio async runtime: 3 sleep tasks (dedicated thread)",
@@ -24,8 +25,16 @@ use clap_mcp::ClapMcpConfigProvider;
 )]
 enum Cli {
     /// Run 3 concurrent sleep tasks and return structured result.
-    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo()).expect(\"async tool failed\")"]
     SleepDemo,
+}
+
+fn run(cmd: Cli) -> AsStructured<async_sleep_common::SleepResult> {
+    match cmd {
+        Cli::SleepDemo => AsStructured(
+            clap_mcp::run_async_tool(&Cli::clap_mcp_config(), run_sleep_demo)
+                .expect("async tool failed"),
+        ),
+    }
 }
 
 #[cfg(feature = "tracing")]
@@ -56,12 +65,8 @@ fn main() {
 
     match cli {
         Cli::SleepDemo => {
-            let result = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("tokio runtime must build")
-                .block_on(run_sleep_demo());
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            let result = run(cli);
+            println!("{}", serde_json::to_string_pretty(&result.0).unwrap());
         }
     }
 }

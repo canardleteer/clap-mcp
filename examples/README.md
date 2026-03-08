@@ -279,37 +279,8 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 
 ## Async tools and share_runtime
 
-When your CLI has async subcommands (e.g. using `tokio::sleep`, `tokio::spawn`), the
-idiomatic approach is to do async work inside your `run` function when using
-`#[clap_mcp_output_from]`. When not using `output_from`, you can use
-`clap_mcp::run_async_tool` in per-variant `#[clap_mcp_output_json]` and configure
-`share_runtime` in `#[clap_mcp(...)]`:
-
-| `share_runtime` | Behavior | When to use |
-|-----------------|----------|-------------|
-| `false` (default) | Dedicated thread with its own tokio runtime per tool call. No nesting, no special setup. | **Recommended.** Use unless you need deep integration. |
-| `true` | Shares the MCP server's tokio runtime. Requires `reinvocation_safe` and uses a multi-thread runtime. | Advanced: when you need to share runtime state, spawn tasks that outlive the tool call, or integrate with other async code. |
-
-**Non-shared (default):**
-
-```rust
-#[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
-enum Cli {
-    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo()).expect(\"async tool failed\")"]
-    SleepDemo,
-}
-```
-
-**Shared runtime:**
-
-```rust
-#[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime)]
-enum Cli {
-    #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo()).expect(\"async tool failed\")"]
-    SleepDemo,
-}
-```
-
-`share_runtime` only applies when `reinvocation_safe` is true. When
-`reinvocation_safe` is false, tools run in subprocesses and `share_runtime` is
-ignored.
+When your CLI has async subcommands (e.g. using `tokio::sleep`, `tokio::spawn`), do async
+work inside your `run` function and call `clap_mcp::run_async_tool` from there. Configure
+`share_runtime` in `#[clap_mcp(...)]`: `false` (default) uses a dedicated thread per call;
+`true` shares the MCP server's tokio runtime. See **async_sleep** and **async_sleep_shared**
+for full examples.

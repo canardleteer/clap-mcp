@@ -2,9 +2,16 @@ use clap::Parser;
 use clap_mcp::{ClapMcp, clap_mcp_main, output_schema_one_of};
 
 #[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp_output_from = "run"]
 #[command(name = "macro-rules-pass", subcommand_required = true)]
 enum Cli {
     Foo,
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Foo => "foo".to_string(),
+    }
 }
 
 fn main() {

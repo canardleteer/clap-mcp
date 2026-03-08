@@ -92,91 +92,6 @@ fn expr_to_bool(expr: &Expr) -> bool {
     }
 }
 
-/// Parses `#[clap_mcp_output = "expr"]` from a variant's attributes.
-/// The value is a string literal containing Rust code; we parse it as an Expr.
-fn get_clap_mcp_output_expr(attrs: &[syn::Attribute]) -> Option<proc_macro2::TokenStream> {
-    for attr in attrs {
-        if !attr.path().is_ident("clap_mcp_output") {
-            continue;
-        }
-        if let Meta::NameValue(MetaNameValue { value, .. }) = &attr.meta {
-            if let Expr::Lit(lit) = value
-                && let Lit::Str(s) = &lit.lit
-                && let Ok(expr) = syn::parse_str::<Expr>(&s.value())
-            {
-                return Some(quote! { #expr });
-            }
-            // If it's a direct expression (not a string), use it as-is
-            return Some(quote! { #value });
-        }
-    }
-    None
-}
-
-/// Parses `#[clap_mcp_output_json = "expr"]` from a variant's attributes.
-/// Single attribute for structured JSON output (replaces clap_mcp_output_type + clap_mcp_output).
-fn get_clap_mcp_output_json(attrs: &[syn::Attribute]) -> Option<proc_macro2::TokenStream> {
-    for attr in attrs {
-        if !attr.path().is_ident("clap_mcp_output_json") {
-            continue;
-        }
-        if let Meta::NameValue(MetaNameValue { value, .. }) = &attr.meta {
-            if let Expr::Lit(lit) = value
-                && let Lit::Str(s) = &lit.lit
-                && let Ok(expr) = syn::parse_str::<Expr>(&s.value())
-            {
-                return Some(quote! { #expr });
-            }
-            return Some(quote! { #value });
-        }
-    }
-    None
-}
-
-/// Parses `#[clap_mcp_output_literal = "string"]` from a variant's attributes.
-/// Generates `"string".to_string()`.
-fn get_clap_mcp_output_literal(attrs: &[syn::Attribute]) -> Option<String> {
-    for attr in attrs {
-        if !attr.path().is_ident("clap_mcp_output_literal") {
-            continue;
-        }
-        if let Meta::NameValue(MetaNameValue { value, .. }) = &attr.meta
-            && let Expr::Lit(lit) = value
-            && let Lit::Str(s) = &lit.lit
-        {
-            return Some(s.value());
-        }
-    }
-    None
-}
-
-/// Parses `#[clap_mcp_error_type = "TypeName"]` from a variant's attributes.
-fn get_clap_mcp_error_type(attrs: &[syn::Attribute]) -> Option<syn::Ident> {
-    for attr in attrs {
-        if !attr.path().is_ident("clap_mcp_error_type") {
-            continue;
-        }
-        if let Meta::NameValue(MetaNameValue { value, .. }) = &attr.meta
-            && let Expr::Lit(lit) = value
-            && let Lit::Str(s) = &lit.lit
-            && let Ok(ident) = syn::parse_str::<syn::Ident>(&s.value())
-        {
-            return Some(ident);
-        }
-    }
-    None
-}
-
-/// Returns true if the variant has `#[clap_mcp_output_result]` (expression returns Result).
-fn has_clap_mcp_output_result(attrs: &[syn::Attribute]) -> bool {
-    for attr in attrs {
-        if attr.path().is_ident("clap_mcp_output_result") {
-            return true;
-        }
-    }
-    false
-}
-
 /// Returns true if the field has `#[command(subcommand)]`.
 fn field_has_command_subcommand(attrs: &[syn::Attribute]) -> bool {
     for attr in attrs {
@@ -521,29 +436,7 @@ fn is_option_type(ty: &Type) -> bool {
 /// The value is the path to a function (e.g. `"run"` or `"my_mod::run"`) that takes the CLI type
 /// by value and returns a type implementing `IntoClapMcpResult` (e.g. `String`, `AsStructured<T>`,
 /// `Option<O>`, `Result<O, E>`). The macro generates `execute_for_mcp(self)` as
-/// `run(self).into_tool_result()`. Per-variant output attributes are ignored when this is set.
-///
-/// ## `#[clap_mcp_output = "expr"]` (on each variant)
-///
-/// Rust expression (as a string) that produces the tool output. Use `format!(...)` for text.
-/// Variant field names are in scope.
-///
-/// ## `#[clap_mcp_output_json = "expr"]` (on variant)
-///
-/// Single attribute for structured JSON output. The expression must produce a `Serialize` type.
-///
-/// ## `#[clap_mcp_output_literal = "string"]` (on variant)
-///
-/// Shorthand for constant string output. Generates `"string".to_string()`.
-///
-/// ## `#[clap_mcp_output_result]` (on variant, with `clap_mcp_output` or `clap_mcp_output_json`)
-///
-/// When present, the expression returns `Result<T, E>`. `Ok(value)` produces normal output;
-/// `Err(e)` produces an MCP error response (`is_error: true`).
-///
-/// ## `#[clap_mcp_error_type = "TypeName"]` (on variant, with `clap_mcp_output_result`)
-///
-/// When present and `E: Serialize`, errors are serialized as structured JSON in the response.
+/// `run(self).into_tool_result()`. **Required** for enums.
 ///
 /// ## `#[clap_mcp_output_type = "TypeName"]` (on the enum, requires `output-schema` feature)
 ///
@@ -605,14 +498,9 @@ fn is_option_type(ty: &Type) -> bool {
     ClapMcp,
     attributes(
         clap_mcp,
-        clap_mcp_output,
         clap_mcp_output_from,
-        clap_mcp_output_json,
-        clap_mcp_output_literal,
-        clap_mcp_output_result,
         clap_mcp_output_type,
         clap_mcp_output_one_of,
-        clap_mcp_error_type,
         command,
         arg
     )
@@ -662,73 +550,23 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     };
 
     let executor_impl = match &input.data {
-        syn::Data::Enum(data) => {
-            if let Some(run_path) = get_clap_mcp_output_from(&input.attrs) {
-                quote! {
-                    impl clap_mcp::ClapMcpToolExecutor for #name {
-                        fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
-                            clap_mcp::IntoClapMcpResult::into_tool_result(#run_path(self))
-                        }
+        syn::Data::Enum(_data) => match get_clap_mcp_output_from(&input.attrs) {
+            Some(run_path) => quote! {
+                impl clap_mcp::ClapMcpToolExecutor for #name {
+                    fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+                        clap_mcp::IntoClapMcpResult::into_tool_result(#run_path(self))
                     }
                 }
-            } else {
-                let arms: Vec<proc_macro2::TokenStream> = data
-                    .variants
-                    .iter()
-                    .map(|v| {
-                        let variant_name = &v.ident;
-                        let (pat, output) = if v.fields.is_empty() {
-                            let pat = quote! { #name::#variant_name };
-                            let default_out = {
-                                let kebab = ident_to_kebab(&v.ident);
-                                let lit = syn::LitStr::new(&kebab, proc_macro2::Span::call_site());
-                                quote! { #lit.to_string() }
-                            };
-                            let out = build_output_expr(v, default_out);
-                            (pat, out)
-                        } else {
-                            let names: Vec<_> = v
-                                .fields
-                                .iter()
-                                .enumerate()
-                                .map(|(i, f)| {
-                                    f.ident.as_ref().cloned().unwrap_or_else(|| {
-                                        syn::Ident::new(
-                                            &format!("__f{}", i),
-                                            proc_macro2::Span::call_site(),
-                                        )
-                                    })
-                                })
-                                .collect();
-                            let pat = match &v.fields {
-                                syn::Fields::Named(_) => {
-                                    quote! { #name::#variant_name { #(#names),* } }
-                                }
-                                syn::Fields::Unnamed(_) => {
-                                    quote! { #name::#variant_name ( #(#names),* ) }
-                                }
-                                syn::Fields::Unit => unreachable!("unit variants handled above"),
-                            };
-                            let default_out = quote! { __clap_mcp_debug.clone() };
-                            let out = build_output_expr(v, default_out);
-                            (pat, out)
-                        };
-                        quote! { #pat => #output }
-                    })
-                    .collect();
-
-                quote! {
-                    impl clap_mcp::ClapMcpToolExecutor for #name {
-                        fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
-                            let __clap_mcp_debug = format!("{:?}", &self);
-                            match self {
-                                #(#arms),*
-                            }
-                        }
-                    }
-                }
+            },
+            None => {
+                let err = syn::Error::new_spanned(
+                    &input.ident,
+                    "clap_mcp: enum must have #[clap_mcp_output_from = \"run\"] (or another function path). \
+                         Implement a single `run(YourEnum) -> T` where T: IntoClapMcpResult and add the attribute on the enum.",
+                );
+                return TokenStream::from(err.to_compile_error());
             }
-        }
+        },
         syn::Data::Struct(data) => {
             let subcommand_field = data
                 .fields
@@ -1028,71 +866,6 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 #output_schema_assign
                 m
             }
-        }
-    }
-}
-
-/// Builds the output expression for a variant: produces `Result<ClapMcpToolOutput, ClapMcpToolError>`.
-/// For normal expressions: `Ok(Text(expr))` or `Ok(Structured(...))`.
-/// For `#[clap_mcp_output_result]`: `match expr { Ok(v) => Ok(...), Err(e) => Err(...) }`.
-fn build_output_expr(
-    v: &syn::Variant,
-    default: proc_macro2::TokenStream,
-) -> proc_macro2::TokenStream {
-    let output_expr = get_clap_mcp_output_json(&v.attrs)
-        .or_else(|| {
-            get_clap_mcp_output_literal(&v.attrs).map(|s| {
-                let lit = syn::LitStr::new(&s, proc_macro2::Span::call_site());
-                quote! { #lit.to_string() }
-            })
-        })
-        .or_else(|| get_clap_mcp_output_expr(&v.attrs))
-        .unwrap_or(default);
-    let is_structured = get_clap_mcp_output_json(&v.attrs).is_some();
-    let is_result = has_clap_mcp_output_result(&v.attrs);
-    let error_type = get_clap_mcp_error_type(&v.attrs);
-
-    let success_output = if is_structured {
-        quote! {
-            clap_mcp::ClapMcpToolOutput::Structured(::serde_json::to_value(v).expect("structured output must serialize"))
-        }
-    } else {
-        quote! {
-            clap_mcp::ClapMcpToolOutput::Text(v)
-        }
-    };
-
-    if is_result {
-        let err_conversion = if error_type.is_some() {
-            quote! {
-                clap_mcp::ClapMcpToolError::structured(
-                    format!("{:?}", e),
-                    ::serde_json::to_value(&e).unwrap_or_else(|_| ::serde_json::Value::String(format!("{:?}", e)))
-                )
-            }
-        } else {
-            quote! {
-                clap_mcp::ClapMcpToolError::text(format!("{:?}", e))
-            }
-        };
-        quote! {
-            match #output_expr {
-                Ok(v) => Ok(#success_output),
-                Err(e) => Err(#err_conversion),
-            }
-        }
-    } else {
-        let normal_output = if is_structured {
-            quote! {
-                clap_mcp::ClapMcpToolOutput::Structured(::serde_json::to_value(#output_expr).expect("structured output must serialize"))
-            }
-        } else {
-            quote! {
-                clap_mcp::ClapMcpToolOutput::Text(#output_expr)
-            }
-        };
-        quote! {
-            Ok(#normal_output)
         }
     }
 }
