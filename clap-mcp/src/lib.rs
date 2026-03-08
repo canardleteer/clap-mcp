@@ -115,7 +115,12 @@ pub const MCP_RESOURCE_URI_SCHEMA: &str = "clap://schema";
 ///
 /// #[derive(Debug, Parser, ClapMcp)]
 /// #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+/// #[clap_mcp_output_from = "run"]
 /// enum MyCli { Foo }
+///
+/// fn run(cmd: MyCli) -> String {
+///     match cmd { MyCli::Foo => "ok".to_string() }
+/// }
 ///
 /// let config = MyCli::clap_mcp_config();
 /// assert!(config.reinvocation_safe);
@@ -141,16 +146,16 @@ pub trait ClapMcpRunnable {
     fn run(self) -> String;
 }
 
-/// Error produced when a tool's `#[clap_mcp_output]` expression evaluates to `Err`.
+/// Error produced when a tool's `run` function returns `Err(e)` (e.g. `Result<O, E>`).
 ///
-/// When using `#[clap_mcp_output_result]` with `Result<T, E>` expressions, `Err(e)` yields
-/// this type. Use `#[clap_mcp_error_type = "TypeName"]` to enable structured error
-/// serialization when `E: Serialize`.
+/// When your `run` returns `Result<O, E>`, `Err(e)` is converted via [`IntoClapMcpToolError`]
+/// into this type. Implement that trait for your error type to get structured JSON in the
+/// response when `E: Serialize`.
 #[derive(Debug, Clone)]
 pub struct ClapMcpToolError {
     /// Human-readable error message for MCP content.
     pub message: String,
-    /// Optional structured JSON when `#[clap_mcp_error_type]` is used and `E: Serialize`.
+    /// Optional structured JSON when `E: Serialize` and [`IntoClapMcpToolError`] provides it.
     pub structured: Option<serde_json::Value>,
 }
 
@@ -275,28 +280,6 @@ impl<O: IntoClapMcpResult, E: IntoClapMcpToolError> IntoClapMcpResult for Result
     }
 }
 
-/// Helper for unwrapping `Option` in per-variant `#[clap_mcp_output]` expressions.
-///
-/// **For new code**, prefer `#[clap_mcp_output_from = "run"]` and use
-/// `name.as_deref().unwrap_or("default")` (or similar) inside your `run` function,
-/// so CLI and MCP share one implementation. This helper exists for legacy or
-/// per-variant inline expressions when `output_from` is not used.
-///
-/// # Example
-///
-/// ```rust
-/// use clap_mcp::opt_str;
-///
-/// let name: Option<String> = Some("Alice".into());
-/// assert_eq!(opt_str(&name, "world"), "Alice");
-///
-/// let none: Option<String> = None;
-/// assert_eq!(opt_str(&none, "world"), "world");
-/// ```
-pub fn opt_str<'a, T: AsRef<str>>(opt: &'a Option<T>, default: &'a str) -> &'a str {
-    opt.as_ref().map(|s| s.as_ref()).unwrap_or(default)
-}
-
 /// Runs a closure with stdout captured. Returns `(result, captured_stdout)`.
 /// Unix-only; on Windows returns empty captured string.
 #[cfg(unix)]
@@ -364,7 +347,7 @@ where
 ///
 /// Use `Text` for plain string output; use `Structured` for serializable JSON
 /// (e.g. when using `#[clap_mcp_output_from = "run"]` with `AsStructured<T>`, or
-/// per-variant `#[clap_mcp_output_json = "expr"]`).
+/// (e.g. when using `#[clap_mcp_output_from = "run"]` with `AsStructured<T>`).
 ///
 /// # Example
 ///
@@ -445,15 +428,9 @@ impl ClapMcpToolOutput {
 ///
 /// Implemented by the `#[derive(ClapMcp)]` macro. Used for in-process execution.
 ///
-/// When using **`#[clap_mcp_output_from = "run"]`** on the enum (recommended), the macro
+/// When using **`#[clap_mcp_output_from = "run"]`** on the enum (required), the macro
 /// implements this trait by calling `run(self)` and converting the result via [`IntoClapMcpResult`].
-/// That way CLI and MCP share a single implementation.
-///
-/// When not using `output_from`, per-variant attributes apply: `#[clap_mcp_output = "expr"]`
-/// for text, or `#[clap_mcp_output_json = "expr"]` for structured JSON (see crate docs).
-///
-/// When using `#[clap_mcp_output_result]` with `Result<T, E>` expressions, `Err(e)` yields
-/// [`ClapMcpToolError`] and the MCP client receives an error response (`is_error: true`).
+/// CLI and MCP share a single implementation.
 pub trait ClapMcpToolExecutor {
     fn execute_for_mcp(self) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError>;
 }
@@ -2513,9 +2490,7 @@ pub fn serve_schema_json_over_stdio_blocking(
 /// Runs an async future for MCP tool execution, respecting `share_runtime` in config.
 ///
 /// **Idiomatic approach:** with `#[clap_mcp_output_from = "run"]`, do async work inside your
-/// `run` function (e.g. use a runtime handle or `#[tokio::main]` in tests). Use this
-/// function only when you need async in **per-variant** `#[clap_mcp_output]` /
-/// `#[clap_mcp_output_json]` (i.e. when not using `output_from`). The closure must return
+/// `run` function (e.g. use a runtime handle or call this function). The closure must return
 /// a `Future` that produces the tool output.
 ///
 /// Returns [`Ok`] with the future's output, or [`Err`](ClapMcpError) if the runtime could
@@ -2533,14 +2508,13 @@ pub fn serve_schema_json_over_stdio_blocking(
 /// When `share_runtime` is true, uses `block_in_place` + `block_on` so the async
 /// work runs on the MCP server's multi-thread runtime without deadlock.
 ///
-/// # Example (per-variant usage when not using `output_from`)
+/// # Example (async inside `run`)
 ///
 /// ```rust,ignore
-/// #[derive(Parser, ClapMcp)]
-/// #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
-/// enum Cli {
-///     #[clap_mcp_output_json = "clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || run_sleep_demo()).expect(\"async tool failed\")"]
-///     SleepDemo,
+/// fn run(cmd: Cli) -> SleepResult {
+///     match cmd {
+///         Cli::SleepDemo => clap_mcp::run_async_tool(&Cli::clap_mcp_config(), run_sleep_demo).expect("async tool failed"),
+///     }
 /// }
 /// ```
 pub fn run_async_tool<Fut, O>(

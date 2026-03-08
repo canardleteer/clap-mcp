@@ -1,6 +1,7 @@
 //! Tests for ClapMcpConfig and configuration possibilities.
 
 use clap::{CommandFactory, Parser, Subcommand};
+use clap_mcp::AsStructured;
 use clap_mcp::ClapMcp;
 use clap_mcp::{
     ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpSchemaMetadata,
@@ -13,31 +14,58 @@ use serde::Serialize;
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+#[clap_mcp_output_from = "run_defaults"]
 #[command(name = "test-cli")]
 enum TestCliDefaults {
     Foo,
 }
 
+fn run_defaults(cmd: TestCliDefaults) -> String {
+    match cmd {
+        TestCliDefaults::Foo => "foo".to_string(),
+    }
+}
+
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe)]
+#[clap_mcp_output_from = "run_both_true"]
 #[command(name = "test-cli-both-true")]
 enum TestCliBothTrue {
     Bar,
 }
 
+fn run_both_true(cmd: TestCliBothTrue) -> String {
+    match cmd {
+        TestCliBothTrue::Bar => "bar".to_string(),
+    }
+}
+
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe = false, parallel_safe = true)]
+#[clap_mcp_output_from = "run_parallel_only"]
 #[command(name = "test-cli-parallel-only")]
 enum TestCliParallelOnly {
     Baz,
 }
 
+fn run_parallel_only(cmd: TestCliParallelOnly) -> String {
+    match cmd {
+        TestCliParallelOnly::Baz => "baz".to_string(),
+    }
+}
+
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_reinvoke_only"]
 #[command(name = "test-cli-reinvoke-only")]
 enum TestCliReinvokeOnly {
-    #[clap_mcp_output = "format!(\"result: {}\", x)"]
     Qux { x: i32 },
+}
+
+fn run_reinvoke_only(cmd: TestCliReinvokeOnly) -> String {
+    match cmd {
+        TestCliReinvokeOnly::Qux { x } => format!("result: {}", x),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -49,10 +77,20 @@ struct SubResult {
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = false)]
+#[clap_mcp_output_from = "run_structured"]
 #[command(name = "test-cli-structured")]
 enum TestCliStructured {
-    #[clap_mcp_output_json = "SubResult { difference: a - b, minuend: a, subtrahend: b }"]
     Sub { a: i32, b: i32 },
+}
+
+fn run_structured(cmd: TestCliStructured) -> AsStructured<SubResult> {
+    match cmd {
+        TestCliStructured::Sub { a, b } => AsStructured(SubResult {
+            difference: a - b,
+            minuend: a,
+            subtrahend: b,
+        }),
+    }
 }
 
 // --- #[clap_mcp_output_from = "run"] ---
@@ -112,9 +150,16 @@ impl clap_mcp::IntoClapMcpResult for OutputFromResult {
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime)]
+#[clap_mcp_output_from = "run_share_runtime"]
 #[command(name = "test-cli-share-runtime")]
 enum TestCliShareRuntime {
     Foo,
+}
+
+fn run_share_runtime(cmd: TestCliShareRuntime) -> String {
+    match cmd {
+        TestCliShareRuntime::Foo => "foo".to_string(),
+    }
 }
 
 // Struct root with required subcommand
@@ -127,9 +172,15 @@ struct TestStructCli {
 }
 
 #[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp_output_from = "run_struct_commands"]
 enum TestStructCommands {
-    #[clap_mcp_output = "format!(\"sum: {}\", a + b)"]
     Add { a: i32, b: i32 },
+}
+
+fn run_struct_commands(cmd: TestStructCommands) -> String {
+    match cmd {
+        TestStructCommands::Add { a, b } => format!("sum: {}", a + b),
+    }
 }
 
 // Struct root with optional subcommand
@@ -142,9 +193,15 @@ struct TestStructOptionalCli {
 }
 
 #[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp_output_from = "run_struct_optional_commands"]
 enum TestStructOptionalCommands {
-    #[clap_mcp_output_literal = "done"]
     Done,
+}
+
+fn run_struct_optional_commands(cmd: TestStructOptionalCommands) -> String {
+    match cmd {
+        TestStructOptionalCommands::Done => "done".to_string(),
+    }
 }
 
 // Root struct with #[clap_mcp(skip_root_when_subcommands)] — root excluded from MCP tool list via derive
@@ -302,7 +359,7 @@ fn test_clap_mcp_runnable() {
 #[test]
 fn test_clap_mcp_runnable_default_debug() {
     let result = TestCliDefaults::Foo.run();
-    // Unit variants without #[clap_mcp_output] default to kebab-case variant name
+    // With output_from, run_defaults returns "foo"
     assert_eq!(result, "foo");
 }
 
@@ -498,21 +555,25 @@ struct TestRootSkip {
 }
 
 #[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp_output_from = "run_root_skip_commands"]
 enum TestRootSkipCommands {
-    #[clap_mcp_output_literal = "ok"]
     Foo,
+}
+
+fn run_root_skip_commands(cmd: TestRootSkipCommands) -> String {
+    match cmd {
+        TestRootSkipCommands::Foo => "ok".to_string(),
+    }
 }
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_skip_requires"]
 #[command(name = "test-skip-requires")]
 enum TestSkipRequires {
-    #[clap_mcp_output_literal = "exposed"]
     Exposed,
     #[clap_mcp(skip)]
-    #[clap_mcp_output_literal = "hidden"]
     Hidden,
-    #[clap_mcp_output = "format!(\"path: {:?}\", path)"]
     Read {
         #[clap_mcp(requires)]
         #[arg(long)]
@@ -520,7 +581,6 @@ enum TestSkipRequires {
     },
     /// Variant-level requires: path and input become required in MCP
     #[clap_mcp(requires = "path, input")]
-    #[clap_mcp_output = "format!(\"path={}, input={}\", clap_mcp::opt_str(&path, \"\"), clap_mcp::opt_str(&input, \"\"))"]
     Process {
         #[arg(long)]
         path: Option<String>,
@@ -529,8 +589,23 @@ enum TestSkipRequires {
     },
     /// Single optional positional made required in MCP via variant-level requires = "versions"
     #[clap_mcp(requires = "versions")]
-    #[clap_mcp_output = "format!(\"versions: {:?}\", versions)"]
-    Sort { versions: Option<String> },
+    Sort {
+        versions: Option<String>,
+    },
+}
+
+fn run_skip_requires(cmd: TestSkipRequires) -> String {
+    match cmd {
+        TestSkipRequires::Exposed => "exposed".to_string(),
+        TestSkipRequires::Hidden => "hidden".to_string(),
+        TestSkipRequires::Read { path } => format!("path: {:?}", path),
+        TestSkipRequires::Process { path, input } => format!(
+            "path={}, input={}",
+            path.as_deref().unwrap_or(""),
+            input.as_deref().unwrap_or("")
+        ),
+        TestSkipRequires::Sort { versions } => format!("versions: {:?}", versions),
+    }
 }
 
 #[test]
@@ -640,24 +715,34 @@ fn test_clap_mcp_requires_arg_single_positional() {
     );
 }
 
-// --- #[clap_mcp_output_result] Result<T, E> support ---
+// --- #[clap_mcp_output_from] Result<T, E> support ---
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_result"]
 #[command(name = "test-cli-result")]
 enum TestCliResult {
-    #[clap_mcp_output_result]
-    #[clap_mcp_output = "if n >= 0 { Ok(format!(\"sqrt ~{}\", n)) } else { Err(format!(\"negative: {}\", n)) }"]
     Sqrt {
         #[arg(long)]
         n: i32,
     },
-    #[clap_mcp_output_result]
-    #[clap_mcp_output = "Ok::<_, String>(format!(\"double: {}\", x * 2))"]
     Double {
         #[arg(long)]
         x: i32,
     },
+}
+
+fn run_result(cmd: TestCliResult) -> Result<String, String> {
+    match cmd {
+        TestCliResult::Sqrt { n } => {
+            if n >= 0 {
+                Ok(format!("sqrt ~{}", n))
+            } else {
+                Err(format!("negative: {}", n))
+            }
+        }
+        TestCliResult::Double { x } => Ok(format!("double: {}", x * 2)),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -668,15 +753,38 @@ struct MyError {
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_result_structured_error"]
 #[command(name = "test-cli-result-structured-error")]
 enum TestCliResultStructuredError {
-    #[clap_mcp_output_result]
-    #[clap_mcp_error_type = "MyError"]
-    #[clap_mcp_output = "if x > 0 { Ok(format!(\"ok: {}\", x)) } else { Err(MyError { code: -1, msg: format!(\"invalid: {}\", x) }) }"]
     Check {
         #[arg(long)]
         x: i32,
     },
+}
+
+impl clap_mcp::IntoClapMcpToolError for MyError {
+    fn into_tool_error(self) -> clap_mcp::ClapMcpToolError {
+        clap_mcp::ClapMcpToolError::structured(
+            format!("{:?}", self),
+            serde_json::to_value(&self)
+                .unwrap_or_else(|_| serde_json::Value::String(format!("{:?}", self))),
+        )
+    }
+}
+
+fn run_result_structured_error(cmd: TestCliResultStructuredError) -> Result<String, MyError> {
+    match cmd {
+        TestCliResultStructuredError::Check { x } => {
+            if x > 0 {
+                Ok(format!("ok: {}", x))
+            } else {
+                Err(MyError {
+                    code: -1,
+                    msg: format!("invalid: {}", x),
+                })
+            }
+        }
+    }
 }
 
 #[test]
@@ -757,10 +865,18 @@ struct OutputSchemaTestType {
 #[cfg(feature = "output-schema")]
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_output_schema"]
 #[clap_mcp_output_type = "OutputSchemaTestType"]
 #[command(name = "test-cli-output-schema")]
 enum TestCliOutputSchema {
     Foo { _x: i32 },
+}
+
+#[cfg(feature = "output-schema")]
+fn run_output_schema(cmd: TestCliOutputSchema) -> String {
+    match cmd {
+        TestCliOutputSchema::Foo { _x } => "output_schema_test".to_string(),
+    }
 }
 
 #[cfg(feature = "output-schema")]
