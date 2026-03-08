@@ -705,7 +705,7 @@ impl ClapCommand {
 }
 
 /// Arg IDs that are omitted from MCP tool arguments (built-in / default options).
-fn is_builtin_arg(id: &str) -> bool {
+pub(crate) fn is_builtin_arg(id: &str) -> bool {
     matches!(
         id,
         "help" | "version" | MCP_FLAG_LONG | EXPORT_SKILLS_FLAG_LONG
@@ -1015,8 +1015,15 @@ pub fn command_with_mcp_and_export_skills_flags(cmd: Command) -> Command {
 /// Returns true if argv contains `--mcp` and no token is a root-level subcommand name.
 /// Used to start MCP server before calling get_matches() when subcommand_required would otherwise fail.
 fn argv_requests_mcp_without_subcommand(cmd: &Command) -> bool {
-    let argv: Vec<String> = std::env::args().collect();
-    let args = &argv[1..];
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    argv_requests_mcp_without_subcommand_from_args(&args, cmd)
+}
+
+/// Pure helper for argv_requests_mcp_without_subcommand; testable with arbitrary args.
+pub(crate) fn argv_requests_mcp_without_subcommand_from_args(
+    args: &[String],
+    cmd: &Command,
+) -> bool {
     let subcommand_names: std::collections::HashSet<String> = cmd
         .get_subcommands()
         .map(|s| s.get_name().to_string())
@@ -1029,8 +1036,14 @@ fn argv_requests_mcp_without_subcommand(cmd: &Command) -> bool {
 /// Returns `Some(None)` if argv contains `--export-skills` with no value (use default dir),
 /// `Some(Some(path))` if `--export-skills=DIR` is present, and `None` if the flag is not present.
 fn argv_export_skills_dir() -> Option<Option<std::path::PathBuf>> {
-    let argv: Vec<String> = std::env::args().collect();
-    let args = &argv[1..];
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    argv_export_skills_dir_from_args(&args)
+}
+
+/// Pure helper for argv_export_skills_dir; testable with arbitrary args.
+pub(crate) fn argv_export_skills_dir_from_args(
+    args: &[String],
+) -> Option<Option<std::path::PathBuf>> {
     for (i, arg) in args.iter().enumerate() {
         if arg == "--export-skills" {
             return Some(
@@ -1343,14 +1356,16 @@ where
 ///
 /// #[derive(Parser, ClapMcp)]
 /// #[clap_mcp(reinvocation_safe, parallel_safe = false)]
-/// enum Cli {
-///     #[clap_mcp_output_literal = "done"]
-///     Foo,
+/// #[clap_mcp_output_from = "run"]
+/// enum Cli { Foo }
+///
+/// fn run(cmd: Cli) -> String {
+///     match cmd { Cli::Foo => "done".to_string() }
 /// }
 ///
 /// fn main() {
 ///     let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
-///     match cli { Cli::Foo => println!("done") }
+///     println!("{}", run(cli));
 /// }
 /// ```
 pub fn parse_or_serve_mcp_attr<T>() -> T
@@ -2935,6 +2950,117 @@ mod tests {
             .filter(|arg| arg.get_long() == Some(EXPORT_SKILLS_FLAG_LONG))
             .count();
         assert_eq!(export_args, 1);
+
+        let cmd = command_with_mcp_and_export_skills_flags(Command::new("bare"));
+        assert_eq!(
+            cmd.get_arguments()
+                .filter(|arg| arg.get_long() == Some(MCP_FLAG_LONG))
+                .count(),
+            1
+        );
+        assert_eq!(
+            cmd.get_arguments()
+                .filter(|arg| arg.get_long() == Some(EXPORT_SKILLS_FLAG_LONG))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_argv_export_skills_dir_from_args() {
+        assert!(argv_export_skills_dir_from_args(&[]).is_none());
+        assert!(argv_export_skills_dir_from_args(&["--other".to_string()]).is_none());
+        assert_eq!(
+            argv_export_skills_dir_from_args(&["--export-skills".to_string()]),
+            Some(None)
+        );
+        assert_eq!(
+            argv_export_skills_dir_from_args(&["--export-skills".to_string(), "/path".to_string()]),
+            Some(Some(std::path::PathBuf::from("/path")))
+        );
+        assert_eq!(
+            argv_export_skills_dir_from_args(&["--export-skills".to_string(), "--mcp".to_string()]),
+            Some(None)
+        );
+        assert_eq!(
+            argv_export_skills_dir_from_args(&["--export-skills=/out".to_string()]),
+            Some(Some(std::path::PathBuf::from("/out")))
+        );
+    }
+
+    #[test]
+    fn test_argv_requests_mcp_without_subcommand_from_args() {
+        let cmd = Command::new("app").subcommand(Command::new("run"));
+        assert!(argv_requests_mcp_without_subcommand_from_args(
+            &["--mcp".to_string()],
+            &cmd
+        ));
+        assert!(!argv_requests_mcp_without_subcommand_from_args(
+            &["--mcp".to_string(), "run".to_string()],
+            &cmd
+        ));
+        assert!(!argv_requests_mcp_without_subcommand_from_args(
+            &["run".to_string()],
+            &cmd
+        ));
+        assert!(!argv_requests_mcp_without_subcommand_from_args(&[], &cmd));
+    }
+
+    #[test]
+    fn test_is_builtin_arg() {
+        assert!(is_builtin_arg("help"));
+        assert!(is_builtin_arg("version"));
+        assert!(is_builtin_arg(MCP_FLAG_LONG));
+        assert!(is_builtin_arg(EXPORT_SKILLS_FLAG_LONG));
+        assert!(!is_builtin_arg("input"));
+        assert!(!is_builtin_arg("path"));
+    }
+
+    #[test]
+    fn test_tools_from_schema_wrapper() {
+        let schema = sample_helper_schema();
+        let tools = tools_from_schema(&schema);
+        assert!(!tools.is_empty());
+    }
+
+    #[test]
+    fn test_command_path_and_build_argv_for_clap() {
+        let schema = nested_schema();
+        assert_eq!(command_path(&schema, "sample"), Some(vec!["sample".into()]));
+        assert_eq!(
+            command_path(&schema, "child"),
+            Some(vec!["sample".into(), "parent".into(), "child".into()])
+        );
+        assert_eq!(command_path(&schema, "nonexistent"), None);
+
+        let args = serde_json::Map::from_iter([("value".to_string(), json!("v"))]);
+        let argv = build_argv_for_clap(&schema, "child", args);
+        assert_eq!(argv[0], "cli");
+        assert_eq!(argv[1], "parent");
+        assert_eq!(argv[2], "child");
+        assert!(argv.contains(&"--value".to_string()));
+        assert!(argv.contains(&"v".to_string()));
+
+        let empty_argv = build_tool_argv(&schema, "nonexistent", serde_json::Map::new());
+        assert!(empty_argv.is_empty());
+    }
+
+    #[cfg(not(feature = "output-schema"))]
+    #[test]
+    fn test_output_schema_for_type_without_schemars() {
+        assert!(output_schema_for_type::<()>().is_none());
+    }
+
+    #[cfg(feature = "output-schema")]
+    #[test]
+    fn test_output_schema_for_type_with_schemars() {
+        use schemars::JsonSchema;
+        #[derive(JsonSchema)]
+        struct Dummy {
+            _x: i32,
+        }
+        let schema = output_schema_for_type::<Dummy>();
+        assert!(schema.is_some());
     }
 
     #[tokio::test]
