@@ -54,11 +54,13 @@ fn run(cmd: Cli) -> Output {
 }
 
 fn main() {
-    let mut serve_options = ClapMcpServeOptions::default();
     #[cfg(unix)]
-    {
-        serve_options.capture_stdout = true;
-    }
+    let serve_options = ClapMcpServeOptions {
+        capture_stdout: true,
+        ..Default::default()
+    };
+    #[cfg(not(unix))]
+    let serve_options = ClapMcpServeOptions::default();
     let cli = clap_mcp::parse_or_serve_mcp_with_config_and_options::<Cli>(
         Cli::clap_mcp_config(),
         serve_options,
