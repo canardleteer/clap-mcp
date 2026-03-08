@@ -99,10 +99,10 @@ cargo run -p clap-mcp-examples --bin subcommands -- --mcp
 ### struct_subcommand
 
 Struct root with `#[command(subcommand)]`, optional subcommand
-(`Option<Commands>`), and `#[clap_mcp(...)]` on the struct. Output attributes
-live on the subcommand enum variants. Also demonstrates **root-level
-`#[clap_mcp(skip)]`**: the `--out` option is available to the CLI but hidden
-from MCP tool schemas.
+(`Option<Commands>`), and `#[clap_mcp(...)]` on the struct. Output is defined
+via `#[clap_mcp_output_from = "run"]` and a single `run` function on the
+subcommand enum. Also demonstrates **root-level `#[clap_mcp(skip)]`**: the
+`--out` option is available to the CLI but hidden from MCP tool schemas.
 
 ```bash
 # Normal CLI usage (no subcommand)

@@ -24,6 +24,23 @@ Run all tests (including feature-gated logging tests):
 cargo test --all-features
 ```
 
+### Code coverage
+
+Coverage is measured with [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov). Install and run:
+
+```bash
+cargo install cargo-llvm-cov
+cargo llvm-cov test --workspace --all-features --summary-only
+```
+
+For an HTML report (opens in browser):
+
+```bash
+cargo llvm-cov test --workspace --all-features --html
+```
+
+Coverage focuses on the `clap-mcp` and `clap-mcp-macros` crates; the `examples` crate is excluded from coverage targets.
+
 Release prep includes building and running all example binaries (CI runs each
 with `--help` as a smoke test); see [examples/README.md](examples/README.md).
 
@@ -56,7 +73,7 @@ Add `clap-mcp` to your `Cargo.toml` (the default `derive` feature includes the m
 
 ```toml
 [dependencies]
-clap-mcp = "0.0.2-rc.3"
+clap-mcp = "0.0.3-rc.1"
 ```
 
 For derive usage, `use clap_mcp::ClapMcp` so you can write `#[derive(ClapMcp)]`.
@@ -106,7 +123,7 @@ fn run(cmd: Cli) -> String {
 
 fn main() {
     let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
-    // Normal CLI logic here...
+    println!("{}", run(cli));
 }
 ```
 
@@ -133,7 +150,10 @@ fn run(cmd: Cli) -> String {
     }
 }
 
-let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+fn main() {
+    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+    println!("{}", run(cli));
+}
 ```
 
 ### Struct root with subcommand
@@ -191,7 +211,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-clap-mcp = { version = "0.0.2-rc.3", features = ["tracing"] }
+clap-mcp = { version = "0.0.3-rc.1", features = ["tracing"] }
 ```
 
 ## Custom resources and prompts
@@ -358,15 +378,22 @@ fn run(cmd: Cli) -> String {
 }
 ```
 
-**Skip:** (subcommands or variant-level)
+**Skip:** (subcommands or variant-level) use `#[clap_mcp(skip)]` so a variant is hidden from MCP; pair with `#[clap_mcp_output_from = "run"]` and a single `run` for the exposed variants.
 ```rust
 #[derive(Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run"]
 enum Cli {
-    #[clap_mcp_output_literal = "ok"]
     Public,
     #[clap_mcp(skip)]
-    #[clap_mcp_output_literal = "hidden"]
     Internal,
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Public => "ok".to_string(),
+        Cli::Internal => "hidden".to_string(),
+    }
 }
 ```
 
@@ -510,7 +537,7 @@ Use the same `run` in `main` so CLI and MCP share the same logic.
 
 **Recommended pattern for CLIs with multiple subcommands:** have `run` return `Result<AsStructured<SubcommandResult>, ApplicationError>` and use `#[clap_mcp_output_from = "run"]`. Implement [`IntoClapMcpToolError`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.IntoClapMcpToolError.html) for your application error type and cover **all** error variants (e.g. `InvalidArgument`, validation errors, I/O errors) in that single impl so MCP error responses are consistent across tools.
 
-When using `output_from`, you do **not** need `#[clap_mcp_output_result]`. That attribute is only for per-variant output when you are not using `output_from`. For `run() -> Result<O, E>`, ensure `E: IntoClapMcpToolError` and the macro will convert the return value automatically.
+For `run() -> Result<O, E>`, ensure `E: IntoClapMcpToolError` and the macro will convert the return value automatically.
 
 **Example:**
 
