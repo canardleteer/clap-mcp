@@ -391,7 +391,10 @@ async fn subprocess_and_direct_server_paths_return_expected_text() {
     client.shut_down().await.expect("shutdown should succeed");
 }
 
+// Stdout capture and merge is Unix-only (run_with_stdout_capture is a no-op on Windows).
+// The capture_stdout example also enables capture_stdout only on Unix, so skip this test on Windows.
 #[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
 async fn capture_stdout_merges_only_text_outputs() {
     let client = launch_example("capture_stdout")
         .await
