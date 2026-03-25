@@ -454,7 +454,7 @@ mod tests {
             "description".to_string(),
             serde_json::json!("How many items to process"),
         );
-        let mut properties = std::collections::HashMap::new();
+        let mut properties = std::collections::BTreeMap::new();
         properties.insert("count".to_string(), count_property);
         Tool {
             name: name.to_string(),

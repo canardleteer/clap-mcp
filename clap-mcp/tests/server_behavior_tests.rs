@@ -93,6 +93,7 @@ async fn launch_example(bin: &str) -> SdkResult<Arc<ClientRuntime>> {
         handler: NoOpHandler.to_mcp_client_handler(),
         task_store: None,
         server_task_store: None,
+        message_observer: None,
     });
     client.clone().start().await?;
     Ok(client)
