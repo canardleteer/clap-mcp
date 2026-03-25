@@ -48,7 +48,7 @@ use rust_mcp_sdk::{
     },
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 
 #[cfg(any(feature = "tracing", feature = "log"))]
 pub mod logging;
@@ -797,8 +797,8 @@ fn command_to_tool_with_config(
         .filter(|a| !is_builtin_arg(a.id.as_str()))
         .collect();
 
-    let mut properties: HashMap<String, serde_json::Map<String, serde_json::Value>> =
-        HashMap::new();
+    let mut properties: BTreeMap<String, serde_json::Map<String, serde_json::Value>> =
+        BTreeMap::new();
     for arg in &args {
         let mut prop = serde_json::Map::new();
         let (json_type, items) = mcp_type_for_arg(arg);
@@ -2457,6 +2457,7 @@ pub async fn serve_schema_json_over_stdio(
         handler,
         task_store: None,
         client_task_store: None,
+        message_observer: None,
     });
 
     server.start().await?;
@@ -3195,7 +3196,7 @@ mod tests {
             &prompts,
             GetPromptRequestParams {
                 name: "dynamic".to_string(),
-                arguments: Some(std::collections::HashMap::from([(
+                arguments: Some(std::collections::BTreeMap::from([(
                     "topic".to_string(),
                     "coverage".to_string(),
                 )])),

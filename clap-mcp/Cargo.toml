@@ -22,7 +22,7 @@ log = ["dep:log"]
 [dependencies]
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
-rust-mcp-sdk = { version = "0.8.3", default-features = false, features = ["server", "client", "stdio"] }
+rust-mcp-sdk = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
