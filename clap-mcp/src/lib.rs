@@ -435,6 +435,13 @@ pub trait ClapMcpToolExecutor {
     fn execute_for_mcp(self) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError>;
 }
 
+pub trait ClapMcpToolExecutorWithState<S> {
+    fn execute_for_mcp_with_state(
+        self,
+        state: &std::sync::Arc<S>,
+    ) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError>;
+}
+
 impl<T: ClapMcpToolExecutor> ClapMcpRunnable for T {
     fn run(self) -> String {
         self.execute_for_mcp()
@@ -1381,6 +1388,25 @@ where
     parse_or_serve_mcp_with_config::<T>(T::clap_mcp_config())
 }
 
+pub fn parse_or_serve_mcp_attr_with_state<T, S>(state: std::sync::Arc<S>) -> T
+where
+    T: ClapMcpConfigProvider
+        + ClapMcpSchemaMetadataProvider
+        + ClapMcpToolExecutor
+        + ClapMcpToolExecutorWithState<S>
+        + clap::Parser
+        + clap::CommandFactory
+        + clap::FromArgMatches
+        + 'static,
+    S: Send + Sync + 'static,
+{
+    parse_or_serve_mcp_with_config_and_options_with_state::<T, S>(
+        T::clap_mcp_config(),
+        ClapMcpServeOptions::default(),
+        state,
+    )
+}
+
 /// Run parsed CLI through a closure, or serve MCP if `--mcp` is present.
 ///
 /// If `--mcp` is passed, starts the MCP server and does not return. Otherwise,
@@ -1433,6 +1459,39 @@ where
 /// Use `serve_options.log_rx` to forward log messages to the MCP client.
 /// See [`ClapMcpServeOptions`] and the `logging` module.
 pub fn parse_or_serve_mcp_with_config_and_options<T>(
+    config: ClapMcpConfig,
+    serve_options: ClapMcpServeOptions,
+) -> T
+where
+    T: ClapMcpSchemaMetadataProvider
+        + ClapMcpToolExecutor
+        + clap::Parser
+        + clap::CommandFactory
+        + clap::FromArgMatches
+        + 'static,
+{
+    parse_or_serve_mcp_with_config_and_options_stateless::<T>(config, serve_options)
+}
+
+pub fn parse_or_serve_mcp_with_config_and_options_with_state<T, S>(
+    config: ClapMcpConfig,
+    serve_options: ClapMcpServeOptions,
+    state: std::sync::Arc<S>,
+) -> T
+where
+    T: ClapMcpSchemaMetadataProvider
+        + ClapMcpToolExecutor
+        + ClapMcpToolExecutorWithState<S>
+        + clap::Parser
+        + clap::CommandFactory
+        + clap::FromArgMatches
+        + 'static,
+    S: Send + Sync + 'static,
+{
+    parse_or_serve_mcp_with_config_and_options_stateful::<T, S>(config, serve_options, state)
+}
+
+fn parse_or_serve_mcp_with_config_and_options_stateless<T>(
     config: ClapMcpConfig,
     serve_options: ClapMcpServeOptions,
 ) -> T
@@ -1536,6 +1595,131 @@ where
         if let Err(e) = serve_schema_json_over_stdio_blocking(
             schema_json,
             if config.reinvocation_safe { None } else { exe },
+            config,
+            in_process_handler,
+            serve_options,
+            &metadata,
+        ) {
+            eprintln!("MCP server error: {}", e);
+            std::process::exit(1);
+        }
+
+        std::process::exit(0);
+    }
+
+    T::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+}
+
+fn parse_or_serve_mcp_with_config_and_options_stateful<T, S>(
+    config: ClapMcpConfig,
+    serve_options: ClapMcpServeOptions,
+    state: std::sync::Arc<S>,
+) -> T
+where
+    T: ClapMcpSchemaMetadataProvider
+        + ClapMcpToolExecutor
+        + ClapMcpToolExecutorWithState<S>
+        + clap::Parser
+        + clap::CommandFactory
+        + clap::FromArgMatches
+        + 'static,
+    S: Send + Sync + 'static,
+{
+    let mut cmd = T::command();
+    cmd = command_with_mcp_and_export_skills_flags(cmd);
+
+    if let Some(maybe_dir) = argv_export_skills_dir() {
+        let base_cmd = T::command();
+        let metadata = T::clap_mcp_schema_metadata();
+        let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
+        let tools = tools_from_schema_with_config_and_metadata(&schema, &config, &metadata);
+        let output_dir = maybe_dir.unwrap_or_else(|| PathBuf::from(".agents").join("skills"));
+        let app_name = schema.root.name.as_str();
+        if let Err(e) = content::export_skills(
+            &schema,
+            &metadata,
+            &tools,
+            &serve_options.custom_resources,
+            &serve_options.custom_prompts,
+            &output_dir,
+            app_name,
+        ) {
+            eprintln!("export-skills failed: {}", e);
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+
+    if !config.reinvocation_safe {
+        eprintln!("Stateful MCP serving requires reinvocation_safe = true");
+        std::process::exit(1);
+    }
+
+    if config.allow_mcp_without_subcommand && argv_requests_mcp_without_subcommand(&cmd) {
+        let base_cmd = T::command();
+        let metadata = T::clap_mcp_schema_metadata();
+        let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
+        let schema_json = match serde_json::to_string_pretty(&schema) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to serialize CLI schema: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        #[cfg(unix)]
+        let capture_stdout = serve_options.capture_stdout;
+        #[cfg(not(unix))]
+        let capture_stdout = false;
+        let in_process_handler = Some(make_in_process_handler_with_state::<T, S>(
+            schema.clone(),
+            std::sync::Arc::clone(&state),
+            capture_stdout,
+        ));
+
+        if let Err(e) = serve_schema_json_over_stdio_blocking(
+            schema_json,
+            None,
+            config,
+            in_process_handler,
+            serve_options,
+            &metadata,
+        ) {
+            eprintln!("MCP server error: {}", e);
+            std::process::exit(1);
+        }
+
+        std::process::exit(0);
+    }
+
+    let matches = cmd.get_matches();
+    let mcp_requested = matches.get_flag(MCP_FLAG_LONG);
+
+    if mcp_requested {
+        let base_cmd = T::command();
+        let metadata = T::clap_mcp_schema_metadata();
+        let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
+        let schema_json = match serde_json::to_string_pretty(&schema) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to serialize CLI schema: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        #[cfg(unix)]
+        let capture_stdout = serve_options.capture_stdout;
+        #[cfg(not(unix))]
+        let capture_stdout = false;
+        let in_process_handler = Some(make_in_process_handler_with_state::<T, S>(
+            schema.clone(),
+            std::sync::Arc::clone(&state),
+            capture_stdout,
+        ));
+
+        if let Err(e) = serve_schema_json_over_stdio_blocking(
+            schema_json,
+            None,
             config,
             in_process_handler,
             serve_options,
@@ -1811,6 +1995,34 @@ where
     }
 }
 
+fn execute_in_process_command_with_state<T, S>(
+    schema: &ClapSchema,
+    command_name: &str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+    state: &std::sync::Arc<S>,
+    capture_stdout: bool,
+) -> Result<ClapMcpToolOutput, ClapMcpToolError>
+where
+    T: ClapMcpToolExecutorWithState<S> + clap::CommandFactory + clap::FromArgMatches,
+{
+    validate_required_args(schema, command_name, &arguments).map_err(ClapMcpToolError::text)?;
+    let argv = build_argv_for_clap(schema, command_name, arguments.clone());
+    let matches = T::command()
+        .try_get_matches_from(&argv)
+        .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
+    let cli = T::from_arg_matches(&matches).map_err(|e| ClapMcpToolError::text(e.to_string()))?;
+
+    if capture_stdout {
+        let state = std::sync::Arc::clone(state);
+        let (result, captured) = run_with_stdout_capture(|| {
+            <T as ClapMcpToolExecutorWithState<S>>::execute_for_mcp_with_state(cli, &state)
+        });
+        merge_captured_stdout(result, captured)
+    } else {
+        <T as ClapMcpToolExecutorWithState<S>>::execute_for_mcp_with_state(cli, state)
+    }
+}
+
 fn make_in_process_handler<T>(schema: ClapSchema, capture_stdout: bool) -> InProcessToolHandler
 where
     T: ClapMcpToolExecutor + clap::CommandFactory + clap::FromArgMatches + 'static,
@@ -1818,6 +2030,28 @@ where
     Arc::new(
         move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
             execute_in_process_command::<T>(&schema, cmd, args, capture_stdout)
+        },
+    ) as InProcessToolHandler
+}
+
+fn make_in_process_handler_with_state<T, S>(
+    schema: ClapSchema,
+    state: std::sync::Arc<S>,
+    capture_stdout: bool,
+) -> InProcessToolHandler
+where
+    T: ClapMcpToolExecutorWithState<S> + clap::CommandFactory + clap::FromArgMatches + 'static,
+    S: Send + Sync + 'static,
+{
+    Arc::new(
+        move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
+            execute_in_process_command_with_state::<T, S>(
+                &schema,
+                cmd,
+                args,
+                &state,
+                capture_stdout,
+            )
         },
     ) as InProcessToolHandler
 }
