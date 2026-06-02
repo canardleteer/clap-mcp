@@ -402,6 +402,40 @@ fn is_option_type(ty: &Type) -> bool {
     type_args.len() == 1
 }
 
+fn field_is_repeated_mcp_scalar(ty: &Type) -> bool {
+    let ty = inner_type_if_option(ty).unwrap_or(ty);
+    let Type::Path(type_path) = ty else {
+        return true;
+    };
+    let Some(last) = type_path.path.segments.last() else {
+        return true;
+    };
+    if last.ident == "Vec" {
+        return false;
+    }
+    true
+}
+
+fn has_ambiguous_mcp_positionals<'a, I>(fields: I) -> bool
+where
+    I: IntoIterator<Item = &'a syn::Field>,
+{
+    let mut positional_scalars = 0usize;
+    for field in fields {
+        if has_clap_mcp_skip(&field.attrs)
+            || !field_looks_positional(&field.attrs)
+            || !field_is_repeated_mcp_scalar(&field.ty)
+        {
+            continue;
+        }
+        positional_scalars += 1;
+        if positional_scalars > 1 {
+            return true;
+        }
+    }
+    false
+}
+
 /// Derive macro for `ClapMcpConfigProvider` and `ClapMcpToolExecutor`.
 ///
 /// Use on a clap `Parser` enum to expose it over MCP. Implements execution safety
@@ -642,11 +676,17 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let mut requires_args: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     let mut warn_optional_positional = false;
+    let mut warn_ambiguous_positionals = false;
 
     let optional_positional_warn_block: proc_macro2::TokenStream = quote! {
         #[deprecated(note = "optional positional argument(s) without #[clap_mcp(requires)] or #[clap_mcp(skip)] may expose stdin to MCP; add one of these attributes for intentional behavior (see clap_mcp docs)")]
         fn _clap_mcp_optional_positional_warn() {}
         _clap_mcp_optional_positional_warn();
+    };
+    let ambiguous_positionals_warn_block: proc_macro2::TokenStream = quote! {
+        #[deprecated(note = "multiple positional argument(s) with the same MCP shape are ambiguous for MCP invocation and may be reordered; prefer named args with #[arg(long)]")]
+        fn _clap_mcp_ambiguous_positionals_warn() {}
+        _clap_mcp_ambiguous_positionals_warn();
     };
 
     let output_schema_assign: proc_macro2::TokenStream =
@@ -667,6 +707,9 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
             for v in &data.variants {
                 let cmd_name = get_command_name(&v.attrs, &v.ident);
                 let variant_reqs = get_clap_mcp_requires_variant(&v.attrs).unwrap_or_default();
+                if has_ambiguous_mcp_positionals(v.fields.iter()) {
+                    warn_ambiguous_positionals = true;
+                }
                 if has_clap_mcp_skip(&v.attrs) {
                     skip_commands.push(cmd_name.clone());
                 }
@@ -710,6 +753,11 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 .fields
                 .iter()
                 .find(|f| field_has_command_subcommand(&f.attrs));
+            if has_ambiguous_mcp_positionals(data.fields.iter().filter(|f| {
+                !subcommand_field.is_some_and(|sf| std::ptr::eq(sf, *f))
+            })) {
+                warn_ambiguous_positionals = true;
+            }
             for f in &data.fields {
                 if subcommand_field.is_some_and(|sf| std::ptr::eq(sf, f)) {
                     continue;
@@ -781,10 +829,15 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 m.requires_args.entry(#k_lit.to_string()).or_default().extend([#(#vs),*]);
                             }
                         });
-                        let warn_block = if warn_optional_positional {
-                            optional_positional_warn_block.clone()
-                        } else {
-                            quote! {}
+                        let warn_block = {
+                            let mut block = proc_macro2::TokenStream::new();
+                            if warn_optional_positional {
+                                block.extend(optional_positional_warn_block.clone());
+                            }
+                            if warn_ambiguous_positionals {
+                                block.extend(ambiguous_positionals_warn_block.clone());
+                            }
+                            block
                         };
                         return quote! {
                             impl clap_mcp::ClapMcpSchemaMetadataProvider for #name {
@@ -801,10 +854,15 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                             }
                         };
                     } else {
-                        let warn_block = if warn_optional_positional {
-                            optional_positional_warn_block.clone()
-                        } else {
-                            quote! {}
+                        let warn_block = {
+                            let mut block = proc_macro2::TokenStream::new();
+                            if warn_optional_positional {
+                                block.extend(optional_positional_warn_block.clone());
+                            }
+                            if warn_ambiguous_positionals {
+                                block.extend(ambiguous_positionals_warn_block.clone());
+                            }
+                            block
                         };
                         return quote! {
                             impl clap_mcp::ClapMcpSchemaMetadataProvider for #name {
@@ -849,10 +907,15 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         }
     });
 
-    let warn_block = if warn_optional_positional {
-        optional_positional_warn_block
-    } else {
-        quote! {}
+    let warn_block = {
+        let mut block = proc_macro2::TokenStream::new();
+        if warn_optional_positional {
+            block.extend(optional_positional_warn_block);
+        }
+        if warn_ambiguous_positionals {
+            block.extend(ambiguous_positionals_warn_block);
+        }
+        block
     };
 
     quote! {

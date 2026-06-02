@@ -2565,7 +2565,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::{ArgAction, CommandFactory};
+    use clap::{ArgAction, CommandFactory, FromArgMatches};
     use serde_json::json;
     use std::error::Error;
     use std::sync::Mutex;
@@ -2905,6 +2905,47 @@ mod tests {
                 "--verbose",
             ]
         );
+    }
+
+    #[test]
+    fn test_execute_in_process_command_with_multiple_string_positionals() {
+        #[derive(Debug, clap::Parser, PartialEq)]
+        #[command(name = "task-cli", subcommand_required = true)]
+        struct TaskCli {
+            #[command(subcommand)]
+            command: TaskCommand,
+        }
+
+        #[derive(Debug, clap::Subcommand, PartialEq)]
+        enum TaskCommand {
+            EditState { task_id: String, state: String },
+        }
+
+        impl ClapMcpToolExecutor for TaskCli {
+            fn execute_for_mcp(self) -> Result<ClapMcpToolOutput, ClapMcpToolError> {
+                match self.command {
+                    TaskCommand::EditState { task_id, state } => {
+                        Ok(ClapMcpToolOutput::Text(format!("{task_id}|{state}")))
+                    }
+                }
+            }
+        }
+
+        let schema = schema_from_command(&TaskCli::command());
+        let arguments = serde_json::Map::from_iter([
+            ("state".to_string(), json!("done")),
+            ("task_id".to_string(), json!("TASK-0")),
+        ]);
+        let argv = build_argv_for_clap(&schema, "edit-state", arguments.clone());
+        let matches = TaskCli::command()
+            .try_get_matches_from(&argv)
+            .expect("argv should parse");
+        let _cli = TaskCli::from_arg_matches(&matches).expect("matches should map into cli");
+
+        let output = execute_in_process_command::<TaskCli>(&schema, "edit-state", arguments, false)
+            .expect("in-process execution should succeed");
+
+        assert_eq!(output.into_string(), "TASK-0|done");
     }
 
     #[test]
