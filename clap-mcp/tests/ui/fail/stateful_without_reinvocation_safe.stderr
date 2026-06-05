@@ -1,0 +1,5 @@
+error: clap_mcp: stateful MCP tools require reinvocation_safe (in-process execution)
+  --> tests/ui/fail/stateful_without_reinvocation_safe.rs:14:6
+   |
+14 | enum Cli {
+   |      ^^^
