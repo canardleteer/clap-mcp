@@ -69,7 +69,8 @@ Contributors and agents should be able to reproduce CI locally:
 * **Test:** `cargo test --all-features`
 * **Clippy:** `cargo clippy --all-targets --all-features -- -D warnings` (includes
   examples and tests; no warnings allowed)
-* **Audit:** `cargo audit`
+* **Audit:** CI uses [rustsec/audit-check](https://github.com/rustsec/audit-check)
+  (`rustsec/audit-check@v2.0.0` on Ubuntu); locally `cargo audit` is equivalent
 * **Examples:** `cargo build -p clap-mcp-examples --all-features` and run each
   example binary with `--help` (see the bin list in `ci.yml`)
 * **Rustdoc:** `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p clap-mcp --all-features`
