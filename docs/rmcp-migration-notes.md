@@ -202,3 +202,21 @@ compile error).
 Examples: `task_parallel_probe_*`, `task_panic_catch`, `task_panic_catch_parallel`
 (integration-test helpers); user-facing demos in `task_tools_*` and
 `task_panic_catch`.
+
+## Stateful tools + positional guard (fneddy contributions)
+
+Additive API on `0.0.4-rc.1+` (ports [#11](https://github.com/canardleteer/clap-mcp/pull/11)
+and [#12](https://github.com/canardleteer/clap-mcp/pull/12)):
+
+* **`ClapMcpToolExecutorWithState<S>`** — in-process tool execution with
+  `Arc<S>` shared across calls
+* Derive attrs: `#[clap_mcp_output_from_with_state = "run"]`,
+  `#[clap_mcp_state_type = "Type"]` (both required on enums; struct roots may
+  use `state_type` alone to delegate)
+* **`ParseOrServeMcpWithState`**, `parse_or_serve_mcp_with_state`,
+  **`ServeMcpBuilder::for_cli_with_state`**
+* **`compile_error!`** when a derive target has two or more bare positional scalar
+  fields (use `#[arg(long)]` instead)
+
+Example: `examples/servers/stateful_counter.rs`; integration test:
+`clap-mcp/tests/stateful_server_tests.rs`.
