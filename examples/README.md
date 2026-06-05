@@ -2,33 +2,57 @@
 
 This directory contains example CLIs that demonstrate clap-mcp capabilities.
 
-Run all commands from the **workspace root** (the parent of this `examples/` directory). The examples depend on `clap-mcp` via a path dependency.
+Run all commands from the **workspace root** (the parent of this `examples/`
+directory). The examples depend on `clap-mcp` via a path dependency.
 
-### 0.0.4 API (derive path)
+## 0.0.4 API (derive path)
 
 Since **0.0.4-rc.1**, examples use the slim derive entrypoints:
 
-- **`ParseOrServeMcp::parse_or_serve_mcp()`** — default serve options; import `clap_mcp::ParseOrServeMcp`.
-- **`parse_or_serve_mcp_with(ClapMcpRunOptions { config, serve })`** — custom logging, resources, or HTTP-related serve options.
-- **`serve_mcp_blocking(McpListen::Stdio, …)`** — imperative servers without clap parsing (see `placeholder_server`, `invalid_executable_server`).
-- **`tools_from_schema_with_metadata`** — build MCP tools from schema + [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html) (including `#[clap_mcp(task_augmented_tools)]`).
+* **`ParseOrServeMcp::parse_or_serve_mcp()`** — default serve options; import
+  `clap_mcp::ParseOrServeMcp`.
+* **`parse_or_serve_mcp_with(ClapMcpRunOptions { config, serve })`** — custom
+  logging, resources, or HTTP-related serve options.
+* **`serve_mcp_blocking(McpListen::Stdio, …)`** — imperative servers without
+  clap parsing (see `placeholder_server`, `invalid_executable_server`).
+* **`tools_from_schema_with_metadata`** — build MCP tools from schema +
+  [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html)
+  (including `#[clap_mcp(task_augmented_tools)]`).
 
-Removed: `parse_or_serve_mcp_with_config*`, freestanding `tools_from_schema*`, public `ClapMcpServer` / `build_clap_mcp_server`. See [CHANGELOG](../CHANGELOG.md#004-rc1---2026-06-04).
+Removed: `parse_or_serve_mcp_with_config*`, freestanding `tools_from_schema*`,
+public `ClapMcpServer` / `build_clap_mcp_server`. See
+[API slim notes](../docs/rmcp-migration-notes.md#004-rc1-api-slim-post-rmcp-port).
 
-- **`client.rs`** — MCP client that exercises the server examples (easiest way to see everything working)
-- **`task_augmented_client.rs`** — Minimal client for MCP task-augmented `tools/call` (requires `--features tracing`; use with `task_tools_dedicated` or `task_tools_shared`)
-- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, result_output, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared, **task_tools_dedicated**, **task_tools_shared**, **subprocess_exit_handling**, **panic_catch_opt_in**, **custom_resources_prompts**, **vec_and_flags**)
+* **`client.rs`** — MCP client that exercises the server examples (easiest way
+  to see everything working)
+* **`task_augmented_client.rs`** — Minimal client for MCP task-augmented
+  `tools/call` (requires `--features tracing`; use with `task_tools_dedicated`
+  or `task_tools_shared`)
+* **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand,
+  optional_commands_and_args, result_output, structured, tracing_bridge,
+  log_bridge, async_sleep, async_sleep_shared, **task_tools_dedicated**,
+  **task_tools_shared**, **subprocess_exit_handling**, **panic_catch_opt_in**,
+  **custom_resources_prompts**, **vec_and_flags**)
 
 ## Crash / panic behavior
 
 When a tool fails internally, behavior depends on execution mode:
 
-- **Subprocess (`reinvocation_safe = false`):** If the tool process exits with a non-zero status, the server returns a tool result with `is_error: true` and a message that includes the exit code (and stderr when non-empty). See **subprocess_exit_handling**.
-- **In-process (`reinvocation_safe = true`):** By default, a panic in tool code crashes the server. With **`catch_in_process_panics = true`** (opt-in), panics are caught and returned as an MCP error; the server stays up. After a caught panic, the process may no longer be reinvocation_safe — consider restarting the server. See **panic_catch_opt_in** and [`ClapMcpConfig::catch_in_process_panics`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#structfield.catch_in_process_panics).
+* **Subprocess (`reinvocation_safe = false`):** If the tool process exits with a
+  non-zero status, the server returns a tool result with `is_error: true` and a
+  message that includes the exit code (and stderr when non-empty). See
+  **subprocess_exit_handling**.
+* **In-process (`reinvocation_safe = true`):** By default, a panic in tool code
+  crashes the server. With **`catch_in_process_panics = true`** (opt-in), panics
+  are caught and returned as an MCP error; the server stays up. After a caught
+  panic, the process may no longer be reinvocation_safe — consider restarting
+  the server. See **panic_catch_opt_in** and
+  [`ClapMcpConfig::catch_in_process_panics`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#structfield.catch_in_process_panics).
 
 ## Testing with the Client Example
 
-The `client` example is the easiest way to see everything working together. It runs each server and exercises its tools:
+The `client` example is the easiest way to see everything working together. It
+runs each server and exercises its tools:
 
 ```bash
 # Test subcommands (default)
@@ -61,7 +85,13 @@ cargo run -p clap-mcp-examples --bin client -- log-bridge
 
 ### custom_resources_prompts
 
-Custom MCP resources and prompts, and the `--export-skills` flag. Adds a static resource (`example://readme`) and a static prompt (`example-prompt`) via `ClapMcpServeOptions`. When run with `--mcp`, clients can list/read the extra resource and list/get the prompt. When run with `--export-skills` (or `--export-skills=DIR`), generates [Agent Skills](https://agentskills.io/specification) (SKILL.md) into `.agents/skills/` or the given directory.
+Custom MCP resources and prompts, and the `--export-skills` flag. Adds a static
+resource (`example://readme`) and a static prompt (`example-prompt`) via
+`ClapMcpServeOptions`. When run with `--mcp`, clients can list/read the extra
+resource and list/get the prompt. When run with `--export-skills` (or
+`--export-skills=DIR`), generates
+[Agent Skills](https://agentskills.io/specification) (SKILL.md) into
+`.agents/skills/` or the given directory.
 
 ```bash
 # Normal CLI
@@ -79,7 +109,9 @@ cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --export-skills
 
 ### vec_and_flags
 
-Demonstrates **Vec (list)** and **action-based** args in MCP: `--files` and positional `versions` are exposed as arrays, `dry_run` as boolean, and `verbose` as integer (count). Plain text output only.
+Demonstrates **Vec (list)** and **action-based** args in MCP: `--files` and
+positional `versions` are exposed as arrays, `dry_run` as boolean, and `verbose`
+as integer (count). Plain text output only.
 
 ```bash
 # Normal CLI: option list (--files a --files b), positional list (1.0 2.0)
@@ -132,9 +164,12 @@ cargo run -p clap-mcp-examples --bin struct_subcommand -- --mcp
 ### optional_commands_and_args
 
 Demonstrates `#[clap_mcp(skip)]` and `#[clap_mcp(requires)]`:
-- **skip**: `internal` subcommand is hidden from MCP
-- **requires** (argument-level): `read`'s `path` is optional in CLI but required in MCP
-- **requires** (variant-level): `process`'s `path` and `input` are required in MCP
+
+* **skip**: `internal` subcommand is hidden from MCP
+* **requires** (argument-level): `read`'s `path` is optional in CLI but required
+  in MCP
+* **requires** (variant-level): `process`'s `path` and `input` are required in
+  MCP
 
 ```bash
 # Normal CLI usage
@@ -149,9 +184,12 @@ cargo run -p clap-mcp-examples --bin optional_commands_and_args -- --mcp
 
 ### result_output
 
-Demonstrates `#[clap_mcp_output_from = "run"]` with a fallible `run` that returns
-`Result<T, E>`. `Ok(value)` produces normal MCP output; `Err(e)` produces an MCP error
-response (`is_error: true`). Implements `IntoClapMcpToolError` for a custom error type
+Demonstrates `#[clap_mcp_output_from = "run"]` with a fallible `run` that
+returns
+`Result<T, E>`. `Ok(value)` produces normal MCP output; `Err(e)` produces an MCP
+error
+response (`is_error: true`). Implements `IntoClapMcpToolError` for a custom
+error type
 so structured errors are sent as JSON.
 
 ```bash
@@ -199,7 +237,8 @@ cargo run -p clap-mcp-examples --bin tracing_bridge -- --mcp
 ### async_sleep
 
 CLI with tokio async runtime (dedicated thread). Single subcommand that awaits
-3 concurrent sleep tasks and returns structured JSON. Uses `share_runtime = false`.
+3 concurrent sleep tasks and returns structured JSON. Uses `share_runtime =
+false`.
 Shares business logic with async_sleep_shared via `async_sleep_common` module.
 
 ```bash
@@ -226,9 +265,15 @@ cargo run -p clap-mcp-examples --bin async_sleep_shared -- --mcp
 
 ### task_tools_dedicated / task_tools_shared
 
-MCP **task-augmented** `tools/call` with `#[clap_mcp(task_augmented_tools)]` and `#[clap_mcp(task)]` on the async sleep subcommand. **task_tools_dedicated** uses `share_runtime = false` (dedicated async runtime per call); **task_tools_shared** uses `share_runtime = true`. Requires `--features tracing`.
+MCP **task-augmented** `tools/call` with `#[clap_mcp(task_augmented_tools)]` and
+`#[clap_mcp(task)]` on the async sleep subcommand. **task_tools_dedicated** uses
+`share_runtime = false` (dedicated async runtime per call);
+**task_tools_shared** uses `share_runtime = true`. Requires `--features
+tracing`.
 
-Use **task_augmented_client** to run an end-to-end client (`CallToolRequestParams` with `task: Some(...)`, poll `tasks/get`, then `tasks/result`):
+Use **task_augmented_client** to run an end-to-end client
+(`CallToolRequestParams` with `task: Some(...)`, poll `tasks/get`, then
+`tasks/result`):
 
 ```bash
 cargo run -p clap-mcp-examples --bin task_tools_dedicated --features tracing -- sleep --ms 80
@@ -240,10 +285,14 @@ cargo run -p clap-mcp-examples --bin task_augmented_client --features tracing --
 
 ### subprocess_exit_handling
 
-Subprocess execution (`reinvocation_safe = false`) with a tool that exits non-zero.
-When the tool process exits with a non-zero status, the MCP server returns a tool
-result with `is_error: true` and a message that includes the exit code (and stderr).
-Uses **`subcommand_required = true`**; `--mcp` alone is valid and starts the MCP server
+Subprocess execution (`reinvocation_safe = false`) with a tool that exits
+non-zero.
+When the tool process exits with a non-zero status, the MCP server returns a
+tool
+result with `is_error: true` and a message that includes the exit code (and
+stderr).
+Uses **`subcommand_required = true`**; `--mcp` alone is valid and starts the MCP
+server
 (clap-mcp handles `--mcp` before clap's subcommand check).
 
 ```bash
@@ -259,8 +308,10 @@ cargo run -p clap-mcp-examples --bin subprocess_exit_handling -- --mcp
 
 In-process execution with `catch_in_process_panics = true`. Panics in tool code
 are caught and returned as an MCP error instead of crashing the server. After a
-caught panic, the process may no longer be reinvocation_safe — consider restarting.
-Uses **`subcommand_required = true`**; `--mcp` alone is valid and starts the MCP server.
+caught panic, the process may no longer be reinvocation_safe — consider
+restarting.
+Uses **`subcommand_required = true`**; `--mcp` alone is valid and starts the MCP
+server.
 
 ```bash
 # Normal CLI usage
@@ -271,12 +322,35 @@ cargo run -p clap-mcp-examples --bin panic_catch_opt_in -- panic-demo   # panics
 cargo run -p clap-mcp-examples --bin panic_catch_opt_in -- --mcp
 ```
 
+### task_panic_catch
+
+Task-augmented `tools/call` with `catch_in_process_panics = true`. A panicking
+task tool returns an error payload on `tasks/result` (`is_error: true`); the
+server stays up. Pair with **task_augmented_client** or integration tests.
+
+```bash
+cargo run -p clap-mcp-examples --bin task_panic_catch --features tracing -- sleep --ms 50
+cargo run -p clap-mcp-examples --bin task_panic_catch --features tracing -- --mcp
+```
+
+### task_parallel_probe_dedicated / task_parallel_probe_shared
+
+Integration-test servers for **concurrent** task-augmented execution
+(`parallel_safe = true`). Set `CLAP_MCP_SERIAL_PROBE` to a JSONL path to record
+`body_start` / `body_end` probe events (same format as `task_serial_probe_*`).
+Not intended for interactive demos.
+
+```bash
+cargo run -p clap-mcp-examples --bin task_parallel_probe_dedicated --features tracing -- --mcp
+```
+
 ### log_bridge
 
 CLI with `log` crate integration. Uses `ClapMcpLogBridge` — a `log::Log`
 implementation that forwards `log::info!`, `log::debug!`, etc. to MCP clients.
-Note that the `log` crate supports only one global logger; see the [main
-README](../README.md#log-feature) for guidance on multiplexing to disk and MCP.
+Note that the `log` crate supports only one global logger; see the
+[main README](../README.md#log-feature) for guidance on multiplexing to disk
+and MCP.
 
 ```bash
 # Normal CLI usage
@@ -301,6 +375,11 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **async_sleep_shared** | `servers/async_sleep_shared.rs` | Same, `share_runtime = true` (shares `async_sleep_common`) |
 | **task_tools_dedicated** | `servers/task_tools_dedicated.rs` | Task-augmented `tools/call`, `share_runtime = false` |
 | **task_tools_shared** | `servers/task_tools_shared.rs` | Task-augmented `tools/call`, `share_runtime = true` |
+| **task_serial_probe_dedicated** | `servers/task_serial_probe_dedicated.rs` | Serialized task probe (`parallel_safe = false`, dedicated runtime) |
+| **task_serial_probe_shared** | `servers/task_serial_probe_shared.rs` | Serialized task probe (`parallel_safe = false`, shared runtime) |
+| **task_parallel_probe_dedicated** | `servers/task_parallel_probe_dedicated.rs` | Concurrent task probe (`parallel_safe = true`, dedicated runtime) |
+| **task_parallel_probe_shared** | `servers/task_parallel_probe_shared.rs` | Concurrent task probe (`parallel_safe = true`, shared runtime) |
+| **task_panic_catch** | `servers/task_panic_catch.rs` | Task-augmented panic catching (`catch_in_process_panics`) |
 | **task_augmented_client** | `task_augmented_client.rs` | rmcp client + task polling |
 | **subprocess_exit_handling** | `servers/subprocess_exit_handling.rs` | Subprocess non-zero exit → MCP `is_error: true` |
 | **panic_catch_opt_in** | `servers/panic_catch_opt_in.rs` | In-process panic catching (opt-in), server stays up |
@@ -308,8 +387,12 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 
 ## Async tools and share_runtime
 
-When your CLI has async subcommands (e.g. using `tokio::sleep`, `tokio::spawn`), do async
-work inside your `run` function and call `clap_mcp::run_async_tool` from there. Configure
-`share_runtime` in `#[clap_mcp(...)]`: `false` (default) uses a dedicated thread per call;
-`true` shares the MCP server's tokio runtime. See **async_sleep** and **async_sleep_shared**
+When your CLI has async subcommands (e.g. using `tokio::sleep`, `tokio::spawn`),
+do async
+work inside your `run` function and call `clap_mcp::run_async_tool` from there.
+Configure
+`share_runtime` in `#[clap_mcp(...)]`: `false` (default) uses a dedicated thread
+per call;
+`true` shares the MCP server's tokio runtime. See **async_sleep** and
+**async_sleep_shared**
 for full examples.

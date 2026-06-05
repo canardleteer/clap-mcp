@@ -6,8 +6,9 @@ mod common;
 
 use common::{
     ExampleClient, ExamplePeer, assert_create_task_meta, call_tool_task, example_binary_path,
-    get_task_payload, poll_until_completed, shutdown, task_call_params,
+    get_task_payload, poll_until_completed, shutdown, task_call_params, tool_text,
 };
+use rmcp::model::CallToolResult;
 use rmcp::{
     ClientHandler, RoleClient, ServiceExt,
     model::{
@@ -107,6 +108,16 @@ fn assert_probe_bodies_non_overlapping(events: &[ProbeEvent], label_a: &str, lab
     assert!(
         !overlaps,
         "tool bodies must not overlap: {label_a} [{a0},{a1}] vs {label_b} [{b0},{b1}]; events={events:?}"
+    );
+}
+
+fn assert_probe_bodies_overlap(events: &[ProbeEvent], label_a: &str, label_b: &str) {
+    let (a0, a1) = probe_interval(events, label_a);
+    let (b0, b1) = probe_interval(events, label_b);
+    let overlaps = a0 < b1 && b0 < a1;
+    assert!(
+        overlaps,
+        "tool bodies must overlap: {label_a} [{a0},{a1}] vs {label_b} [{b0},{b1}]; events={events:?}"
     );
 }
 
@@ -280,6 +291,65 @@ async fn assert_concurrent_probe_serialization(
     assert_probe_bodies_non_overlapping(&events, "long", "short");
 }
 
+async fn assert_concurrent_probe_overlap(
+    peer: ExamplePeer,
+    probe_path: &Path,
+    long_is_task: bool,
+    short_is_task: bool,
+) {
+    reset_probe_file(probe_path);
+
+    let path = probe_path.to_path_buf();
+    let client_long = peer.clone();
+    let long_fut = async move {
+        if long_is_task {
+            let create = call_task_create_probe(&client_long, PROBE_LONG_MS, "long")
+                .await
+                .expect("long task create");
+            poll_until_completed(&client_long, &create.task.task_id)
+                .await
+                .expect("long task poll");
+        } else {
+            call_plain_probe(&client_long, PROBE_LONG_MS, "long")
+                .await
+                .expect("long plain");
+        }
+    };
+
+    let client_short = peer.clone();
+    let short_fut = async move {
+        if short_is_task {
+            let create = call_task_create_probe(&client_short, PROBE_SHORT_MS, "short")
+                .await
+                .expect("short task create");
+            poll_until_completed(&client_short, &create.task.task_id)
+                .await
+                .expect("short task poll");
+        } else {
+            call_plain_probe(&client_short, PROBE_SHORT_MS, "short")
+                .await
+                .expect("short plain");
+        }
+    };
+
+    let ((), ()) = tokio::join!(long_fut, short_fut);
+
+    let events = read_probe_events(&path);
+    assert!(
+        events.len() >= 4,
+        "expected probe body_start/end for long and short, got {events:?}"
+    );
+    let long_call = if long_is_task { "task" } else { "plain" };
+    let short_call = if short_is_task { "task" } else { "plain" };
+    assert_probe_expected_calls(&events, long_call, short_call);
+    assert_probe_bodies_overlap(&events, "long", "short");
+}
+
+async fn task_payload_as_call_tool_result(peer: &ExamplePeer, task_id: &str) -> CallToolResult {
+    let payload = get_task_payload(peer, task_id).await.expect("task payload");
+    serde_json::from_value(payload.0).expect("task payload should be CallToolResult")
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_augmented_tools_call_dedicated_runtime() {
     let _serial = serial_test_guard();
@@ -447,5 +517,195 @@ async fn task_augmented_logging_meta_task_id_dedicated() {
         "logging meta.taskId must match CreateTaskResult"
     );
 
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_plus_task_concurrent_overlaps_dedicated_probe() {
+    let _serial = serial_test_guard();
+    let probe = fresh_probe_path("tt_par_ded");
+    let client = launch_with_probe("task_parallel_probe_dedicated", &probe)
+        .await
+        .expect("client");
+    assert_concurrent_probe_overlap(client.peer().clone(), &probe, true, true).await;
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plain_plus_plain_concurrent_overlaps_dedicated_probe() {
+    let _serial = serial_test_guard();
+    let probe = fresh_probe_path("pp_par_ded");
+    let client = launch_with_probe("task_parallel_probe_dedicated", &probe)
+        .await
+        .expect("client");
+    assert_concurrent_probe_overlap(client.peer().clone(), &probe, false, false).await;
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plain_then_task_concurrent_overlaps_dedicated_probe() {
+    let _serial = serial_test_guard();
+    let probe = fresh_probe_path("pt_par_ded");
+    let client = launch_with_probe("task_parallel_probe_dedicated", &probe)
+        .await
+        .expect("client");
+    assert_concurrent_probe_overlap(client.peer().clone(), &probe, false, true).await;
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_then_plain_concurrent_overlaps_dedicated_probe() {
+    let _serial = serial_test_guard();
+    let probe = fresh_probe_path("tp_par_ded");
+    let client = launch_with_probe("task_parallel_probe_dedicated", &probe)
+        .await
+        .expect("client");
+    assert_concurrent_probe_overlap(client.peer().clone(), &probe, true, false).await;
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_plus_task_concurrent_overlaps_shared_probe() {
+    let _serial = serial_test_guard();
+    let probe = fresh_probe_path("tt_par_shr");
+    let client = launch_with_probe("task_parallel_probe_shared", &probe)
+        .await
+        .expect("client");
+    assert_concurrent_probe_overlap(client.peer().clone(), &probe, true, true).await;
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plain_then_task_concurrent_overlaps_shared_probe() {
+    let _serial = serial_test_guard();
+    let probe = fresh_probe_path("pt_par_shr");
+    let client = launch_with_probe("task_parallel_probe_shared", &probe)
+        .await
+        .expect("client");
+    assert_concurrent_probe_overlap(client.peer().clone(), &probe, false, true).await;
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_then_plain_concurrent_overlaps_shared_probe() {
+    let _serial = serial_test_guard();
+    let probe = fresh_probe_path("tp_par_shr");
+    let client = launch_with_probe("task_parallel_probe_shared", &probe)
+        .await
+        .expect("client");
+    assert_concurrent_probe_overlap(client.peer().clone(), &probe, true, false).await;
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_task_logging_distinct_task_ids_parallel_probe() {
+    let _serial = serial_test_guard();
+    let task_ids = Arc::new(Mutex::new(Vec::new()));
+    let handler = LogCapturingHandler {
+        task_ids: task_ids.clone(),
+    };
+    let client = launch_task_example("task_parallel_probe_shared", handler, None)
+        .await
+        .expect("client");
+
+    let _ = client
+        .set_level(SetLevelRequestParams::new(LoggingLevel::Debug))
+        .await;
+
+    let peer = client.peer();
+    let create_a = call_task_create_probe(peer, PROBE_LONG_MS, "a")
+        .await
+        .expect("task a");
+    let create_b = call_task_create_probe(peer, PROBE_SHORT_MS, "b")
+        .await
+        .expect("task b");
+    let peer_a = peer.clone();
+    let peer_b = peer.clone();
+    let poll_a_id = create_a.task.task_id.clone();
+    let poll_b_id = create_b.task.task_id.clone();
+    let poll_a = async move {
+        poll_until_completed(&peer_a, &poll_a_id)
+            .await
+            .expect("poll a");
+    };
+    let poll_b = async move {
+        poll_until_completed(&peer_b, &poll_b_id)
+            .await
+            .expect("poll b");
+    };
+    let ((), ()) = tokio::join!(poll_a, poll_b);
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let captured = loop {
+        let captured = task_ids.lock().unwrap_or_else(|e| e.into_inner());
+        if captured.len() >= 2 {
+            break captured.clone();
+        }
+        drop(captured);
+        if Instant::now() >= deadline {
+            panic!("expected logging notifications with meta.taskId for both tasks");
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    };
+
+    assert!(
+        captured.iter().any(|tid| tid == &create_a.task.task_id),
+        "expected logs for task a ({}), got {captured:?}",
+        create_a.task.task_id
+    );
+    assert!(
+        captured.iter().any(|tid| tid == &create_b.task.task_id),
+        "expected logs for task b ({}), got {captured:?}",
+        create_b.task.task_id
+    );
+
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_augmented_panic_caught_returns_error_payload() {
+    let _serial = serial_test_guard();
+    let client = launch_with_noop("task_panic_catch").await.expect("client");
+    let peer = client.peer();
+    let create = call_tool_task(peer, task_call_params("panic-demo", serde_json::Map::new()))
+        .await
+        .expect("task create");
+    assert_create_task_meta(&create);
+    poll_until_completed(peer, &create.task.task_id)
+        .await
+        .expect("poll");
+    let result = task_payload_as_call_tool_result(peer, &create.task.task_id).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = tool_text(&result);
+    assert!(
+        text.contains("panicked") || text.contains("panic"),
+        "got: {text}"
+    );
+
+    let create_ok = call_task_create(peer, 10).await.expect("non-panic task");
+    poll_until_completed(peer, &create_ok.task.task_id)
+        .await
+        .expect("poll ok");
+    let ok_result = task_payload_as_call_tool_result(peer, &create_ok.task.task_id).await;
+    assert_ne!(ok_result.is_error, Some(true));
+
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_augmented_panic_caught_parallel_safe() {
+    let _serial = serial_test_guard();
+    let client = launch_with_noop("task_panic_catch_parallel")
+        .await
+        .expect("client");
+    let peer = client.peer();
+    let create = call_tool_task(peer, task_call_params("panic-demo", serde_json::Map::new()))
+        .await
+        .expect("task create");
+    poll_until_completed(peer, &create.task.task_id)
+        .await
+        .expect("poll");
+    let result = task_payload_as_call_tool_result(peer, &create.task.task_id).await;
+    assert_eq!(result.is_error, Some(true));
     shutdown(client).await;
 }

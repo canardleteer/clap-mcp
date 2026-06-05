@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static PROBE_SEQ: AtomicU64 = AtomicU64::new(0);
 static PROBE_FILE: Mutex<Option<String>> = Mutex::new(None);
+static PROBE_APPEND: Mutex<()> = Mutex::new(());
 
 fn probe_path() -> Option<String> {
     let mut slot = PROBE_FILE.lock().unwrap_or_else(|e| e.into_inner());
@@ -23,6 +24,7 @@ fn append(event: &str, label: &str, call: &str, ms: u64) {
     let Some(path) = probe_path() else {
         return;
     };
+    let _guard = PROBE_APPEND.lock().unwrap_or_else(|e| e.into_inner());
     let seq = PROBE_SEQ.fetch_add(1, Ordering::SeqCst);
     let line = serde_json::json!({
         "event": event,
@@ -39,6 +41,7 @@ fn append(event: &str, label: &str, call: &str, ms: u64) {
 /// Records probe events around an async sleep (tool body).
 pub async fn sleep_with_probe(label: &str, call: &str, ms: u64) -> String {
     append("body_start", label, call, ms);
+    tracing::info!(label = label, call = call, ms = ms, "probe body");
     tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
     append("body_end", label, call, ms);
     format!("slept {ms}ms as {label} ({call})")

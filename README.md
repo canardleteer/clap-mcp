@@ -8,17 +8,21 @@
 ## Usage
 
 You can take a look at the examples, but this is a **VERY** early draft. See
-[examples/README.md](examples/README.md) for detailed instructions on running them.
+[examples/README.md](examples/README.md) for detailed instructions on running
+them.
 
 ## Development
 
 Contributors should follow these conventions:
 
-- Format code with `cargo fmt`. CI runs `cargo fmt --all -- --check`.
-- Run `cargo clippy --all-targets --all-features -- -D warnings` before submitting; CI enforces this.
-- Document public API items and add a `// SAFETY:` comment above any `unsafe` block explaining invariants.
+* Format code with `cargo fmt`. CI runs `cargo fmt --all -- --check`.
+* Run `cargo clippy --all-targets --all-features -- -D warnings` before
+  submitting; CI enforces this.
+* Document public API items and add a `// SAFETY:` comment above any `unsafe`
+  block explaining invariants.
 
-For MCP task work that remains **out of scope** (e.g. concurrent tools with `parallel_safe = true`, panic-in-task handling, subprocess tasks), see [AGENTS.md](AGENTS.md).
+MCP task support matrix (including limitations) is under
+[MCP task-augmented `tools/call`](#mcp-task-augmented-toolscall) below.
 
 Run all tests (including feature-gated logging tests):
 
@@ -28,7 +32,8 @@ cargo test --all-features
 
 ### Code coverage
 
-Coverage is measured with [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov). Install and run:
+Coverage is measured with
+[cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov). Install and run:
 
 ```bash
 cargo install cargo-llvm-cov
@@ -41,27 +46,28 @@ For an HTML report (opens in browser):
 cargo llvm-cov test --workspace --all-features --html
 ```
 
-Coverage focuses on the `clap-mcp` and `clap-mcp-macros` crates; the `examples` crate is excluded from coverage targets.
+Coverage focuses on the `clap-mcp` and `clap-mcp-macros` crates; the `examples`
+crate is excluded from coverage targets.
 
 Release prep includes building and running all example binaries (CI runs each
 with `--help` as a smoke test); see [examples/README.md](examples/README.md).
 
 ## Design
 
-Compared to a Command Line Interface, I'm not a huge fan of the [Model Context
-Protocol](https://modelcontextprotocol.io/docs/getting-started/intro), but my
-feelings don't represent real world usage patterns. I feel MCP would do better
+Compared to a Command Line Interface, I'm not a huge fan of the
+[Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro),
+but my feelings don't represent real world usage patterns. I feel MCP would do better
 with gRPC and Protobuf as it's "transport." All that being said, I'm not bitter
 about it, so I'm just letting a model do the development work and deal with it's
 own self-generated mess.
 
 **The intent is generally:**
 
-- Make it easy to add a MCP server to current Rust CLIs that use `clap`.
-- Have it work well enough and provide enough guardrails to cover the 95% case.
-- If there is structured information available from the CLI as an outcome, we
+* Make it easy to add a MCP server to current Rust CLIs that use `clap`.
+* Have it work well enough and provide enough guardrails to cover the 95% case.
+* If there is structured information available from the CLI as an outcome, we
   should provide a way to express it naturally via MCP.
-- Provide a way to express structured logging information (if available) as part
+* Provide a way to express structured logging information (if available) as part
   of the response if requested.
 
 Overall, the more you design your CLI around a service pattern, the more
@@ -71,11 +77,12 @@ ecosystem.
 
 ## Quick start
 
-Add `clap-mcp` to your `Cargo.toml` (the default `derive` feature includes the macro):
+Add `clap-mcp` to your `Cargo.toml` (the default `derive` feature includes the
+macro):
 
 ```toml
 [dependencies]
-clap-mcp = "0.0.3-rc.1"
+clap-mcp = "0.0.4-rc.1"
 ```
 
 For derive usage, `use clap_mcp::ClapMcp` so you can write `#[derive(ClapMcp)]`.
@@ -160,9 +167,17 @@ fn main() {
 
 ### Struct root with subcommand
 
-When your CLI has a **struct root** with `#[command(subcommand)]` and an enum of commands, derive `ClapMcp` on **both** the root struct and the subcommand enum. Put `#[clap_mcp_output_from = "run"]` and execution config (`#[clap_mcp(...)]`) on the **subcommand** enum. In `main`, parse the root then call your run logic on the subcommand (e.g. `run(cli.command)` or `match cli.command { ... }`).
+When your CLI has a **struct root** with `#[command(subcommand)]` and an enum of
+commands, derive `ClapMcp` on **both** the root struct and the subcommand enum.
+Put `#[clap_mcp_output_from = "run"]` and execution config (`#[clap_mcp(...)]`)
+on the **subcommand** enum. In `main`, parse the root then call your run logic
+on the subcommand (e.g. `run(cli.command)` or `match cli.command { ... }`).
 
-You can use either `subcommand_required = false` with `command: Option<Commands>` (so `myapp` with no subcommand is valid) or keep **`subcommand_required = true`**; in both cases **`myapp --mcp`** is valid and starts the MCP server (clap-mcp checks for `--mcp` before calling clap, so a required subcommand is not demanded when only `--mcp` is passed).
+You can use either `subcommand_required = false` with `command:
+Option<Commands>` (so `myapp` with no subcommand is valid) or keep
+**`subcommand_required = true`**; in both cases **`myapp --mcp`** is valid and
+starts the MCP server (clap-mcp checks for `--mcp` before calling clap, so a
+required subcommand is not demanded when only `--mcp` is passed).
 
 ```rust
 use clap::{Parser, Subcommand};
@@ -199,7 +214,8 @@ fn main() {
 }
 ```
 
-See [Dual derive (root + subcommand)](#dual-derive-root--subcommand) below and the **struct_subcommand** example in [examples/README.md](examples/README.md).
+See [Dual derive (root + subcommand)](#dual-derive-root--subcommand) below and
+the **struct_subcommand** example in [examples/README.md](examples/README.md).
 
 ## Feature flags
 
@@ -218,14 +234,27 @@ clap-mcp = { version = "0.0.4-rc.1", features = ["tracing"] }
 
 ## Custom resources and prompts
 
-In addition to the built-in **`clap://schema`** resource and the optional **logging guide** prompt, you can expose custom MCP resources and prompts. Add them to [`ClapMcpServeOptions`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html) and pass that into `parse_or_serve_mcp_with` or `serve_mcp_blocking`.
+In addition to the built-in **`clap://schema`** resource and the optional
+**logging guide** prompt, you can expose custom MCP resources and prompts. Add
+them to
+[`ClapMcpServeOptions`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html)
+and pass that into `parse_or_serve_mcp_with` or `serve_mcp_blocking`.
 
 ### Custom resources
 
-Set [`custom_resources`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html#structfield.custom_resources) to a list of [`CustomResource`](https://docs.rs/clap-mcp/latest/clap_mcp/content/struct.CustomResource.html) values. Each has:
+Set
+[`custom_resources`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html#structfield.custom_resources)
+to a list of
+[`CustomResource`](https://docs.rs/clap-mcp/latest/clap_mcp/content/struct.CustomResource.html)
+values. Each has:
 
-- **Identity:** `uri`, `name`, optional `title`, `description`, `mime_type`. Use a stable URI (e.g. `myapp://config`) so clients can list and read.
-- **Content:** Either **static** (`ResourceContent::Static(String)`) or **dynamic** (`ResourceContent::Dynamic(Arc<dyn ResourceContentProvider>)`). Dynamic content uses the async [`ResourceContentProvider::read`](https://docs.rs/clap-mcp/latest/clap_mcp/content/trait.ResourceContentProvider.html#tymethod.read) so the handler can await it.
+* **Identity:** `uri`, `name`, optional `title`, `description`, `mime_type`. Use
+  a stable URI (e.g. `myapp://config`) so clients can list and read.
+* **Content:** Either **static** (`ResourceContent::Static(String)`) or
+  **dynamic** (`ResourceContent::Dynamic(Arc<dyn ResourceContentProvider>)`).
+  Dynamic content uses the async
+  [`ResourceContentProvider::read`](https://docs.rs/clap-mcp/latest/clap_mcp/content/trait.ResourceContentProvider.html#tymethod.read)
+  so the handler can await it.
 
 Example (static):
 
@@ -243,61 +272,96 @@ opts.custom_resources.push(CustomResource {
 });
 ```
 
-For dynamic content, implement [`ResourceContentProvider`](https://docs.rs/clap-mcp/latest/clap_mcp/content/trait.ResourceContentProvider.html) (async `read(uri)`).
+For dynamic content, implement
+[`ResourceContentProvider`](https://docs.rs/clap-mcp/latest/clap_mcp/content/trait.ResourceContentProvider.html)
+(async `read(uri)`).
 
 ### Custom prompts
 
-Set [`custom_prompts`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html#structfield.custom_prompts) to a list of [`CustomPrompt`](https://docs.rs/clap-mcp/latest/clap_mcp/content/struct.CustomPrompt.html) values. Each has:
+Set
+[`custom_prompts`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html#structfield.custom_prompts)
+to a list of
+[`CustomPrompt`](https://docs.rs/clap-mcp/latest/clap_mcp/content/struct.CustomPrompt.html)
+values. Each has:
 
-- **Identity:** `name`, optional `title`, `description`, optional `arguments` (MCP prompt argument descriptors).
-- **Content:** Either **static** (`PromptContent::Static(Vec<PromptMessage>)`) or **dynamic** (`PromptContent::Dynamic(Arc<dyn PromptContentProvider>)`). Dynamic uses the async [`PromptContentProvider::get`](https://docs.rs/clap-mcp/latest/clap_mcp/content/trait.PromptContentProvider.html#tymethod.get).
+* **Identity:** `name`, optional `title`, `description`, optional `arguments`
+  (MCP prompt argument descriptors).
+* **Content:** Either **static** (`PromptContent::Static(Vec<PromptMessage>)`)
+  or **dynamic** (`PromptContent::Dynamic(Arc<dyn PromptContentProvider>)`).
+  Dynamic uses the async
+  [`PromptContentProvider::get`](https://docs.rs/clap-mcp/latest/clap_mcp/content/trait.PromptContentProvider.html#tymethod.get).
 
-The built-in **`clap-mcp-logging-guide`** prompt is only listed when logging is enabled (`serve_options.log_rx.is_some()`). Custom prompts are always merged into the list.
+The built-in **`clap-mcp-logging-guide`** prompt is only listed when logging is
+enabled (`serve_options.log_rx.is_some()`). Custom prompts are always merged
+into the list.
 
 ### URI and name conventions
 
-Prefer a stable prefix (e.g. `myapp://`) for custom resource URIs so they don’t clash with the built-in `clap://schema`. Prompt names must be unique; avoid `clap-mcp-logging-guide` for custom prompts.
+Prefer a stable prefix (e.g. `myapp://`) for custom resource URIs so they don’t
+clash with the built-in `clap://schema`. Prompt names must be unique; avoid
+`clap-mcp-logging-guide` for custom prompts.
 
 ## Exporting agent skills
 
-You can generate **[Agent Skills](https://agentskills.io/specification)** (SKILL.md) from the same tools, resources, and prompts that the MCP server exposes. This is useful for documenting your CLI for AI agents.
+You can generate **[Agent Skills](https://agentskills.io/specification)**
+(SKILL.md) from the same tools, resources, and prompts that the MCP server
+exposes. This is useful for documenting your CLI for AI agents.
 
 ### The `--export-skills` flag
 
-Add the flag with [`command_with_export_skills_flag`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.command_with_export_skills_flag.html) or use [`command_with_mcp_and_export_skills_flags`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.command_with_mcp_and_export_skills_flags.html) to add both `--mcp` and `--export-skills`:
+Add the flag with
+[`command_with_export_skills_flag`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.command_with_export_skills_flag.html)
+or use
+[`command_with_mcp_and_export_skills_flags`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.command_with_mcp_and_export_skills_flags.html)
+to add both `--mcp` and `--export-skills`:
 
-- **`--export-skills`** — Generate skills into the default directory (see below) and exit.
-- **`--export-skills=DIR`** — Generate skills into `DIR` (e.g. `--export-skills=./out`) and exit.
+* **`--export-skills`** — Generate skills into the default directory (see below)
+  and exit.
+* **`--export-skills=DIR`** — Generate skills into `DIR` (e.g.
+  `--export-skills=./out`) and exit.
 
-When both `--mcp` and `--export-skills` are present, **`--export-skills` wins**: the process exports and exits without starting the MCP server.
+When both `--mcp` and `--export-skills` are present, **`--export-skills` wins**:
+the process exports and exits without starting the MCP server.
 
 ### Default output directory
 
-Default directory is **`.agents/skills/`**, where each skill gets a subdirectory named after the app or tool. Override with `--export-skills=DIR`.
+Default directory is **`.agents/skills/`**, where each skill gets a subdirectory
+named after the app or tool. Override with `--export-skills=DIR`.
 
 ### What gets generated
 
-- One skill per **tool** (from your clap schema), with name/description and usage hints.
-- A combined **resources-and-prompts** skill when you have custom resources or prompts.
+* One skill per **tool** (from your clap schema), with name/description and
+  usage hints.
+* A combined **resources-and-prompts** skill when you have custom resources or
+  prompts.
 
-Generated files follow the [Agent Skills specification](https://agentskills.io/specification) (YAML frontmatter with `name`, `description`, and `allowed-tools`; markdown body with usage instructions). The `name` field matches the parent directory name as required by the spec. Each tool skill includes `allowed-tools` listing the MCP tool it describes; note that this field is still experimental in the spec with no defined syntax convention. You can also call [`content::export_skills`](https://docs.rs/clap-mcp/latest/clap_mcp/content/fn.export_skills.html) programmatically with schema, tools, custom resources, and custom prompts.
+Generated files follow the
+[Agent Skills specification](https://agentskills.io/specification) (YAML
+frontmatter with `name`, `description`, and `allowed-tools`; markdown body with
+usage instructions). The `name` field matches the parent directory name as
+required by the spec. Each tool skill includes `allowed-tools` listing the MCP
+tool it describes; note that this field is still experimental in the spec
+with no defined syntax convention. You can also call
+[`content::export_skills`](https://docs.rs/clap-mcp/latest/clap_mcp/content/fn.export_skills.html)
+programmatically with schema, tools, custom resources, and custom prompts.
 
 ## Execution safety configuration
 
 CLIs differ in how safely they can be invoked over MCP. Two flags control this:
 
-- **`reinvocation_safe`** (default: `false`): Controls whether tool calls spawn
+* **`reinvocation_safe`** (default: `false`): Controls whether tool calls spawn
   a fresh subprocess of your binary (`false`) or run in-process via
   `ClapMcpToolExecutor` (`true`). The name refers to whether the CLI's internal
   state can survive repeated invocations without a process restart. Most CLIs
   that don't hold mutable global state can set this to `true`.
 
-- **`parallel_safe`** (default: `false`): Controls whether tool calls are
+* **`parallel_safe`** (default: `false`): Controls whether tool calls are
   serialized behind a tokio `Mutex` (`false`) or dispatched concurrently
   (`true`). Set to `true` only if your CLI logic is safe to run concurrently.
 
-- **`share_runtime`** (default: `false`): When `reinvocation_safe` is true,
-  controls how async tool execution runs. See [Async tools and share_runtime](#async-tools-and-share_runtime) below.
+* **`share_runtime`** (default: `false`): When `reinvocation_safe` is true,
+  controls how async tool execution runs. See
+  [Async tools](#async-tools-and-share_runtime) below.
 
 ### Attribute-based config (recommended)
 
@@ -329,14 +393,20 @@ let cli = Cli::parse_or_serve_mcp();
 ### Schema metadata: skip and requires
 
 Use `#[clap_mcp(skip)]` to exclude subcommands or arguments from MCP exposure.
-Use `#[clap_mcp(requires)]` or `#[clap_mcp(requires = "arg_name")]` to make an optional
-argument required in the MCP tool schema (useful for positional args that may trigger
-stdin behavior when omitted). When the client omits a required arg, a clear error is returned.
+Use `#[clap_mcp(requires)]` or `#[clap_mcp(requires = "arg_name")]` to make an
+optional
+argument required in the MCP tool schema (useful for positional args that may
+trigger
+stdin behavior when omitted). When the client omits a required arg, a clear
+error is returned.
 
-For **optional positional arguments** that might read from stdin when omitted, prefer an
-explicit `#[clap_mcp(requires)]` or `#[clap_mcp(skip)]` so MCP behavior is intentional.
+For **optional positional arguments** that might read from stdin when omitted,
+prefer an
+explicit `#[clap_mcp(requires)]` or `#[clap_mcp(skip)]` so MCP behavior is
+intentional.
 
 **Argument-level** (on each field):
+
 ```rust
 #[derive(Parser, ClapMcp)]
 #[clap_mcp_output_from = "run"]
@@ -355,7 +425,9 @@ fn run(cmd: Cli) -> String {
 }
 ```
 
-**Variant-level** (one or more args; use a single name or comma-separated list — the MCP schema marks each as required):
+**Variant-level** (one or more args; use a single name or comma-separated list —
+the MCP schema marks each as required):
+
 ```rust
 #[derive(Parser, ClapMcp)]
 #[clap_mcp_output_from = "run"]
@@ -380,7 +452,10 @@ fn run(cmd: Cli) -> String {
 }
 ```
 
-**Skip:** (subcommands or variant-level) use `#[clap_mcp(skip)]` so a variant is hidden from MCP; pair with `#[clap_mcp_output_from = "run"]` and a single `run` for the exposed variants.
+**Skip:** (subcommands or variant-level) use `#[clap_mcp(skip)]` so a variant is
+hidden from MCP; pair with `#[clap_mcp_output_from = "run"]` and a single `run`
+for the exposed variants.
+
 ```rust
 #[derive(Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
@@ -399,7 +474,8 @@ fn run(cmd: Cli) -> String {
 }
 ```
 
-You can also use `#[clap_mcp(skip)]` on **root struct fields** so options like output format are hidden from MCP (they remain available to the CLI):
+You can also use `#[clap_mcp(skip)]` on **root struct fields** so options like
+output format are hidden from MCP (they remain available to the CLI):
 
 ```rust
 #[derive(Parser, ClapMcp)]
@@ -413,7 +489,9 @@ struct Args {
 }
 ```
 
-**Imperative:** Use `schema_from_command_with_metadata` and `get_matches_or_serve_mcp_with_config_and_metadata` with `ClapMcpSchemaMetadata`:
+**Imperative:** Use `schema_from_command_with_metadata` and
+`get_matches_or_serve_mcp_with_config_and_metadata` with
+`ClapMcpSchemaMetadata`:
 
 ```rust
 let mut metadata = ClapMcpSchemaMetadata::default();
@@ -423,17 +501,38 @@ let schema = schema_from_command_with_metadata(&cmd, &metadata);
 ```
 
 When the client omits a required argument, the tool returns a clear error:
-`"Missing required argument(s): path. The MCP tool schema marks these as required."`
+`"Missing required argument(s): path. The MCP tool schema marks these as
+required."`
 
 ### Dual derive (root + subcommand)
 
-When you use a **struct root** with `#[command(subcommand)]` (e.g. `command: Option<Commands>`), derive `ClapMcp` on **both** the root struct and the subcommand enum. Put `#[clap_mcp_output_from = "run"]` and execution config (`#[clap_mcp(...)]`) on the **subcommand** enum only. The root's derive provides schema metadata and delegates tool execution to the subcommand's executor. In `main`, parse the root with `Root::parse_or_serve_mcp()` (via [`ParseOrServeMcp`]) then run with `run(cli.command)` or `match cli.command { ... }`. You can keep **`subcommand_required = true`** if you want; `myapp --mcp` alone is valid and starts the MCP server (clap-mcp handles `--mcp` before clap's subcommand check). See [Struct root with subcommand](#struct-root-with-subcommand) and the **struct_subcommand** example in [examples/README.md](examples/README.md).
+When you use a **struct root** with `#[command(subcommand)]` (e.g. `command:
+Option<Commands>`), derive `ClapMcp` on **both** the root struct and the
+subcommand enum. Put `#[clap_mcp_output_from = "run"]` and execution config
+(`#[clap_mcp(...)]`) on the **subcommand** enum only. The root's derive provides
+schema metadata and delegates tool execution to the subcommand's executor. In
+`main`, parse the root with `Root::parse_or_serve_mcp()` (via
+[`ParseOrServeMcp`]) then run with `run(cli.command)` or `match cli.command {
+... }`. You can keep **`subcommand_required = true`** if you want; `myapp --mcp`
+alone is valid and starts the MCP server (clap-mcp handles `--mcp` before clap's
+subcommand check). See
+[Struct root with subcommand](#struct-root-with-subcommand) and the
+**struct_subcommand** example in [examples/README.md](examples/README.md).
 
-**MCP tool list:** The tool list includes the root command and all subcommands. If your CLI has `subcommand_required = true`, the root command still appears as a tool but has no subcommand in the MCP invocation model and is rarely used by clients; the meaningful tools are the subcommands (e.g. explain, compare, sort). To exclude the root from the tool list when it has subcommands, set [`ClapMcpSchemaMetadata::skip_root_command_when_subcommands`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.skip_root_command_when_subcommands) to `true` via the derive with `#[clap_mcp(skip_root_when_subcommands)]` on the root struct, or imperatively (e.g. implement `ClapMcpSchemaMetadataProvider` for the root and set the field, or build metadata manually).
+**MCP tool list:** The tool list includes the root command and all subcommands.
+If your CLI has `subcommand_required = true`, the root command still appears as
+a tool but has no subcommand in the MCP invocation model and is rarely used by
+clients; the meaningful tools are the subcommands (e.g. explain, compare, sort).
+To exclude the root from the tool list when it has subcommands, set
+[`ClapMcpSchemaMetadata::skip_root_command_when_subcommands`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.skip_root_command_when_subcommands)
+to `true` via the derive with `#[clap_mcp(skip_root_when_subcommands)]` on the
+root struct, or imperatively (e.g. implement `ClapMcpSchemaMetadataProvider` for
+the root and set the field, or build metadata manually).
 
 ### Runtime config
 
-Use `ClapMcpConfig` with `parse_or_serve_mcp_with` or `get_matches_or_serve_mcp_with_config`:
+Use `ClapMcpConfig` with `parse_or_serve_mcp_with` or
+`get_matches_or_serve_mcp_with_config`:
 
 ```rust
 clap_mcp::parse_or_serve_mcp_with::<Cli>(clap_mcp::ClapMcpRunOptions {
@@ -450,15 +549,28 @@ Tools include `meta.clapMcp` with these hints for clients.
 
 ### Crash and panic behavior
 
-- **Subprocess (`reinvocation_safe` = false):** If the tool process exits with a non-zero status, the server returns a tool result with `is_error: true` and a message that includes the exit code (and stderr when non-empty).
-- **In-process (`reinvocation_safe` = true), `catch_in_process_panics` = false (default):** Any panic in tool code (including from `run_async_tool`) crashes the server.
-- **In-process, `catch_in_process_panics` = true:** Panics are caught and returned as an MCP error; the server stays up. After a caught panic, the process may no longer be reinvocation_safe (global state may be corrupted) — consider restarting the server. See [`ClapMcpConfig::catch_in_process_panics`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#structfield.catch_in_process_panics) and the **panic_catch_opt_in** and **subprocess_exit_handling** examples in [examples/README.md](examples/README.md).
+* **Subprocess (`reinvocation_safe` = false):** If the tool process exits with a
+  non-zero status, the server returns a tool result with `is_error: true` and a
+  message that includes the exit code (and stderr when non-empty).
+* **In-process (`reinvocation_safe` = true), `catch_in_process_panics` = false
+  (default):** Any panic in tool code (including from `run_async_tool`) crashes
+  the server.
+* **In-process, `catch_in_process_panics` = true:** Panics are caught and
+  returned as an MCP error; the server stays up. After a caught panic, the
+  process may no longer be reinvocation_safe (global state may be corrupted) —
+  consider restarting the server. See
+  [`ClapMcpConfig::catch_in_process_panics`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#structfield.catch_in_process_panics)
+  and the **panic_catch_opt_in** and **subprocess_exit_handling** examples in
+  [examples/README.md](examples/README.md).
 
 ### Async tools and share_runtime
 
-When your CLI has async subcommands (e.g. `tokio::sleep`, `tokio::spawn`), do async work
-inside your `run` function (e.g. call `clap_mcp::run_async_tool` or use a runtime handle).
-Set `share_runtime` in `#[clap_mcp(...)]` to share the MCP server's tokio runtime:
+When your CLI has async subcommands (e.g. `tokio::sleep`, `tokio::spawn`), do
+async work
+inside your `run` function (e.g. call `clap_mcp::run_async_tool` or use a
+runtime handle).
+Set `share_runtime` in `#[clap_mcp(...)]` to share the MCP server's tokio
+runtime:
 
 | `share_runtime` | Behavior | When to use |
 |-----------------|----------|-------------|
@@ -478,66 +590,116 @@ fn run(cmd: Cli) -> AsStructured<SleepResult> {
 }
 ```
 
-**Shared runtime:** same pattern; set `share_runtime = true` in `#[clap_mcp(...)]`.
+**Shared runtime:** same pattern; set `share_runtime = true` in
+`#[clap_mcp(...)]`.
 
 ### MCP task-augmented `tools/call`
 
-[Tasks](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) let a client send `tools/call` with `task` metadata, receive a [`CreateTaskResult`](https://docs.rs/rmcp/latest/rmcp/model/task/struct.CreateTaskResult.html) immediately, and poll `tasks/get` / `tasks/result` for completion.
+[Tasks](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks)
+let a client send `tools/call` with `task` metadata, receive a
+[`CreateTaskResult`](https://docs.rs/rmcp/latest/rmcp/model/task/struct.CreateTaskResult.html)
+immediately, and poll `tasks/get` / `tasks/result` for completion.
 
-**Supported in clap-mcp (this release):** in-process servers only (`reinvocation_safe = true`), serialized tool execution (`parallel_safe = false`), both `share_runtime = false` and `share_runtime = true`, and `catch_in_process_panics = false`. Task-augmented and plain `tools/call` share the same serialization queue when `parallel_safe` is false.
+**Supported in clap-mcp (this release):** in-process servers only
+(`reinvocation_safe = true`), both `share_runtime = false` and
+`share_runtime = true`, serialized (`parallel_safe = false`) and concurrent
+(`parallel_safe = true`) tool execution with task-augmented `tools/call`, and
+`catch_in_process_panics = true` with task-augmented `tools/call` (panics in
+task-scheduled work map to task error payloads; the server stays up). When
+`parallel_safe` is false, task-augmented and plain `tools/call` share one
+serialization queue; when `parallel_safe` is true, bodies may overlap and
+logging uses per-task context so `meta.taskId` stays correct.
 
-- Enable with `#[clap_mcp(task_augmented_tools)]` on the enum (requires `reinvocation_safe`; combining with `reinvocation_safe = false` is a **compile error** in the derive).
-- Optionally mark subcommands with `#[clap_mcp(task)]` so only those tools advertise `meta.clapMcp.taskAugmented` and accept task-augmented calls. If no variant has `#[clap_mcp(task)]`, every tool is eligible when `task_augmented_tools` is on.
-- **Not supported:** subprocess (`reinvocation_safe = false`) + tasks; supporting that would need non-blocking waits, task lifecycle, and stderr correlation—out of scope here.
+* Enable with `#[clap_mcp(task_augmented_tools)]` on the enum (requires
+  `reinvocation_safe`; combining with `reinvocation_safe = false` is a **compile
+  error** in the derive).
+* Optionally mark subcommands with `#[clap_mcp(task)]` so only those tools
+  advertise `meta.clapMcp.taskAugmented` and accept task-augmented calls. If no
+  variant has `#[clap_mcp(task)]`, every tool is eligible when
+  `task_augmented_tools` is on.
+* **Not supported:** subprocess (`reinvocation_safe = false`) + tasks;
+  supporting that would need non-blocking waits, task lifecycle, and stderr
+  correlation—out of scope here.
 
-**Pinned stack (review on bump):** workspace [`rmcp`](https://docs.rs/rmcp) **1.7.x** (see root `Cargo.toml`; features `server`, `client`, `macros`, `transport-io`, `transport-child-process`). Protocol **2025-11-25** (tasks). Migration notes: [docs/rmcp-migration-notes.md](docs/rmcp-migration-notes.md).
+**Pinned stack (review on bump):** workspace [`rmcp`](https://docs.rs/rmcp)
+**1.7.x** (see root `Cargo.toml`; features `server`, `client`, `macros`,
+`transport-io`, `transport-child-process`). Protocol **2025-11-25** (tasks).
+Migration notes: [docs/rmcp-migration-notes.md](docs/rmcp-migration-notes.md).
 
-**Examples:** [task_tools_dedicated](examples/servers/task_tools_dedicated.rs) (dedicated async runtime), [task_tools_shared](examples/servers/task_tools_shared.rs) (shared MCP runtime), and [task_augmented_client](examples/task_augmented_client.rs) (rmcp client with task-augmented `tools/call` and polling).
+**Examples:** [task_tools_dedicated](examples/servers/task_tools_dedicated.rs)
+(dedicated async runtime),
+[task_tools_shared](examples/servers/task_tools_shared.rs) (shared MCP runtime),
+[task_panic_catch](examples/servers/task_panic_catch.rs) (panic-in-task with
+`catch_in_process_panics`), and
+[task_augmented_client](examples/task_augmented_client.rs) (rmcp client with
+task-augmented `tools/call` and polling). Integration tests also use
+`task_serial_probe_*` (serialized probes), `task_parallel_probe_*` (concurrent
+probes), and `task_panic_catch_parallel` (panic under `parallel_safe = true`).
 
-**Logging during tasks:** When `ClapMcpServeOptions::log_rx` is set and you use the `tracing` or `log` bridges, log notifications emitted during a task-augmented tool body include `meta.taskId` in notification extensions, matching `CreateTaskResult.task.task_id` (serialized servers only run one body at a time).
+**Logging during tasks:** When `ClapMcpServeOptions::log_rx` is set and you use
+the `tracing` or `log` bridges, log notifications emitted during a
+task-augmented tool body include `meta.taskId` in notification extensions,
+matching `CreateTaskResult.task.task_id` (including when multiple task bodies
+run concurrently).
 
 `share_runtime` only applies when `reinvocation_safe` is true. When tools run
 in subprocesses (`reinvocation_safe = false`), `share_runtime` is ignored.
 
 ## Security
 
-The MCP server does **not** trust the client for tool or argument discovery. Every
+The MCP server does **not** trust the client for tool or argument discovery.
+Every
 tool call is validated against the schema before any execution (in-process or
-subprocess). Unknown tools and unknown argument names are rejected immediately with
+subprocess). Unknown tools and unknown argument names are rejected immediately
+with
 an error; execution proceeds only for schema-defined tools and arguments.
 
 When `reinvocation_safe` is `false` (the default), each tool call spawns a fresh
 subprocess of your binary. Consider the following:
 
-**Shell injection is not a concern.** Arguments are passed via `std::process::Command::arg()`
+**Shell injection is not a concern.** Arguments are passed via
+`std::process::Command::arg()`
 directly to the executable as `argv` — no shell is invoked, so metacharacters
 (`;`, `|`, `$()`, etc.) are not interpreted.
 
-**Unknown tools and arguments are rejected.** The server validates every tool name and
+**Unknown tools and arguments are rejected.** The server validates every tool
+name and
 argument name against the schema before execution. Invalid requests fail with
-`CallToolError::unknown_tool` or `CallToolError::invalid_arguments`; no subprocess
+`CallToolError::unknown_tool` or `CallToolError::invalid_arguments`; no
+subprocess
 is spawned and no in-process handler is invoked for invalid calls.
 
-**Argument values come from the MCP client.** The schema constrains which argument
-names are accepted, but values are passed through unvalidated. If your CLI uses those
-values unsafely (e.g., in file paths, system calls, or other sensitive operations),
-a malicious or compromised MCP client could exploit that. Ensure your CLI validates
+**Argument values come from the MCP client.** The schema constrains which
+argument
+names are accepted, but values are passed through unvalidated. If your CLI uses
+those
+values unsafely (e.g., in file paths, system calls, or other sensitive
+operations),
+a malicious or compromised MCP client could exploit that. Ensure your CLI
+validates
 and sanitizes all inputs.
 
 **Environment and working directory are inherited.** The subprocess inherits the
-full environment and CWD of the MCP server. Sensitive env vars (API keys, tokens)
-are visible to every subprocess; relative paths resolve against the server's CWD.
+full environment and CWD of the MCP server. Sensitive env vars (API keys,
+tokens)
+are visible to every subprocess; relative paths resolve against the server's
+CWD.
 
-**Resource usage.** Each tool call spawns a new process. With `parallel_safe = true`,
-many concurrent calls can create many processes. There are no timeouts or resource
+**Resource usage.** Each tool call spawns a new process. With `parallel_safe =
+true`,
+many concurrent calls can create many processes. There are no timeouts or
+resource
 limits on subprocess execution.
 
 ## Tool output attributes
 
 When using `#[derive(ClapMcp)]`, you control how each subcommand's output is
-returned to MCP clients. The **idiomatic** approach is a **single output function**
-(`#[clap_mcp_output_from = "run"]`): one `run` implements both CLI and MCP behavior, so you
-avoid duplicating logic. Per-variant attributes are available for edge cases but are not
+returned to MCP clients. The **idiomatic** approach is a **single output
+function**
+(`#[clap_mcp_output_from = "run"]`): one `run` implements both CLI and MCP
+behavior, so you
+avoid duplicating logic. Per-variant attributes are available for edge cases but
+are not
 the default.
 
 ### `#[clap_mcp_output_from = "run"]` — single output function (recommended)
@@ -548,17 +710,32 @@ Use the same `run` in `main` so CLI and MCP share the same logic.
 
 **Supported return types for `run`:**
 
-- `String` or `&str` → text output
-- [`AsStructured`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.AsStructured.html)`<T>` where `T: Serialize` → structured JSON output
-- A type that implements [`IntoClapMcpResult`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.IntoClapMcpResult.html) (e.g. a custom enum for mixed text/structured)
-- `Option<O>` → `None` becomes empty text; `Some(o)` → `o.into_tool_result()`
-- `Result<O, E>` → `Ok(o)` → output; `Err(e)` → MCP error. `E` must implement [`IntoClapMcpToolError`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.IntoClapMcpToolError.html) (e.g. `String`, or your type for structured errors)
+* `String` or `&str` → text output
+* [`AsStructured`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.AsStructured.html)`<T>`
+  where `T: Serialize` → structured JSON output
+* A type that implements
+  [`IntoClapMcpResult`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.IntoClapMcpResult.html)
+  (e.g. a custom enum for mixed text/structured)
+* `Option<O>` → `None` becomes empty text; `Some(o)` → `o.into_tool_result()`
+* `Result<O, E>` → `Ok(o)` → output; `Err(e)` → MCP error. `E` must implement
+  [`IntoClapMcpToolError`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.IntoClapMcpToolError.html)
+  (e.g. `String`, or your type for structured errors)
 
-`Result<AsStructured<T>, E>` is fully supported when you want structured success payloads and a separate error type; [`IntoClapMcpResult`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.IntoClapMcpResult.html) is implemented for `AsStructured<T: Serialize>`.
+`Result<AsStructured<T>, E>` is fully supported when you want structured success
+payloads and a separate error type;
+[`IntoClapMcpResult`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.IntoClapMcpResult.html)
+is implemented for `AsStructured<T: Serialize>`.
 
-**Recommended pattern for CLIs with multiple subcommands:** have `run` return `Result<AsStructured<SubcommandResult>, ApplicationError>` and use `#[clap_mcp_output_from = "run"]`. Implement [`IntoClapMcpToolError`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.IntoClapMcpToolError.html) for your application error type and cover **all** error variants (e.g. `InvalidArgument`, validation errors, I/O errors) in that single impl so MCP error responses are consistent across tools.
+**Recommended pattern for CLIs with multiple subcommands:** have `run` return
+`Result<AsStructured<SubcommandResult>, ApplicationError>` and use
+`#[clap_mcp_output_from = "run"]`. Implement
+[`IntoClapMcpToolError`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.IntoClapMcpToolError.html)
+for your application error type and cover **all** error variants (e.g.
+`InvalidArgument`, validation errors, I/O errors) in that single impl so MCP
+error responses are consistent across tools.
 
-For `run() -> Result<O, E>`, ensure `E: IntoClapMcpToolError` and the macro will convert the return value automatically.
+For `run() -> Result<O, E>`, ensure `E: IntoClapMcpToolError` and the macro will
+convert the return value automatically.
 
 **Example:**
 
@@ -589,13 +766,17 @@ fn main() {
 }
 ```
 
-Tool output is defined **only** via `#[clap_mcp_output_from = "run"]` and a single `run`
-function; there are no per-variant output attributes. Use `run(Cli) -> T` where `T`
-implements `IntoClapMcpResult` (e.g. `String`, `AsStructured<T>`, `Result<O, E>`).
+Tool output is defined **only** via `#[clap_mcp_output_from = "run"]` and a
+single `run`
+function; there are no per-variant output attributes. Use `run(Cli) -> T` where
+`T`
+implements `IntoClapMcpResult` (e.g. `String`, `AsStructured<T>`, `Result<O,
+E>`).
 
 ### `ClapMcpServeOptions::capture_stdout`
 
-When `true` and running in-process, captures stdout written during tool execution
+When `true` and running in-process, captures stdout written during tool
+execution
 and merges it with Text output. Only has effect when `reinvocation_safe = true`
 (in-process execution). **Unix only** — the field is not present on Windows, so
 code that sets `capture_stdout` will not compile on Windows. Subprocess mode
@@ -603,13 +784,16 @@ already captures stdout via `Command::output()`.
 
 ## Output schema (oneOf) for MCP tool discovery
 
-With the **`output-schema`** feature enabled, you can attach a JSON schema to each tool's
+With the **`output-schema`** feature enabled, you can attach a JSON schema to
+each tool's
 `outputSchema` field so MCP clients know the shape of the tool's output.
 
 ### `#[clap_mcp_output_type = "TypeName"]`
 
-Use when your tool output is a **single type** (e.g. an enum or struct). The type must
-implement [`schemars::JsonSchema`](https://docs.rs/schemars/latest/schemars/trait.JsonSchema.html).
+Use when your tool output is a **single type** (e.g. an enum or struct). The
+type must
+implement
+[`schemars::JsonSchema`](https://docs.rs/schemars/latest/schemars/trait.JsonSchema.html).
 For enums, schemars typically produces a `oneOf` schema.
 
 ```rust
@@ -625,7 +809,8 @@ enum Cli { ... }
 
 ### `#[clap_mcp_output_one_of = "T1, T2, T3"]`
 
-Use when you want to list **multiple types** explicitly for a `oneOf` schema without
+Use when you want to list **multiple types** explicitly for a `oneOf` schema
+without
 defining a wrapper enum. Each type must implement `schemars::JsonSchema`.
 
 ```rust
@@ -639,10 +824,13 @@ struct SubResult { difference: i32 }
 enum Cli { ... }
 ```
 
-When either attribute is set, [`ClapMcpSchemaMetadata::output_schema`] is populated
+When either attribute is set, [`ClapMcpSchemaMetadata::output_schema`] is
+populated
 (by the derive) and [`tools_from_schema_with_metadata`] attaches it to
-each tool. The high-level serve path (`ParseOrServeMcp::parse_or_serve_mcp`, etc.) uses metadata
-automatically, so tools get `output_schema` when you use the derive and these attributes.
+each tool. The high-level serve path (`ParseOrServeMcp::parse_or_serve_mcp`,
+etc.) uses metadata
+automatically, so tools get `output_schema` when you use the derive and these
+attributes.
 
 ## Logging and observability
 
@@ -677,10 +865,10 @@ opts.log_rx = Some(log_rx);
 
 **Current limitations:**
 
-- Only the `message` field of each tracing event is forwarded. Other structured
+* Only the `message` field of each tracing event is forwarded. Other structured
   fields (e.g. `tracing::info!(count = 42, "done")` — `count` is dropped) are
   not yet included.
-- Span lifecycle events (`on_new_span`, `on_enter`, `on_close`) are not
+* Span lifecycle events (`on_new_span`, `on_enter`, `on_close`) are not
   captured.
 
 ### `log` feature
@@ -701,7 +889,8 @@ let mut opts = clap_mcp::ClapMcpServeOptions::default();
 opts.log_rx = Some(log_rx);
 ```
 
-**Trade-off:** The `log` crate supports exactly **one global logger**. Installing
+**Trade-off:** The `log` crate supports exactly **one global logger**.
+Installing
 `ClapMcpLogBridge` replaces any existing logger (e.g. `env_logger`,
 `simplelog`). If you need to log to both disk and MCP simultaneously, you'll
 need a multiplexing wrapper — either a custom `Log` impl that fans out to
@@ -710,19 +899,25 @@ multiple sinks, or a crate like
 
 ## Streamable HTTP (`http` feature)
 
-Enable the optional `http` feature on `clap-mcp` to serve MCP over Streamable HTTP instead of stdio:
-
-```toml
-clap-mcp = { version = "...", features = ["derive", "http"] }
-```
-
-Run with `--mcp-http 127.0.0.1:8080`, `--mcp-http` alone with `CLAP_MCP_HTTP_LISTEN`, or `CLAP_MCP_HTTP_BIND` + `CLAP_MCP_HTTP_PORT`. See [docs/http.md](docs/http.md). `--mcp` (stdio) and `--mcp-http` are mutually exclusive.
+Enable the optional `http` feature on `clap-mcp` to serve MCP over Streamable
+HTTP instead of stdio:
 
 ```toml
 clap-mcp = { version = "0.0.4-rc.1", features = ["derive", "http"] }
 ```
 
-Example: `cargo run -p clap-mcp-examples --bin subcommands_http --features http -- --mcp-http 127.0.0.1:8080`
+Run with `--mcp-http 127.0.0.1:8080`, `--mcp-http` alone with
+`CLAP_MCP_HTTP_LISTEN`, or `CLAP_MCP_HTTP_BIND` + `CLAP_MCP_HTTP_PORT`. See
+[docs/http.md](docs/http.md). `--mcp` (stdio) and `--mcp-http` are mutually
+exclusive.
 
-Maintainers: MCP spec conformance against that example — `cargo xtask conformance` (local Docker) or see [docs/conformance-baseline.md](docs/conformance-baseline.md).
+```toml
+clap-mcp = { version = "0.0.4-rc.1", features = ["derive", "http"] }
+```
 
+Example: `cargo run -p clap-mcp-examples --bin subcommands_http --features http
+-- --mcp-http 127.0.0.1:8080`
+
+Maintainers: MCP spec conformance against that example — `cargo xtask
+conformance` (local Docker) or see
+[docs/conformance-baseline.md](docs/conformance-baseline.md).
