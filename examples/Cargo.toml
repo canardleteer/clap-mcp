@@ -88,6 +88,10 @@ name = "nested_subcommands"
 path = "servers/nested_subcommands.rs"
 
 [[bin]]
+name = "stateful_counter"
+path = "servers/stateful_counter.rs"
+
+[[bin]]
 name = "placeholder_server"
 path = "servers/placeholder_server.rs"
 

@@ -24,8 +24,10 @@ enum Cli {
     /// Add numbers with structured JSON output.
     Add {
         /// First operand.
+        #[arg(long)]
         a: i32,
         /// Second operand.
+        #[arg(long)]
         b: i32,
     },
 }

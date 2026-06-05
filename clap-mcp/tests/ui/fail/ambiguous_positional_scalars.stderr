@@ -1,0 +1,5 @@
+error: clap_mcp: multiple positional scalar arguments are ambiguous for MCP tool calls; use #[arg(long)] on each field or #[clap_mcp(skip)]
+ --> tests/ui/fail/ambiguous_positional_scalars.rs:9:5
+  |
+9 |     Edit {
+  |     ^^^^

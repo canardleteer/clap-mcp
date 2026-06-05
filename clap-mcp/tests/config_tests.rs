@@ -80,7 +80,12 @@ struct SubResult {
 #[clap_mcp_output_from = "run_structured"]
 #[command(name = "test-cli-structured")]
 enum TestCliStructured {
-    Sub { a: i32, b: i32 },
+    Sub {
+        #[arg(long)]
+        a: i32,
+        #[arg(long)]
+        b: i32,
+    },
 }
 
 fn run_structured(cmd: TestCliStructured) -> AsStructured<SubResult> {
@@ -104,7 +109,12 @@ enum TestCliOutputFrom {
     OptionOut { present: bool },
     ResultOk,
     ResultErr,
-    StructuredOut { a: i32, b: i32 },
+    StructuredOut {
+        #[arg(long)]
+        a: i32,
+        #[arg(long)]
+        b: i32,
+    },
 }
 
 fn run(cmd: TestCliOutputFrom) -> Result<OutputFromResult, String> {
@@ -174,7 +184,12 @@ struct TestStructCli {
 #[derive(Debug, Subcommand, ClapMcp)]
 #[clap_mcp_output_from = "run_struct_commands"]
 enum TestStructCommands {
-    Add { a: i32, b: i32 },
+    Add {
+        #[arg(long)]
+        a: i32,
+        #[arg(long)]
+        b: i32,
+    },
 }
 
 fn run_struct_commands(cmd: TestStructCommands) -> String {
