@@ -43,7 +43,9 @@ mod server;
 mod http;
 
 #[cfg(feature = "http-oauth")]
-pub mod oauth;
+pub mod oauth {
+    pub use rmcp::transport::{StreamableHttpClientTransport, auth::AuthClient};
+}
 
 pub use server::{ClapMcpServer, build_clap_mcp_server, serve_schema_json_over_stdio};
 

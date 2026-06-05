@@ -717,3 +717,5 @@ Run with `--mcp-http 127.0.0.1:8080` (or set `CLAP_MCP_HTTP_LISTEN`). `--mcp` (s
 
 Example: `cargo run -p clap-mcp-examples --bin subcommands_http --features http -- --mcp-http 127.0.0.1:8080`
 
+Maintainers: MCP spec conformance against that example — `cargo xtask conformance` (local Docker) or see [docs/conformance-baseline.md](docs/conformance-baseline.md).
+
