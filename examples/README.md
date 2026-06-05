@@ -18,6 +18,9 @@ for imperative embedders:
 * **`ServeMcpBuilder::for_cli::<T>(listen)`** — derive CLI pre-filled; call
   `.serve().await` or `.serve_blocking()` (see `async_embedder_serve`,
   `placeholder_server`, `invalid_executable_server`).
+* **`ServeMcpBuilder::for_cli_with_state::<T, S>(listen, state)`** — like
+  `for_cli`, but captures shared state for stateful derive CLIs (see
+  `stateful_counter`).
 * **`ServeMcpBuilder::new()`** — hand-built schema/config for imperative embedders.
 * **`serve_mcp` / `serve_mcp_blocking`** — lower-level 7-arg equivalents (delegate to builder).
 * **`tools_from_schema_with_metadata`** — build MCP tools from schema +
@@ -38,7 +41,7 @@ public `ClapMcpServer` / `build_clap_mcp_server`. See
   log_bridge, async_sleep, async_sleep_shared, **async_embedder_serve**,
   **task_tools_dedicated**,
   **task_tools_shared**, **subprocess_exit_handling**, **panic_catch_opt_in**,
-  **custom_resources_prompts**, **vec_and_flags**)
+  **custom_resources_prompts**, **vec_and_flags**, **stateful_counter**)
 
 ## Async embedders
 

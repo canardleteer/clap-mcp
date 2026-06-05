@@ -113,7 +113,12 @@ use clap_mcp::ClapMcp;
 #[clap_mcp_output_from = "run"]
 #[command(name = "myapp")]
 enum Cli {
-    Add { a: i32, b: i32 },
+    Add {
+        #[arg(long)]
+        a: i32,
+        #[arg(long)]
+        b: i32,
+    },
 }
 
 fn run(cmd: Cli) -> String {
@@ -344,7 +349,12 @@ use clap_mcp::ClapMcp;
 #[clap_mcp_output_from = "run"]
 #[command(...)]
 enum Cli {
-    Add { a: i32, b: i32 },
+    Add {
+        #[arg(long)]
+        a: i32,
+        #[arg(long)]
+        b: i32,
+    },
     // ...
 }
 
@@ -372,6 +382,13 @@ For **optional positional arguments** that might read from stdin when omitted,
 prefer an
 explicit `#[clap_mcp(requires)]` or `#[clap_mcp(skip)]` so MCP behavior is
 intentional.
+
+**Multiple positional scalars:** MCP clients send **named** JSON arguments, but
+clap-mcp rebuilds **positional-only** argv for subprocess and in-process tool
+calls. Two or more bare scalar positionals on the same variant (non-`Vec`) are
+rejected at **compile time** — use `#[arg(long)]` on each field or
+`#[clap_mcp(skip)]`. See the **stateful_counter** and **vec_and_flags** examples
+for safe patterns.
 
 **Argument-level** (on each field):
 
@@ -497,6 +514,49 @@ to `true` via the derive with `#[clap_mcp(skip_root_when_subcommands)]` on the
 root struct, or imperatively (e.g. implement `ClapMcpSchemaMetadataProvider` for
 the root and set the field, or build metadata manually).
 
+### Stateful MCP tools (shared session state)
+
+When `reinvocation_safe` is true, in-process tool calls can share an
+`Arc<S>` captured for the MCP server lifetime. Add both attributes on the
+**subcommand enum** (and `#[clap_mcp_state_type = "..."]` on a struct root that
+delegates to subcommands):
+
+```rust
+use clap_mcp::{ClapMcp, ParseOrServeMcpWithState};
+use std::sync::{Arc, Mutex};
+
+#[derive(Default)]
+struct CounterState { count: u64 }
+
+#[derive(Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe = true)]
+#[clap_mcp_state_type = "Mutex<CounterState>"]
+struct App {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand, ClapMcp)]
+#[clap_mcp(reinvocation_safe = true)]
+#[clap_mcp_output_from_with_state = "run"]
+#[clap_mcp_state_type = "Mutex<CounterState>"]
+enum Command { Increment, Read }
+
+fn run(cmd: Command, state: &Arc<Mutex<CounterState>>) -> String { /* ... */ }
+
+fn main() {
+    let state = Arc::new(Mutex::new(CounterState::default()));
+    let app = App::parse_or_serve_mcp_with_state(state.clone());
+    // normal CLI path when --mcp was not passed
+}
+```
+
+Entrypoints: [`ParseOrServeMcpWithState::parse_or_serve_mcp_with_state`],
+[`parse_or_serve_mcp_with_state`], and
+[`ServeMcpBuilder::for_cli_with_state`]. Requires `reinvocation_safe` (subprocess
+mode cannot share in-process state). Example:
+[stateful_counter](examples/servers/stateful_counter.rs).
+
 ### Runtime config
 
 Use `ClapMcpConfig` with `parse_or_serve_mcp_with` or
@@ -538,6 +598,9 @@ async fn main() -> Result<(), clap_mcp::ClapMcpError> {
         .serve()
         .await
 }
+
+// Stateful derive CLI:
+// ServeMcpBuilder::for_cli_with_state::<Cli, S>(McpListen::Stdio, state).serve().await
 ```
 
 See [async_embedder_serve](examples/servers/async_embedder_serve.rs) (imperative
@@ -753,7 +816,12 @@ use clap_mcp::{ClapMcp, AsStructured};
 #[command(name = "myapp", subcommand_required = false)]
 enum Cli {
     Greet { #[arg(long)] name: Option<String> },
-    Add { a: i32, b: i32 },
+    Add {
+        #[arg(long)]
+        a: i32,
+        #[arg(long)]
+        b: i32,
+    },
 }
 
 fn run(cmd: Cli) -> String {
