@@ -124,6 +124,26 @@ name = "task_serial_probe_shared"
 path = "servers/task_serial_probe_shared.rs"
 required-features = ["tracing"]
 
+[[bin]]
+name = "task_parallel_probe_dedicated"
+path = "servers/task_parallel_probe_dedicated.rs"
+required-features = ["tracing"]
+
+[[bin]]
+name = "task_parallel_probe_shared"
+path = "servers/task_parallel_probe_shared.rs"
+required-features = ["tracing"]
+
+[[bin]]
+name = "task_panic_catch"
+path = "servers/task_panic_catch.rs"
+required-features = ["tracing"]
+
+[[bin]]
+name = "task_panic_catch_parallel"
+path = "servers/task_panic_catch_parallel.rs"
+required-features = ["tracing"]
+
 [features]
 default = ["tracing", "log"]
 tracing = []

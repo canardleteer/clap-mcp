@@ -101,7 +101,8 @@ pub(crate) fn serve_schema_json_over_http_blocking(
     serve_options: ClapMcpServeOptions,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Result<(), ClapMcpError> {
-    let use_multi_thread = config.reinvocation_safe && config.share_runtime;
+    let use_multi_thread =
+        config.reinvocation_safe && (config.share_runtime || config.parallel_safe);
     let rt = if use_multi_thread {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()

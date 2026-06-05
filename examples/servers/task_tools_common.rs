@@ -2,6 +2,7 @@
 
 /// Sleeps asynchronously and returns a short message (for task-augmented `tools/call` demos).
 #[cfg(feature = "tracing")]
+#[allow(dead_code)]
 pub async fn sleep_ms(ms: u64) -> String {
     tracing::info!(ms, "task sleep start");
     tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
