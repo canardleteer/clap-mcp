@@ -7,8 +7,8 @@ use clap_mcp::{
     ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpSchemaMetadata,
     ClapMcpSchemaMetadataProvider, ClapMcpToolExecutor, ClapMcpToolOutput,
     LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, PROMPT_LOGGING_GUIDE, ParseOrServeMcp,
-    run_async_tool, schema_from_command, schema_from_command_with_metadata, tool_task_eligible,
-    tools_from_schema_with_config, tools_from_schema_with_config_and_metadata,
+    run_async_tool, schema_from_command, schema_from_command_with_metadata,
+    tools_from_schema_with_metadata,
 };
 use serde::Serialize;
 
@@ -282,25 +282,47 @@ fn test_clap_mcp_config_provider_share_runtime_defaults_when_omitted() {
 }
 
 #[test]
-fn test_tool_task_eligible_and_task_augmented_meta() {
-    let mut metadata = ClapMcpSchemaMetadata::default();
-    metadata.task_tool_names.push("foo".into());
+fn test_task_augmented_meta_on_tools() {
+    let metadata = ClapMcpSchemaMetadata {
+        task_augmented_tools: true,
+        task_tool_names: vec!["test-cli".into()],
+        ..Default::default()
+    };
     let config = ClapMcpConfig {
         reinvocation_safe: true,
-        task_augmented_tools: true,
         parallel_safe: false,
         ..Default::default()
     };
-    assert!(tool_task_eligible("foo", &config, &metadata));
-    assert!(!tool_task_eligible("bar", &config, &metadata));
-    assert!(!tool_task_eligible(
-        "foo",
-        &ClapMcpConfig::default(),
-        &metadata
-    ));
+    let cmd = TestCliDefaults::command();
+    let schema = schema_from_command(&cmd);
+    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+    assert!(!tools.is_empty());
+    for tool in &tools {
+        let meta = tool.meta.as_ref().expect("tool meta");
+        let clap_mcp = meta.get("clapMcp").expect("clapMcp meta");
+        let obj = clap_mcp.as_object().expect("clapMcp object");
+        let eligible = metadata.task_tool_names.iter().any(|n| n == &tool.name);
+        if eligible {
+            assert_eq!(
+                obj.get("taskAugmented").and_then(|v| v.as_bool()),
+                Some(true)
+            );
+        } else {
+            assert!(obj.get("taskAugmented").is_none());
+        }
+    }
 
-    let metadata_all = ClapMcpSchemaMetadata::default();
-    assert!(tool_task_eligible("bar", &config, &metadata_all));
+    let metadata_off = ClapMcpSchemaMetadata {
+        task_augmented_tools: false,
+        ..Default::default()
+    };
+    let tools_off = tools_from_schema_with_metadata(&schema, &config, &metadata_off);
+    for tool in &tools_off {
+        let meta = tool.meta.as_ref().expect("tool meta");
+        let clap_mcp = meta.get("clapMcp").expect("clapMcp meta");
+        let obj = clap_mcp.as_object().expect("clapMcp object");
+        assert!(obj.get("taskAugmented").is_none());
+    }
 }
 
 #[test]
@@ -314,7 +336,7 @@ fn test_tools_from_schema_with_config_meta() {
         ..Default::default()
     };
     let metadata = ClapMcpSchemaMetadata::default();
-    let tools = tools_from_schema_with_config_and_metadata(&schema, &config_false_false, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &config_false_false, &metadata);
     assert!(!tools.is_empty());
     for tool in &tools {
         let meta = tool.meta.as_ref().expect("tool should have meta");
@@ -335,7 +357,11 @@ fn test_tools_from_schema_with_config_meta() {
         parallel_safe: true,
         ..Default::default()
     };
-    let tools = tools_from_schema_with_config(&schema, &config_true_true);
+    let tools = tools_from_schema_with_metadata(
+        &schema,
+        &config_true_true,
+        &ClapMcpSchemaMetadata::default(),
+    );
     for tool in &tools {
         let meta = tool.meta.as_ref().expect("tool should have meta");
         let clap_mcp = meta.get("clapMcp").expect("meta should have clapMcp");
@@ -360,7 +386,11 @@ fn test_tools_from_schema_with_config_meta() {
         share_runtime: true,
         ..Default::default()
     };
-    let tools = tools_from_schema_with_config(&schema, &config_share_runtime);
+    let tools = tools_from_schema_with_metadata(
+        &schema,
+        &config_share_runtime,
+        &ClapMcpSchemaMetadata::default(),
+    );
     for tool in &tools {
         let meta = tool.meta.as_ref().expect("tool should have meta");
         let clap_mcp = meta.get("clapMcp").expect("meta should have clapMcp");
@@ -664,7 +694,7 @@ fn test_skip_root_command_when_subcommands() {
     metadata.skip_root_command_when_subcommands = true;
     let schema = schema_from_command_with_metadata(&cmd, &metadata);
     let config = ClapMcpConfig::default();
-    let tools = tools_from_schema_with_config_and_metadata(&schema, &config, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
     let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(
         !names.contains(&"test-struct-optional-cli"),
@@ -686,7 +716,7 @@ fn test_skip_root_when_subcommands_derive() {
     );
     let schema = schema_from_command_with_metadata(&cmd, &metadata);
     let config = ClapMcpConfig::default();
-    let tools = tools_from_schema_with_config_and_metadata(&schema, &config, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
     let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(
         !names.contains(&"test-root-skip-when-subcommands"),
@@ -918,7 +948,7 @@ fn test_tools_from_schema_with_metadata_output_schema() {
     let cmd = TestCliOutputSchema::command();
     let schema = schema_from_command_with_metadata(&cmd, &metadata);
     let config = ClapMcpConfig::default();
-    let tools = tools_from_schema_with_config_and_metadata(&schema, &config, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
     for tool in &tools {
         assert!(
             tool.output_schema.is_some(),

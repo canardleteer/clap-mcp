@@ -4,7 +4,7 @@
 //! See the crate README section "Struct root with subcommand" / "Dual derive (root + subcommand)".
 
 use clap::{Parser, Subcommand};
-use clap_mcp::{ClapMcp, ClapMcpToolError, ClapMcpToolOutput};
+use clap_mcp::{ClapMcp, ClapMcpToolError, ClapMcpToolOutput, ParseOrServeMcp};
 use serde::Serialize;
 
 #[derive(Debug, Parser, ClapMcp)]
@@ -87,7 +87,7 @@ fn run(cmd: Commands) -> CommandsOutput {
 }
 
 fn main() {
-    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+    let cli = Cli::parse_or_serve_mcp();
 
     match cli.command {
         None => println!("No subcommand (try greet, add, or sub)"),

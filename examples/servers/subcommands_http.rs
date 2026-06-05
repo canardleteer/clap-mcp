@@ -1,5 +1,6 @@
 mod subcommands_common;
 
+use clap_mcp::ParseOrServeMcp;
 use subcommands_common::{Cli, run_cli_interactive};
 
 /// Streamable HTTP MCP example (`--mcp-http`, requires `http` feature).
@@ -7,6 +8,6 @@ use subcommands_common::{Cli, run_cli_interactive};
 /// Try:
 /// - `cargo run -p clap-mcp-examples --bin subcommands_http --features http -- --mcp-http 127.0.0.1:8080`
 fn main() {
-    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+    let cli = Cli::parse_or_serve_mcp();
     run_cli_interactive(cli);
 }

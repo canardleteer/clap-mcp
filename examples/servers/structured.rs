@@ -3,7 +3,7 @@
 //! Run: `cargo run -p clap-mcp-examples --bin structured -- --mcp`
 
 use clap::Parser;
-use clap_mcp::{AsStructured, ClapMcp};
+use clap_mcp::{AsStructured, ClapMcp, ParseOrServeMcp};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -40,7 +40,7 @@ fn run(cmd: Cli) -> AsStructured<AddResult> {
 }
 
 fn main() {
-    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+    let cli = Cli::parse_or_serve_mcp();
     match cli {
         Cli::Add { a, b } => {
             let result = AddResult {

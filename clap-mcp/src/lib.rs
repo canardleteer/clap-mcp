@@ -25,7 +25,7 @@
 //! }
 //!
 //! fn main() {
-//!     let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+//!     let cli = Cli::parse_or_serve_mcp();
 //!     println!("{}", run(cli));
 //! }
 //! ```
@@ -43,14 +43,9 @@ mod server;
 mod http;
 
 #[cfg(feature = "http-oauth")]
-pub mod oauth {
-    pub use rmcp::transport::{StreamableHttpClientTransport, auth::AuthClient};
-}
+pub mod oauth;
 
-pub use server::{ClapMcpServer, build_clap_mcp_server, serve_schema_json_over_stdio};
-
-#[cfg(feature = "http")]
-pub use http::{serve_schema_json_over_http, serve_schema_json_over_http_blocking};
+pub use rmcp::model::ErrorData as ClapMcpErrorData;
 
 pub mod logging;
 
@@ -62,7 +57,7 @@ pub use clap_mcp_macros::ClapMcp;
 
 /// Convenience macro for struct root + subcommand CLIs: parse root then run.
 ///
-/// Expands to: parse the root with [`parse_or_serve_mcp_attr`], then evaluate the given
+/// Expands to: parse the root with [`ParseOrServeMcp::parse_or_serve_mcp`], then evaluate the given
 /// expression (which can use `args` for the parsed root). Use in `main` so the pattern
 /// is one line and hard to forget.
 ///
@@ -81,13 +76,13 @@ pub use clap_mcp_macros::ClapMcp;
 #[macro_export]
 macro_rules! clap_mcp_main {
     ($root:ty, |$args:ident| $run_expr:expr) => {{
-        let $args = $crate::parse_or_serve_mcp_attr::<$root>();
+        let $args = <$root as $crate::ParseOrServeMcp>::parse_or_serve_mcp();
         $run_expr
     }};
     ($root:ty, $run_expr:expr) => {{
         macro_rules! __clap_mcp_with_args {
             ($args:ident, $expr:expr) => {{
-                let $args = $crate::parse_or_serve_mcp_attr::<$root>();
+                let $args = <$root as $crate::ParseOrServeMcp>::parse_or_serve_mcp();
                 $expr
             }};
         }
@@ -102,9 +97,17 @@ pub const MCP_FLAG_LONG: &str = "mcp";
 #[cfg(feature = "http")]
 pub const MCP_HTTP_FLAG_LONG: &str = "mcp-http";
 
-/// Environment variable for HTTP listen address when `--mcp-http` is omitted.
+/// Environment variable for HTTP bind host when [`MCP_HTTP_LISTEN_ENV`] is unset.
+#[cfg(feature = "http")]
+pub const MCP_HTTP_BIND_ENV: &str = "CLAP_MCP_HTTP_BIND";
+
+/// Environment variable for HTTP listen address (`host:port`).
 #[cfg(feature = "http")]
 pub const MCP_HTTP_LISTEN_ENV: &str = "CLAP_MCP_HTTP_LISTEN";
+
+/// Environment variable for HTTP port when [`MCP_HTTP_LISTEN_ENV`] is unset (requires [`MCP_HTTP_BIND_ENV`]).
+#[cfg(feature = "http")]
+pub const MCP_HTTP_PORT_ENV: &str = "CLAP_MCP_HTTP_PORT";
 
 /// Long flag that triggers [Agent Skills](https://agentskills.io/specification) export (generates SKILL.md). Add via [`command_with_export_skills_flag`].
 pub const EXPORT_SKILLS_FLAG_LONG: &str = "export-skills";
@@ -539,12 +542,6 @@ pub struct ClapMcpConfig {
     /// require a subcommand (and thus `Option<Commands>` + `subcommand_required = false`) for
     /// `--mcp` to parse.
     pub allow_mcp_without_subcommand: bool,
-
-    /// When true, advertise MCP task support and handle task-augmented `tools/call`.
-    /// Requires **`reinvocation_safe`** (in-process execution). Use `#[clap_mcp(task_augmented_tools)]`
-    /// with `#[clap_mcp(reinvocation_safe, ...)]`; combining with `reinvocation_safe = false` is a
-    /// **compile error** in the derive.
-    pub task_augmented_tools: bool,
 }
 
 impl Default for ClapMcpConfig {
@@ -555,14 +552,46 @@ impl Default for ClapMcpConfig {
             share_runtime: false,
             catch_in_process_panics: false,
             allow_mcp_without_subcommand: true,
-            task_augmented_tools: false,
         }
     }
 }
 
+/// Derive-path and imperative MCP run options (execution config + serve behavior).
+#[derive(Debug)]
+pub struct ClapMcpRunOptions {
+    pub config: ClapMcpConfig,
+    pub serve: ClapMcpServeOptions,
+}
+
+impl ClapMcpRunOptions {
+    /// Build options with default [`ClapMcpServeOptions`].
+    pub fn from_config(config: ClapMcpConfig) -> Self {
+        Self {
+            config,
+            serve: ClapMcpServeOptions::default(),
+        }
+    }
+}
+
+impl From<ClapMcpConfig> for ClapMcpRunOptions {
+    fn from(config: ClapMcpConfig) -> Self {
+        Self::from_config(config)
+    }
+}
+
+/// MCP transport listen target for low-level embedders.
+#[derive(Debug, Clone, Copy)]
+pub enum McpListen {
+    /// Stdio MCP (default `--mcp` mode).
+    Stdio,
+    /// Streamable HTTP at the given socket address (`http` feature).
+    #[cfg(feature = "http")]
+    Http(std::net::SocketAddr),
+}
+
 /// Optional configuration for MCP serve behavior (logging, etc.).
 ///
-/// Pass to [`serve_schema_json_over_stdio`] or [`serve_schema_json_over_stdio_blocking`].
+/// Pass to [`serve_mcp_blocking`] or [`parse_or_serve_mcp_with`].
 /// When `log_rx` is set, enables the logging capability and forwards messages to the MCP client.
 ///
 /// # Example
@@ -573,7 +602,7 @@ impl Default for ClapMcpConfig {
 /// let (log_tx, log_rx) = log_channel(32);
 /// let mut opts = ClapMcpServeOptions::default();
 /// opts.log_rx = Some(log_rx);
-/// // Pass opts to parse_or_serve_mcp_with_config_and_options or serve_schema_json_over_stdio_blocking
+/// // Pass opts to parse_or_serve_mcp_with or serve_mcp_blocking
 /// ```
 #[derive(Debug, Default)]
 pub struct ClapMcpServeOptions {
@@ -657,28 +686,21 @@ pub struct ClapMcpSchemaMetadata {
     /// the leaf subcommands (e.g. explain, compare, sort) and the root is rarely invoked.
     pub skip_root_command_when_subcommands: bool,
     /// Subcommand tool names that may be invoked with MCP task-augmented `tools/call` when
-    /// [`ClapMcpConfig::task_augmented_tools`] is enabled. Populated by `#[clap_mcp(task)]` on
+    /// [`ClapMcpSchemaMetadata::task_augmented_tools`] is enabled. Populated by `#[clap_mcp(task)]` on
     /// enum variants. When **empty**, every tool is eligible for task augmentation (when enabled
-    /// in config). When **non-empty**, only listed tool names are eligible.
+    /// in metadata). When **non-empty**, only listed tool names are eligible.
     pub task_tool_names: Vec<String>,
+    /// When true, advertise MCP task support and handle task-augmented `tools/call`.
+    /// Set by `#[clap_mcp(task_augmented_tools)]` on the derive (requires `reinvocation_safe`).
+    pub task_augmented_tools: bool,
     /// Optional JSON schema for tool output. When set (e.g. via `#[clap_mcp_output_type]` or
     /// `#[clap_mcp_output_one_of]` with the `output-schema` feature), this schema is attached
     /// to each tool's `output_schema` field.
     pub output_schema: Option<serde_json::Value>,
 }
 
-/// Returns whether the given tool name should advertise `taskAugmented` in MCP tool metadata
-/// and accept task-augmented `tools/call` for this tool name.
-///
-/// When [`ClapMcpConfig::task_augmented_tools`] is false, returns false. When true and
-/// [`ClapMcpSchemaMetadata::task_tool_names`] is empty, all tools are eligible. When
-/// `task_tool_names` is non-empty, only names in that list are eligible.
-pub fn tool_task_eligible(
-    tool_name: &str,
-    config: &ClapMcpConfig,
-    metadata: &ClapMcpSchemaMetadata,
-) -> bool {
-    if !config.task_augmented_tools {
+pub(crate) fn tool_task_eligible(tool_name: &str, metadata: &ClapMcpSchemaMetadata) -> bool {
+    if !metadata.task_augmented_tools {
         return false;
     }
     if metadata.task_tool_names.is_empty() {
@@ -761,59 +783,11 @@ pub(crate) fn is_builtin_arg(id: &str) -> bool {
     )
 }
 
-/// Builds MCP tools from a clap schema.
+/// Builds MCP tools from a clap schema with execution config and metadata.
 ///
-/// One tool per command (root + every subcommand). Tool names match command names;
-/// descriptions use the same text as `--help`; each tool's input schema lists the
-/// command's arguments (excluding help/version/mcp).
-///
-/// # Example
-///
-/// ```rust
-/// use clap::{CommandFactory, Parser};
-/// use clap_mcp::{schema_from_command, tools_from_schema};
-///
-/// #[derive(Parser)]
-/// #[command(name = "mycli")]
-/// enum Cli { Foo }
-///
-/// let cmd = Cli::command();
-/// let schema = schema_from_command(&cmd);
-/// let tools = tools_from_schema(&schema);
-/// assert!(!tools.is_empty());
-/// ```
-pub fn tools_from_schema(schema: &ClapSchema) -> Vec<Tool> {
-    tools_from_schema_with_config(schema, &ClapMcpConfig::default())
-}
-
-/// Builds MCP tools from a clap schema with execution safety annotations.
-///
-/// Tools include `meta.clapMcp` with `reinvocationSafe` and `parallelSafe` hints
-/// for MCP clients to make informed execution decisions.
-///
-/// # Example
-///
-/// ```rust
-/// use clap::{CommandFactory, Parser};
-/// use clap_mcp::{schema_from_command, tools_from_schema_with_config, ClapMcpConfig};
-///
-/// #[derive(Parser)]
-/// #[command(name = "mycli")]
-/// enum Cli { Foo }
-///
-/// let schema = schema_from_command(&Cli::command());
-/// let config = ClapMcpConfig { reinvocation_safe: true, parallel_safe: false, ..Default::default() };
-/// let tools = tools_from_schema_with_config(&schema, &config);
-/// ```
-pub fn tools_from_schema_with_config(schema: &ClapSchema, config: &ClapMcpConfig) -> Vec<Tool> {
-    tools_from_schema_with_config_and_metadata(schema, config, &ClapMcpSchemaMetadata::default())
-}
-
-/// Builds MCP tools from a clap schema with config and optional metadata.
-/// When `metadata.output_schema` is set, each tool's `output_schema` field is set to that value.
-/// When `metadata.skip_root_command_when_subcommands` is true and the root has subcommands,
-/// the root command is excluded from the tool list (only subcommands become tools).
-pub fn tools_from_schema_with_config_and_metadata(
+/// One tool per command (root + every subcommand). Tools include `meta.clapMcp` with
+/// `reinvocationSafe`, `parallelSafe`, and optional `taskAugmented` hints.
+pub fn tools_from_schema_with_metadata(
     schema: &ClapSchema,
     config: &ClapMcpConfig,
     metadata: &ClapMcpSchemaMetadata,
@@ -923,7 +897,7 @@ fn command_to_tool_with_config(
             "shareRuntime".into(),
             serde_json::Value::Bool(config.share_runtime),
         );
-        if tool_task_eligible(&cmd.name, config, metadata) {
+        if tool_task_eligible(&cmd.name, metadata) {
             clap_mcp.insert("taskAugmented".into(), serde_json::Value::Bool(true));
         }
         let mut m = Meta::default();
@@ -931,7 +905,7 @@ fn command_to_tool_with_config(
         Some(m)
     };
 
-    let execution = if tool_task_eligible(&cmd.name, config, metadata) {
+    let execution = if tool_task_eligible(&cmd.name, metadata) {
         Some(ToolExecution::from_raw(Some(TaskSupport::Optional)))
     } else {
         None
@@ -1129,22 +1103,40 @@ fn command_with_mcp_http_flag(mut cmd: Command) -> Command {
 }
 
 #[cfg(feature = "http")]
-pub(crate) fn argv_mcp_http_listen_from_args(args: &[String]) -> Option<String> {
-    for (i, arg) in args.iter().enumerate() {
-        if arg == "--mcp-http" {
-            return args.get(i + 1).filter(|s| !s.starts_with('-')).cloned();
-        }
-        if let Some(addr) = arg.strip_prefix("--mcp-http=") {
-            return Some(addr.to_string());
-        }
+pub(crate) fn mcp_http_listen_from_env() -> Option<String> {
+    if let Ok(listen) = std::env::var(MCP_HTTP_LISTEN_ENV)
+        && !listen.is_empty()
+    {
+        return Some(listen);
     }
-    std::env::var(MCP_HTTP_LISTEN_ENV).ok()
+    match (
+        std::env::var(MCP_HTTP_BIND_ENV).ok(),
+        std::env::var(MCP_HTTP_PORT_ENV).ok(),
+    ) {
+        (Some(bind), Some(port)) if !bind.is_empty() && !port.is_empty() => {
+            Some(format!("{bind}:{port}"))
+        }
+        _ => None,
+    }
 }
 
 #[cfg(feature = "http")]
-fn argv_mcp_http_listen() -> Option<String> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    argv_mcp_http_listen_from_args(&args)
+pub(crate) fn argv_mcp_http_listen_from_args(args: &[String]) -> Option<String> {
+    for (i, arg) in args.iter().enumerate() {
+        if arg == "--mcp-http" {
+            if let Some(val) = args.get(i + 1).filter(|s| !s.starts_with('-')) {
+                return Some(val.clone());
+            }
+            return mcp_http_listen_from_env();
+        }
+        if let Some(addr) = arg.strip_prefix("--mcp-http=") {
+            if addr.is_empty() {
+                return mcp_http_listen_from_env();
+            }
+            return Some(addr.to_string());
+        }
+    }
+    mcp_http_listen_from_env()
 }
 
 #[cfg(feature = "http")]
@@ -1157,6 +1149,61 @@ fn parse_mcp_http_listen(raw: &str) -> Result<std::net::SocketAddr, ClapMcpError
 }
 
 #[cfg(feature = "http")]
+fn mcp_http_listen_error_message() -> String {
+    format!(
+        "`--mcp-http` requires HOST:PORT, or set {MCP_HTTP_LISTEN_ENV}, or {MCP_HTTP_BIND_ENV} + {MCP_HTTP_PORT_ENV}"
+    )
+}
+
+#[cfg(feature = "http")]
+fn resolve_mcp_http_listen_from_args(
+    args: &[String],
+) -> Result<Option<std::net::SocketAddr>, ClapMcpError> {
+    let wants_http = args
+        .iter()
+        .any(|a| a == "--mcp-http" || a.starts_with("--mcp-http="));
+    if !wants_http {
+        return Ok(None);
+    }
+    match argv_mcp_http_listen_from_args(args) {
+        Some(raw) if !raw.is_empty() => parse_mcp_http_listen(&raw).map(Some),
+        _ => Err(ClapMcpError::InvalidConfig(mcp_http_listen_error_message())),
+    }
+}
+
+/// Blocking MCP server for embedders: stdio or Streamable HTTP (`http` feature).
+pub fn serve_mcp_blocking(
+    listen: McpListen,
+    schema_json: String,
+    executable_path: Option<PathBuf>,
+    config: ClapMcpConfig,
+    in_process_handler: Option<InProcessToolHandler>,
+    serve_options: ClapMcpServeOptions,
+    metadata: &ClapMcpSchemaMetadata,
+) -> Result<(), ClapMcpError> {
+    match listen {
+        McpListen::Stdio => server::serve_schema_json_over_stdio_blocking(
+            schema_json,
+            executable_path,
+            config,
+            in_process_handler,
+            serve_options,
+            metadata,
+        ),
+        #[cfg(feature = "http")]
+        McpListen::Http(addr) => http::serve_schema_json_over_http_blocking(
+            addr,
+            schema_json,
+            executable_path,
+            config,
+            in_process_handler,
+            serve_options,
+            metadata,
+        ),
+    }
+}
+
+#[cfg(feature = "http")]
 fn serve_prepared_mcp_blocking(
     http_listen: Option<std::net::SocketAddr>,
     schema_json: String,
@@ -1166,26 +1213,19 @@ fn serve_prepared_mcp_blocking(
     serve_options: ClapMcpServeOptions,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Result<(), ClapMcpError> {
-    if let Some(listen) = http_listen {
-        serve_schema_json_over_http_blocking(
-            listen,
-            schema_json,
-            executable_path,
-            config,
-            in_process_handler,
-            serve_options,
-            metadata,
-        )
-    } else {
-        serve_schema_json_over_stdio_blocking(
-            schema_json,
-            executable_path,
-            config,
-            in_process_handler,
-            serve_options,
-            metadata,
-        )
-    }
+    let listen = match http_listen {
+        Some(addr) => McpListen::Http(addr),
+        None => McpListen::Stdio,
+    };
+    serve_mcp_blocking(
+        listen,
+        schema_json,
+        executable_path,
+        config,
+        in_process_handler,
+        serve_options,
+        metadata,
+    )
 }
 
 #[cfg(not(feature = "http"))]
@@ -1198,7 +1238,8 @@ fn serve_prepared_mcp_blocking(
     serve_options: ClapMcpServeOptions,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Result<(), ClapMcpError> {
-    serve_schema_json_over_stdio_blocking(
+    serve_mcp_blocking(
+        McpListen::Stdio,
         schema_json,
         executable_path,
         config,
@@ -1410,7 +1451,7 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
     let cmd = command_with_mcp_and_export_skills_flags(cmd);
 
     if let Some(maybe_dir) = argv_export_skills_dir() {
-        let tools = tools_from_schema_with_config_and_metadata(&schema, &config, metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &config, metadata);
         let output_dir = maybe_dir.unwrap_or_else(|| PathBuf::from(".agents").join("skills"));
         let app_name = schema.root.name.as_str();
         let serve_options = ClapMcpServeOptions::default();
@@ -1450,14 +1491,13 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
             }
         };
         #[cfg(feature = "http")]
-        let http_listen = argv_mcp_http_listen()
-            .as_deref()
-            .map(parse_mcp_http_listen)
-            .transpose()
-            .unwrap_or_else(|e| {
+        let http_listen = {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            resolve_mcp_http_listen_from_args(&args).unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(2);
-            });
+            })
+        };
         #[cfg(not(feature = "http"))]
         let http_listen: Option<std::net::SocketAddr> = None;
 
@@ -1523,9 +1563,7 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
 
 /// Canonical entrypoint for derive-based CLIs: parse (or serve if `--mcp`) and return self.
 ///
-/// With the trait in scope, use `Args::parse_or_serve_mcp()` instead of
-/// `parse_or_serve_mcp_attr::<Args>()`. Equivalent to calling [`parse_or_serve_mcp_attr`];
-/// that free function remains available if you prefer it.
+/// With the trait in scope, use `Args::parse_or_serve_mcp()`.
 ///
 /// # Example
 ///
@@ -1557,106 +1595,14 @@ where
         + 'static,
 {
     fn parse_or_serve_mcp() -> Self {
-        parse_or_serve_mcp_attr::<T>()
+        parse_or_serve_mcp_with(ClapMcpRunOptions {
+            config: T::clap_mcp_config(),
+            serve: ClapMcpServeOptions::default(),
+        })
     }
 }
 
-/// High-level helper for `clap` derive-based CLIs.
-///
-/// - Adds `--mcp` to the command
-/// - If `--mcp` is present, starts an MCP stdio server and exits the process
-/// - Otherwise, returns the parsed CLI type
-///
-/// Uses default [`ClapMcpConfig`]. For config from `#[clap_mcp(...)]` attributes,
-/// use [`parse_or_serve_mcp_attr`].
-///
-/// For a **struct root with subcommand**, parse the root type then call your run
-/// logic on the subcommand (e.g. `run(args.command)`). See the crate README
-/// section "Struct root with subcommand".
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use clap::Parser;
-/// use clap_mcp::ClapMcp;
-///
-/// #[derive(Parser, ClapMcp)]
-/// enum Cli { Foo }
-///
-/// fn main() {
-///     let cli = clap_mcp::parse_or_serve_mcp::<Cli>();
-///     // If we get here, --mcp was not passed
-/// }
-/// ```
-pub fn parse_or_serve_mcp<T>() -> T
-where
-    T: ClapMcpSchemaMetadataProvider
-        + ClapMcpToolExecutor
-        + clap::Parser
-        + clap::CommandFactory
-        + clap::FromArgMatches
-        + 'static,
-{
-    parse_or_serve_mcp_with_config::<T>(ClapMcpConfig::default())
-}
-
-/// High-level helper for `clap` derive-based CLIs with config from `#[clap_mcp(...)]` attributes.
-///
-/// Use `#[derive(ClapMcp)]` and `#[clap_mcp(reinvocation_safe, parallel_safe = false)]` on your CLI type,
-/// then call this instead of [`parse_or_serve_mcp`]. Config is taken from `T::clap_mcp_config()`.
-///
-/// For a **struct root with subcommand**, parse the root type then call your run
-/// logic on the subcommand (e.g. `run(args.command)` or `match args.command { ... }`).
-/// See the crate README section "Struct root with subcommand" and [`ParseOrServeMcp`].
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use clap::Parser;
-/// use clap_mcp::ClapMcp;
-///
-/// #[derive(Parser, ClapMcp)]
-/// #[clap_mcp(reinvocation_safe, parallel_safe = false)]
-/// #[clap_mcp_output_from = "run"]
-/// enum Cli { Foo }
-///
-/// fn run(cmd: Cli) -> String {
-///     match cmd { Cli::Foo => "done".to_string() }
-/// }
-///
-/// fn main() {
-///     let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
-///     println!("{}", run(cli));
-/// }
-/// ```
-pub fn parse_or_serve_mcp_attr<T>() -> T
-where
-    T: ClapMcpConfigProvider
-        + ClapMcpSchemaMetadataProvider
-        + ClapMcpToolExecutor
-        + clap::Parser
-        + clap::CommandFactory
-        + clap::FromArgMatches
-        + 'static,
-{
-    parse_or_serve_mcp_with_config::<T>(T::clap_mcp_config())
-}
-
-/// Run parsed CLI through a closure, or serve MCP if `--mcp` is present.
-///
-/// If `--mcp` is passed, starts the MCP server and does not return. Otherwise,
-/// parses the CLI type `A`, calls `f(args)`, and returns the result. Use this
-/// when you want the "parse then run" flow in one place (e.g. `run_or_serve_mcp::<Cli, _>(|c| Ok(run(c)))`)
-/// instead of parsing and then calling `run` in main. For a simple "parse then branch"
-/// style, use [`ParseOrServeMcp::parse_or_serve_mcp`] or [`parse_or_serve_mcp_attr`].
-///
-/// # Example
-///
-/// ```rust,ignore
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     clap_mcp::run_or_serve_mcp::<Cli, _, _, _>(|cli| Ok(run(cli)))
-/// }
-/// ```
+/// Run parsed CLI through a closure, or serve MCP if `--mcp` / `--mcp-http` is present.
 pub fn run_or_serve_mcp<A, F, R, E>(f: F) -> Result<R, E>
 where
     A: ClapMcpConfigProvider
@@ -1668,16 +1614,15 @@ where
         + 'static,
     F: FnOnce(A) -> Result<R, E>,
 {
-    let args = parse_or_serve_mcp_attr::<A>();
+    let args = A::parse_or_serve_mcp();
     f(args)
 }
 
-/// High-level helper for `clap` derive-based CLIs with execution safety configuration.
+/// Derive-based entrypoint: parse CLI or start MCP server (stdio or HTTP) and exit.
 ///
-/// See [`parse_or_serve_mcp`] for behavior. Use `config` to declare reinvocation
-/// and parallel execution safety. When `reinvocation_safe` is true, uses in-process
-/// execution; requires `T: ClapMcpToolExecutor`.
-pub fn parse_or_serve_mcp_with_config<T>(config: ClapMcpConfig) -> T
+/// Config comes from `T::clap_mcp_config()` (via `#[clap_mcp(...)]` on the derive).
+/// Prefer [`ParseOrServeMcp::parse_or_serve_mcp`] when the trait is in scope.
+pub fn parse_or_serve_mcp_with<T>(options: ClapMcpRunOptions) -> T
 where
     T: ClapMcpSchemaMetadataProvider
         + ClapMcpToolExecutor
@@ -1686,25 +1631,10 @@ where
         + clap::FromArgMatches
         + 'static,
 {
-    parse_or_serve_mcp_with_config_and_options::<T>(config, ClapMcpServeOptions::default())
-}
-
-/// Like [`parse_or_serve_mcp_with_config`] but with custom serve options (e.g. logging).
-///
-/// Use `serve_options.log_rx` to forward log messages to the MCP client.
-/// See [`ClapMcpServeOptions`] and the `logging` module.
-pub fn parse_or_serve_mcp_with_config_and_options<T>(
-    config: ClapMcpConfig,
-    serve_options: ClapMcpServeOptions,
-) -> T
-where
-    T: ClapMcpSchemaMetadataProvider
-        + ClapMcpToolExecutor
-        + clap::Parser
-        + clap::CommandFactory
-        + clap::FromArgMatches
-        + 'static,
-{
+    let ClapMcpRunOptions {
+        config,
+        serve: serve_options,
+    } = options;
     let mut cmd = T::command();
     cmd = command_with_mcp_and_export_skills_flags(cmd);
 
@@ -1712,7 +1642,7 @@ where
         let base_cmd = T::command();
         let metadata = T::clap_mcp_schema_metadata();
         let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
-        let tools = tools_from_schema_with_config_and_metadata(&schema, &config, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
         let output_dir = maybe_dir.unwrap_or_else(|| PathBuf::from(".agents").join("skills"));
         let app_name = schema.root.name.as_str();
         if let Err(e) = content::export_skills(
@@ -1766,16 +1696,12 @@ where
         };
 
         #[cfg(feature = "http")]
-        let http_listen = match argv_mcp_http_listen()
-            .as_deref()
-            .map(parse_mcp_http_listen)
-            .transpose()
-        {
-            Ok(v) => v,
-            Err(e) => {
+        let http_listen = {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            resolve_mcp_http_listen_from_args(&args).unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(2);
-            }
+            })
         };
         #[cfg(not(feature = "http"))]
         let http_listen: Option<std::net::SocketAddr> = None;
@@ -1842,16 +1768,12 @@ where
         };
 
         #[cfg(feature = "http")]
-        let http_listen = match argv_mcp_http_listen()
-            .as_deref()
-            .map(parse_mcp_http_listen)
-            .transpose()
-        {
-            Ok(v) => v,
-            Err(e) => {
+        let http_listen = {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            resolve_mcp_http_listen_from_args(&args).unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(2);
-            }
+            })
         };
         #[cfg(not(feature = "http"))]
         let http_listen: Option<std::net::SocketAddr> = None;
@@ -2184,45 +2106,6 @@ fn value_to_strings(v: &serde_json::Value) -> Option<Vec<String>> {
         }
         _ => value_to_string(v).map(|s| vec![s]),
     }
-}
-
-/// Convenience wrapper for [`serve_schema_json_over_stdio`] that blocks on a tokio runtime.
-///
-/// Use when you cannot use `async fn main`. Spawns a runtime internally.
-///
-/// # Runtime selection
-///
-/// | `reinvocation_safe` | `share_runtime` | Runtime type |
-/// |---------------------|----------------|--------------|
-/// | `false` | any | `current_thread` |
-/// | `true` | `false` | `current_thread` |
-/// | `true` | `true` | `multi_thread` (so [`run_async_tool`] with `share_runtime` can use `block_on`) |
-pub fn serve_schema_json_over_stdio_blocking(
-    schema_json: String,
-    executable_path: Option<PathBuf>,
-    config: ClapMcpConfig,
-    in_process_handler: Option<InProcessToolHandler>,
-    serve_options: ClapMcpServeOptions,
-    metadata: &ClapMcpSchemaMetadata,
-) -> std::result::Result<(), ClapMcpError> {
-    let use_multi_thread = config.reinvocation_safe && config.share_runtime;
-    let rt = if use_multi_thread {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?
-    } else {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?
-    };
-    rt.block_on(serve_schema_json_over_stdio(
-        schema_json,
-        executable_path,
-        config,
-        in_process_handler,
-        serve_options,
-        metadata,
-    ))
 }
 
 /// Runs an async future for MCP tool execution, respecting `share_runtime` in config.
@@ -2781,10 +2664,46 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_from_schema_wrapper() {
+    fn test_tools_from_schema_with_metadata() {
         let schema = sample_helper_schema();
-        let tools = tools_from_schema(&schema);
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig::default(),
+            &ClapMcpSchemaMetadata::default(),
+        );
         assert!(!tools.is_empty());
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn test_mcp_http_listen_from_env_and_flag_alone() {
+        let listen_key = MCP_HTTP_LISTEN_ENV;
+        let bind_key = MCP_HTTP_BIND_ENV;
+        let port_key = MCP_HTTP_PORT_ENV;
+
+        unsafe {
+            std::env::set_var(listen_key, "127.0.0.1:9090");
+        }
+        assert_eq!(
+            argv_mcp_http_listen_from_args(&["--mcp-http".to_string()]),
+            Some("127.0.0.1:9090".to_string())
+        );
+        unsafe {
+            std::env::remove_var(listen_key);
+        }
+
+        unsafe {
+            std::env::set_var(bind_key, "127.0.0.1");
+            std::env::set_var(port_key, "9091");
+        }
+        assert_eq!(
+            argv_mcp_http_listen_from_args(&["--mcp-http".to_string()]),
+            Some("127.0.0.1:9091".to_string())
+        );
+        unsafe {
+            std::env::remove_var(bind_key);
+            std::env::remove_var(port_key);
+        }
     }
 
     #[test]

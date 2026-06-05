@@ -42,6 +42,7 @@ pub(crate) struct ServeHandlerInner {
     pub logging_enabled: bool,
     pub task_augmented_tools: bool,
     pub task_tool_filter: Option<HashSet<String>>,
+    #[cfg(feature = "elicitation")]
     pub elicitation_enabled: bool,
 }
 
@@ -157,7 +158,7 @@ impl ServeHandlerInner {
 
 /// rmcp MCP server: clap schema tools, resources, prompts, optional tasks.
 #[derive(Clone)]
-pub struct ClapMcpServer {
+pub(crate) struct ClapMcpServer {
     pub(crate) inner: Arc<ServeHandlerInner>,
     tool_execution_lock: Option<Arc<tokio::sync::Mutex<()>>>,
     log_peer: Arc<Mutex<Option<Peer<RoleServer>>>>,
@@ -448,9 +449,8 @@ impl ServerHandler for ClapMcpServer {
     }
 }
 
-/// Builds transport-agnostic [`ClapMcpServer`] state (stdio today; HTTP later).
 #[allow(clippy::too_many_arguments)]
-pub fn build_clap_mcp_server(
+pub(crate) fn build_clap_mcp_server(
     schema_json: String,
     tools: Vec<Tool>,
     executable_path: Option<PathBuf>,
@@ -460,7 +460,7 @@ pub fn build_clap_mcp_server(
     serve_options: &ClapMcpServeOptions,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Result<ClapMcpServer, ClapMcpError> {
-    if config.task_augmented_tools {
+    if metadata.task_augmented_tools {
         if !config.reinvocation_safe {
             return Err(ClapMcpError::InvalidConfig(
                 "task_augmented_tools requires reinvocation_safe (in-process execution)".into(),
@@ -481,7 +481,8 @@ pub fn build_clap_mcp_server(
     };
 
     let logging_enabled = serve_options.log_rx.is_some();
-    let task_tool_filter = if config.task_augmented_tools && !metadata.task_tool_names.is_empty() {
+    let task_tool_filter = if metadata.task_augmented_tools && !metadata.task_tool_names.is_empty()
+    {
         Some(
             metadata
                 .task_tool_names
@@ -503,8 +504,9 @@ pub fn build_clap_mcp_server(
         custom_resources: serve_options.custom_resources.clone(),
         custom_prompts: serve_options.custom_prompts.clone(),
         logging_enabled,
-        task_augmented_tools: config.task_augmented_tools,
+        task_augmented_tools: metadata.task_augmented_tools,
         task_tool_filter,
+        #[cfg(feature = "elicitation")]
         elicitation_enabled: serve_options.elicitation_enabled,
     });
 
@@ -535,7 +537,7 @@ pub(crate) fn spawn_log_forwarder(
 }
 
 /// Starts an MCP server over stdio exposing `clap://schema` with the provided JSON payload.
-pub async fn serve_schema_json_over_stdio(
+pub(crate) async fn serve_schema_json_over_stdio(
     schema_json: String,
     executable_path: Option<PathBuf>,
     config: ClapMcpConfig,
@@ -544,7 +546,7 @@ pub async fn serve_schema_json_over_stdio(
     metadata: &ClapMcpSchemaMetadata,
 ) -> Result<(), ClapMcpError> {
     let schema: crate::ClapSchema = serde_json::from_str(&schema_json)?;
-    let tools = crate::tools_from_schema_with_config_and_metadata(&schema, &config, metadata);
+    let tools = crate::tools_from_schema_with_metadata(&schema, &config, metadata);
     let root_name = schema.root.name.clone();
 
     let server = build_clap_mcp_server(
@@ -566,6 +568,35 @@ pub async fn serve_schema_json_over_stdio(
         .map_err(|e| ClapMcpError::Mcp(Box::new(rmcp::RmcpError::ServerInitialize(e))))?;
     service.waiting().await.map_err(ClapMcpError::Join)?;
     Ok(())
+}
+
+/// Blocking stdio MCP server (used by [`crate::serve_mcp_blocking`]).
+pub(crate) fn serve_schema_json_over_stdio_blocking(
+    schema_json: String,
+    executable_path: Option<PathBuf>,
+    config: ClapMcpConfig,
+    in_process_handler: Option<InProcessToolHandler>,
+    serve_options: ClapMcpServeOptions,
+    metadata: &ClapMcpSchemaMetadata,
+) -> Result<(), ClapMcpError> {
+    let use_multi_thread = config.reinvocation_safe && config.share_runtime;
+    let rt = if use_multi_thread {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+    };
+    rt.block_on(serve_schema_json_over_stdio(
+        schema_json,
+        executable_path,
+        config,
+        in_process_handler,
+        serve_options,
+        metadata,
+    ))
 }
 
 async fn notify_log(
