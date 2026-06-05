@@ -29,9 +29,9 @@ fn main() {
         elicitation_enabled: true,
         ..Default::default()
     };
-    let cli = clap_mcp::parse_or_serve_mcp_with_config_and_options::<Cli>(
-        Cli::clap_mcp_config(),
-        serve_options,
-    );
+    let cli = clap_mcp::parse_or_serve_mcp_with::<Cli>(clap_mcp::ClapMcpRunOptions {
+        config: Cli::clap_mcp_config(),
+        serve: serve_options,
+    });
     println!("{}", run(cli));
 }

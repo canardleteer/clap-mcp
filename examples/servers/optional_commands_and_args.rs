@@ -7,7 +7,7 @@
 //! When the client omits a required arg, a clear error is returned.
 
 use clap::Parser;
-use clap_mcp::ClapMcp;
+use clap_mcp::{ClapMcp, ParseOrServeMcp};
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
@@ -56,7 +56,7 @@ fn run(cmd: Cli) -> String {
 }
 
 fn main() {
-    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+    let cli = Cli::parse_or_serve_mcp();
 
     match cli {
         Cli::Public => println!("done"),

@@ -4,6 +4,17 @@ This directory contains example CLIs that demonstrate clap-mcp capabilities.
 
 Run all commands from the **workspace root** (the parent of this `examples/` directory). The examples depend on `clap-mcp` via a path dependency.
 
+### 0.0.4 API (derive path)
+
+Since **0.0.4-rc.1**, examples use the slim derive entrypoints:
+
+- **`ParseOrServeMcp::parse_or_serve_mcp()`** — default serve options; import `clap_mcp::ParseOrServeMcp`.
+- **`parse_or_serve_mcp_with(ClapMcpRunOptions { config, serve })`** — custom logging, resources, or HTTP-related serve options.
+- **`serve_mcp_blocking(McpListen::Stdio, …)`** — imperative servers without clap parsing (see `placeholder_server`, `invalid_executable_server`).
+- **`tools_from_schema_with_metadata`** — build MCP tools from schema + [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html) (including `#[clap_mcp(task_augmented_tools)]`).
+
+Removed: `parse_or_serve_mcp_with_config*`, freestanding `tools_from_schema*`, public `ClapMcpServer` / `build_clap_mcp_server`. See [CHANGELOG](../CHANGELOG.md#004-rc1---2026-06-04).
+
 - **`client.rs`** — MCP client that exercises the server examples (easiest way to see everything working)
 - **`task_augmented_client.rs`** — Minimal client for MCP task-augmented `tools/call` (requires `--features tracing`; use with `task_tools_dedicated` or `task_tools_shared`)
 - **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, result_output, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared, **task_tools_dedicated**, **task_tools_shared**, **subprocess_exit_handling**, **panic_catch_opt_in**, **custom_resources_prompts**, **vec_and_flags**)

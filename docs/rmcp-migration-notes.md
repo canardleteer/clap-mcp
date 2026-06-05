@@ -117,3 +117,15 @@ After W0, `cargo check -p clap-mcp` **should fail** on unresolved `rust_mcp_sdk`
 | **W5** | `enqueue_task`, `OperationProcessor`, task RPC names |
 | **W6** | `client` + `transport-child-process`, `serve_client`, replace `client_runtime` harness |
 
+## 0.0.4-rc.1 API slim (post-rmcp port)
+
+Public embedder surface after `0.0.4-rc.1`:
+
+- **Derive entry:** `ParseOrServeMcp::parse_or_serve_mcp()` / `parse_or_serve_mcp_with(ClapMcpRunOptions { .. })`
+- **Imperative entry:** unchanged `get_matches_or_serve_mcp*` ladder
+- **Low-level serve:** `serve_mcp_blocking(McpListen::Stdio | McpListen::Http(addr), ...)`
+- **Tasks flag:** `ClapMcpSchemaMetadata::task_augmented_tools` (from `#[clap_mcp(task_augmented_tools)]`)
+- **Errors alias:** `ClapMcpErrorData` = `rmcp::model::ErrorData`
+
+Removed: freestanding `parse_or_serve_mcp*`, `tools_from_schema*`, public `serve_schema_json_over_*`, `ClapMcpConfig::task_augmented_tools`, public `tool_task_eligible`, public `ClapMcpServer` / `build_clap_mcp_server`.
+

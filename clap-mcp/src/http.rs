@@ -2,7 +2,7 @@
 
 use crate::{
     ClapMcpConfig, ClapMcpError, ClapMcpSchemaMetadata, ClapMcpServeOptions, InProcessToolHandler,
-    build_clap_mcp_server, server,
+    server::{self, ClapMcpServer, build_clap_mcp_server},
 };
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -34,9 +34,9 @@ async fn build_server_from_schema_json(
     in_process_handler: Option<InProcessToolHandler>,
     serve_options: &ClapMcpServeOptions,
     metadata: &ClapMcpSchemaMetadata,
-) -> Result<crate::ClapMcpServer, ClapMcpError> {
+) -> Result<ClapMcpServer, ClapMcpError> {
     let schema: crate::ClapSchema = serde_json::from_str(&schema_json)?;
-    let tools = crate::tools_from_schema_with_config_and_metadata(&schema, config, metadata);
+    let tools = crate::tools_from_schema_with_metadata(&schema, config, metadata);
     let root_name = schema.root.name.clone();
     build_clap_mcp_server(
         schema_json,
@@ -51,7 +51,7 @@ async fn build_server_from_schema_json(
 }
 
 /// Starts an MCP server over Streamable HTTP at `listen`, exposing `clap://schema`.
-pub async fn serve_schema_json_over_http(
+pub(crate) async fn serve_schema_json_over_http(
     listen: SocketAddr,
     schema_json: String,
     executable_path: Option<PathBuf>,
@@ -92,7 +92,7 @@ pub async fn serve_schema_json_over_http(
 }
 
 /// Blocking wrapper for [`serve_schema_json_over_http`].
-pub fn serve_schema_json_over_http_blocking(
+pub(crate) fn serve_schema_json_over_http_blocking(
     listen: SocketAddr,
     schema_json: String,
     executable_path: Option<PathBuf>,

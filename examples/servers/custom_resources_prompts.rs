@@ -60,7 +60,10 @@ fn main() {
     });
 
     let config = clap_mcp::ClapMcpConfig::default();
-    let cli = clap_mcp::parse_or_serve_mcp_with_config_and_options::<Cli>(config, serve_options);
+    let cli = clap_mcp::parse_or_serve_mcp_with::<Cli>(clap_mcp::ClapMcpRunOptions {
+        config,
+        serve: serve_options,
+    });
 
     match cli {
         Cli::Echo { message } => {

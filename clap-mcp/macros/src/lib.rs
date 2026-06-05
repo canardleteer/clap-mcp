@@ -586,9 +586,6 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
         .unwrap_or_else(
             || quote! { clap_mcp::ClapMcpConfig::default().allow_mcp_without_subcommand },
         );
-    let task_augmented_tools_expr = task_augmented_tools
-        .map(|b| quote! { #b })
-        .unwrap_or_else(|| quote! { clap_mcp::ClapMcpConfig::default().task_augmented_tools });
 
     let config_provider = quote! {
         impl clap_mcp::ClapMcpConfigProvider for #name {
@@ -599,7 +596,6 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                     share_runtime: #share_runtime_expr,
                     catch_in_process_panics: #catch_in_process_panics_expr,
                     allow_mcp_without_subcommand: #allow_mcp_without_subcommand_expr,
-                    task_augmented_tools: #task_augmented_tools_expr,
                 }
             }
         }
@@ -692,6 +688,10 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
 /// Builds the ClapMcpSchemaMetadataProvider impl from #[clap_mcp(skip)], #[clap_mcp(requires)], and #[clap_mcp(task)].
 fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let name = &input.ident;
+    let (_, _, _, _, _, task_augmented_tools) = parse_clap_mcp_attrs(&input.attrs);
+    let task_augmented_tools_expr = task_augmented_tools
+        .map(|b| quote! { #b })
+        .unwrap_or(quote! { false });
     let mut skip_commands = Vec::<String>::new();
     let mut skip_args: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
@@ -858,6 +858,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     let mut m = <#sub_path as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata();
                                     m.skip_commands.extend([#(#skip_commands_lit),*]);
                                     m.task_tool_names.extend([#(#task_tool_names_lit),*]);
+                                    m.task_augmented_tools = m.task_augmented_tools || #task_augmented_tools_expr;
                                     #(#skip_args_entries)*
                                     #(#requires_args_entries)*
                                     #skip_root_assign
@@ -932,6 +933,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 let mut m = clap_mcp::ClapMcpSchemaMetadata::default();
                 m.skip_commands.extend([#(#skip_commands_lit),*]);
                 m.task_tool_names.extend([#(#task_tool_names_lit),*]);
+                m.task_augmented_tools = #task_augmented_tools_expr;
                 #(#skip_args_entries)*
                 #(#requires_args_entries)*
                 #output_schema_assign

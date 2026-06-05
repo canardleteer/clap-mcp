@@ -124,7 +124,7 @@ fn run(cmd: Cli) -> String {
 }
 
 fn main() {
-    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+    let cli = Cli::parse_or_serve_mcp();
     println!("{}", run(cli));
 }
 ```
@@ -132,7 +132,7 @@ fn main() {
 ### Derive with attributes (recommended)
 
 Use `#[clap_mcp(...)]` to declare execution safety, and
-`parse_or_serve_mcp_attr` to pick up that config automatically:
+`ParseOrServeMcp::parse_or_serve_mcp` to pick up that config automatically:
 
 ```rust
 use clap::Parser;
@@ -153,7 +153,7 @@ fn run(cmd: Cli) -> String {
 }
 
 fn main() {
-    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+    let cli = Cli::parse_or_serve_mcp();
     println!("{}", run(cli));
 }
 ```
@@ -191,7 +191,7 @@ fn run(cmd: Commands) -> String {
 }
 
 fn main() {
-    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+    let cli = Cli::parse_or_serve_mcp();
     match cli.command {
         None => println!("No subcommand"),
         Some(cmd) => println!("{}", run(cmd)),
@@ -213,12 +213,12 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-clap-mcp = { version = "0.0.3-rc.1", features = ["tracing"] }
+clap-mcp = { version = "0.0.4-rc.1", features = ["tracing"] }
 ```
 
 ## Custom resources and prompts
 
-In addition to the built-in **`clap://schema`** resource and the optional **logging guide** prompt, you can expose custom MCP resources and prompts. Add them to [`ClapMcpServeOptions`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html) and pass that into `parse_or_serve_mcp_with_config_and_options` or `serve_schema_json_over_stdio_blocking`.
+In addition to the built-in **`clap://schema`** resource and the optional **logging guide** prompt, you can expose custom MCP resources and prompts. Add them to [`ClapMcpServeOptions`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html) and pass that into `parse_or_serve_mcp_with` or `serve_mcp_blocking`.
 
 ### Custom resources
 
@@ -323,7 +323,7 @@ fn run(cmd: Cli) -> String {
     }
 }
 
-let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+let cli = Cli::parse_or_serve_mcp();
 ```
 
 ### Schema metadata: skip and requires
@@ -427,19 +427,22 @@ When the client omits a required argument, the tool returns a clear error:
 
 ### Dual derive (root + subcommand)
 
-When you use a **struct root** with `#[command(subcommand)]` (e.g. `command: Option<Commands>`), derive `ClapMcp` on **both** the root struct and the subcommand enum. Put `#[clap_mcp_output_from = "run"]` and execution config (`#[clap_mcp(...)]`) on the **subcommand** enum only. The root's derive provides schema metadata and delegates tool execution to the subcommand's executor. In `main`, parse the root with `parse_or_serve_mcp_attr::<Root>()` then run with `run(cli.command)` or `match cli.command { ... }`. You can keep **`subcommand_required = true`** if you want; `myapp --mcp` alone is valid and starts the MCP server (clap-mcp handles `--mcp` before clap's subcommand check). See [Struct root with subcommand](#struct-root-with-subcommand) and the **struct_subcommand** example in [examples/README.md](examples/README.md).
+When you use a **struct root** with `#[command(subcommand)]` (e.g. `command: Option<Commands>`), derive `ClapMcp` on **both** the root struct and the subcommand enum. Put `#[clap_mcp_output_from = "run"]` and execution config (`#[clap_mcp(...)]`) on the **subcommand** enum only. The root's derive provides schema metadata and delegates tool execution to the subcommand's executor. In `main`, parse the root with `Root::parse_or_serve_mcp()` (via [`ParseOrServeMcp`]) then run with `run(cli.command)` or `match cli.command { ... }`. You can keep **`subcommand_required = true`** if you want; `myapp --mcp` alone is valid and starts the MCP server (clap-mcp handles `--mcp` before clap's subcommand check). See [Struct root with subcommand](#struct-root-with-subcommand) and the **struct_subcommand** example in [examples/README.md](examples/README.md).
 
 **MCP tool list:** The tool list includes the root command and all subcommands. If your CLI has `subcommand_required = true`, the root command still appears as a tool but has no subcommand in the MCP invocation model and is rarely used by clients; the meaningful tools are the subcommands (e.g. explain, compare, sort). To exclude the root from the tool list when it has subcommands, set [`ClapMcpSchemaMetadata::skip_root_command_when_subcommands`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.skip_root_command_when_subcommands) to `true` via the derive with `#[clap_mcp(skip_root_when_subcommands)]` on the root struct, or imperatively (e.g. implement `ClapMcpSchemaMetadataProvider` for the root and set the field, or build metadata manually).
 
 ### Runtime config
 
-Use `ClapMcpConfig` with `parse_or_serve_mcp_with_config` or `get_matches_or_serve_mcp_with_config`:
+Use `ClapMcpConfig` with `parse_or_serve_mcp_with` or `get_matches_or_serve_mcp_with_config`:
 
 ```rust
-clap_mcp::parse_or_serve_mcp_with_config::<Cli>(clap_mcp::ClapMcpConfig {
-    reinvocation_safe: true,   // in-process execution
-    parallel_safe: false,      // serialize tool calls (default)
-    ..Default::default()
+clap_mcp::parse_or_serve_mcp_with::<Cli>(clap_mcp::ClapMcpRunOptions {
+    config: clap_mcp::ClapMcpConfig {
+        reinvocation_safe: true,
+        parallel_safe: false,
+        ..Default::default()
+    },
+    serve: Default::default(),
 })
 ```
 
@@ -580,7 +583,7 @@ fn run(cmd: Cli) -> String {
 }
 
 fn main() {
-    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+    let cli = Cli::parse_or_serve_mcp();
     // Same logic: run(cli) for CLI, run(self) for MCP
     println!("{}", run(cli));
 }
@@ -637,8 +640,8 @@ enum Cli { ... }
 ```
 
 When either attribute is set, [`ClapMcpSchemaMetadata::output_schema`] is populated
-(by the derive) and [`tools_from_schema_with_config_and_metadata`] attaches it to
-each tool. The high-level serve path (`parse_or_serve_mcp_attr`, etc.) uses metadata
+(by the derive) and [`tools_from_schema_with_metadata`] attaches it to
+each tool. The high-level serve path (`ParseOrServeMcp::parse_or_serve_mcp`, etc.) uses metadata
 automatically, so tools get `output_schema` when you use the derive and these attributes.
 
 ## Logging and observability
@@ -713,7 +716,11 @@ Enable the optional `http` feature on `clap-mcp` to serve MCP over Streamable HT
 clap-mcp = { version = "...", features = ["derive", "http"] }
 ```
 
-Run with `--mcp-http 127.0.0.1:8080` (or set `CLAP_MCP_HTTP_LISTEN`). `--mcp` (stdio) and `--mcp-http` are mutually exclusive.
+Run with `--mcp-http 127.0.0.1:8080`, `--mcp-http` alone with `CLAP_MCP_HTTP_LISTEN`, or `CLAP_MCP_HTTP_BIND` + `CLAP_MCP_HTTP_PORT`. See [docs/http.md](docs/http.md). `--mcp` (stdio) and `--mcp-http` are mutually exclusive.
+
+```toml
+clap-mcp = { version = "0.0.4-rc.1", features = ["derive", "http"] }
+```
 
 Example: `cargo run -p clap-mcp-examples --bin subcommands_http --features http -- --mcp-http 127.0.0.1:8080`
 

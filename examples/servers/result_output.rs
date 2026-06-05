@@ -6,7 +6,7 @@
 //!   for structured error JSON.
 
 use clap::Parser;
-use clap_mcp::{ClapMcp, ClapMcpToolError};
+use clap_mcp::{ClapMcp, ClapMcpToolError, ParseOrServeMcp};
 use serde::Serialize;
 
 // --- Inline error type (same file, used by Check) ---
@@ -142,7 +142,7 @@ fn parse_file(path: &str) -> Result<String, errors::ParseError> {
 }
 
 fn main() {
-    let cli = clap_mcp::parse_or_serve_mcp_attr::<Cli>();
+    let cli = Cli::parse_or_serve_mcp();
 
     match cli {
         Cli::Sqrt { n } => {
