@@ -157,15 +157,27 @@ Public embedder surface after `0.0.4-rc.1`:
 * **Derive entry:** `ParseOrServeMcp::parse_or_serve_mcp()` /
   `parse_or_serve_mcp_with(ClapMcpRunOptions { .. })`
 * **Imperative entry:** unchanged `get_matches_or_serve_mcp*` ladder
-* **Low-level serve:** `serve_mcp_blocking(McpListen::Stdio |
-  McpListen::Http(addr), ...)`
+* **Low-level serve:** [`serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp.html)
+  (async, caller's tokio runtime) and
+  [`serve_mcp_blocking`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp_blocking.html)
+  (sync `main`) with [`McpListen::Stdio`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.McpListen.html)
+  or `McpListen::Http(addr)` (`http` feature)
 * **Tasks flag:** `ClapMcpSchemaMetadata::task_augmented_tools` (from
   `#[clap_mcp(task_augmented_tools)]`)
 * **Errors alias:** `ClapMcpErrorData` = `rmcp::model::ErrorData`
 
-Removed: freestanding `parse_or_serve_mcp*`, `tools_from_schema*`, public
-`serve_schema_json_over_*`, `ClapMcpConfig::task_augmented_tools`, public
-`tool_task_eligible`, public `ClapMcpServer` / `build_clap_mcp_server`.
+Removed (hard break — use unified serve API above):
+
+| Removed | Replacement |
+|---------|-------------|
+| `serve_schema_json_over_stdio` | `serve_mcp(McpListen::Stdio, ...).await` |
+| `serve_schema_json_over_stdio_blocking` | `serve_mcp_blocking(McpListen::Stdio, ...)` |
+| `serve_schema_json_over_http` | `serve_mcp(McpListen::Http(addr), ...).await` |
+| `serve_schema_json_over_http_blocking` | `serve_mcp_blocking(McpListen::Http(addr), ...)` |
+
+Also removed: freestanding `parse_or_serve_mcp*`, `tools_from_schema*`,
+`ClapMcpConfig::task_augmented_tools`, public `tool_task_eligible`, public
+`ClapMcpServer` / `build_clap_mcp_server`.
 
 ## Task-augmented `tools/call` addendum (0.0.4-rc.1+)
 

@@ -556,6 +556,53 @@ impl Default for ClapMcpConfig {
     }
 }
 
+impl ClapMcpConfig {
+    /// Whether in-process MCP needs a multi-thread tokio runtime
+    /// (`share_runtime` or `parallel_safe` with `reinvocation_safe`).
+    ///
+    /// When true, async [`serve_mcp`] on an existing runtime requires
+    /// `#[tokio::main(flavor = "multi_thread")]`. [`serve_mcp_blocking`] creates
+    /// a suitable runtime internally.
+    pub fn needs_multi_thread_runtime(&self) -> bool {
+        mcp_config_needs_multi_thread_runtime(self)
+    }
+}
+
+/// True when in-process MCP needs a multi-thread tokio runtime.
+pub fn mcp_config_needs_multi_thread_runtime(config: &ClapMcpConfig) -> bool {
+    config.reinvocation_safe && (config.share_runtime || config.parallel_safe)
+}
+
+pub(crate) fn build_mcp_blocking_runtime(
+    config: &ClapMcpConfig,
+) -> Result<tokio::runtime::Runtime, ClapMcpError> {
+    let rt = if mcp_config_needs_multi_thread_runtime(config) {
+        tokio::runtime::Builder::new_multi_thread()
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+    }
+    .enable_all()
+    .build()?;
+    Ok(rt)
+}
+
+fn validate_embedder_runtime(config: &ClapMcpConfig) -> Result<(), ClapMcpError> {
+    if !config.needs_multi_thread_runtime() {
+        return Ok(());
+    }
+    if let Ok(handle) = tokio::runtime::Handle::try_current()
+        && handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread
+    {
+        return Err(ClapMcpError::InvalidConfig(
+            "serve_mcp requires a multi-thread tokio runtime when reinvocation_safe is true \
+             and share_runtime or parallel_safe is enabled; use \
+             #[tokio::main(flavor = \"multi_thread\")] or serve_mcp_blocking"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Derive-path and imperative MCP run options (execution config + serve behavior).
 #[derive(Debug)]
 pub struct ClapMcpRunOptions {
@@ -580,6 +627,8 @@ impl From<ClapMcpConfig> for ClapMcpRunOptions {
 }
 
 /// MCP transport listen target for low-level embedders.
+///
+/// Use with [`serve_mcp`] (async, caller's tokio runtime) or [`serve_mcp_blocking`] (sync `main`).
 #[derive(Debug, Clone, Copy)]
 pub enum McpListen {
     /// Stdio MCP (default `--mcp` mode).
@@ -591,7 +640,7 @@ pub enum McpListen {
 
 /// Optional configuration for MCP serve behavior (logging, etc.).
 ///
-/// Pass to [`serve_mcp_blocking`] or [`parse_or_serve_mcp_with`].
+/// Pass to [`serve_mcp`], [`serve_mcp_blocking`], or [`parse_or_serve_mcp_with`].
 /// When `log_rx` is set, enables the logging capability and forwards messages to the MCP client.
 ///
 /// # Example
@@ -602,7 +651,7 @@ pub enum McpListen {
 /// let (log_tx, log_rx) = log_channel(32);
 /// let mut opts = ClapMcpServeOptions::default();
 /// opts.log_rx = Some(log_rx);
-/// // Pass opts to parse_or_serve_mcp_with or serve_mcp_blocking
+/// // Pass opts to parse_or_serve_mcp_with, serve_mcp, or serve_mcp_blocking
 /// ```
 #[derive(Debug, Default)]
 pub struct ClapMcpServeOptions {
@@ -1171,7 +1220,91 @@ fn resolve_mcp_http_listen_from_args(
     }
 }
 
+/// Async MCP server for embedders: stdio or Streamable HTTP (`http` feature).
+///
+/// Runs on the **caller's tokio runtime**. Prefer this from `#[tokio::main]`.
+/// Use [`serve_mcp_blocking`] when `main` is synchronous.
+///
+/// When [`ClapMcpConfig::needs_multi_thread_runtime`] is true, the caller must use a
+/// multi-thread runtime (e.g. `#[tokio::main(flavor = "multi_thread")]`).
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use clap_mcp::{serve_mcp, McpListen, ClapMcpConfig, ClapMcpSchemaMetadata, ClapMcpServeOptions};
+///
+/// #[tokio::main(flavor = "multi_thread")]
+/// async fn main() -> Result<(), clap_mcp::ClapMcpError> {
+///     serve_mcp(
+///         McpListen::Stdio,
+///         schema_json,
+///         None,
+///         ClapMcpConfig::default(),
+///         None,
+///         ClapMcpServeOptions::default(),
+///         &ClapMcpSchemaMetadata::default(),
+///     )
+///     .await
+/// }
+/// ```
+pub async fn serve_mcp(
+    listen: McpListen,
+    schema_json: String,
+    executable_path: Option<PathBuf>,
+    config: ClapMcpConfig,
+    in_process_handler: Option<InProcessToolHandler>,
+    serve_options: ClapMcpServeOptions,
+    metadata: &ClapMcpSchemaMetadata,
+) -> Result<(), ClapMcpError> {
+    validate_embedder_runtime(&config)?;
+    match listen {
+        McpListen::Stdio => {
+            server::serve_schema_json_over_stdio(
+                schema_json,
+                executable_path,
+                config,
+                in_process_handler,
+                serve_options,
+                metadata,
+            )
+            .await
+        }
+        #[cfg(feature = "http")]
+        McpListen::Http(addr) => {
+            http::serve_schema_json_over_http(
+                addr,
+                schema_json,
+                executable_path,
+                config,
+                in_process_handler,
+                serve_options,
+                metadata,
+            )
+            .await
+        }
+    }
+}
+
 /// Blocking MCP server for embedders: stdio or Streamable HTTP (`http` feature).
+///
+/// Creates a tokio runtime internally. Use when `main` is synchronous.
+/// For `#[tokio::main]`, prefer [`serve_mcp`].
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use clap_mcp::{serve_mcp_blocking, McpListen, ClapMcpConfig, ClapMcpSchemaMetadata, ClapMcpServeOptions};
+///
+/// serve_mcp_blocking(
+///     McpListen::Stdio,
+///     schema_json,
+///     None,
+///     ClapMcpConfig::default(),
+///     None,
+///     ClapMcpServeOptions::default(),
+///     &ClapMcpSchemaMetadata::default(),
+/// )?;
+/// ```
 pub fn serve_mcp_blocking(
     listen: McpListen,
     schema_json: String,
@@ -1181,26 +1314,15 @@ pub fn serve_mcp_blocking(
     serve_options: ClapMcpServeOptions,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Result<(), ClapMcpError> {
-    match listen {
-        McpListen::Stdio => server::serve_schema_json_over_stdio_blocking(
-            schema_json,
-            executable_path,
-            config,
-            in_process_handler,
-            serve_options,
-            metadata,
-        ),
-        #[cfg(feature = "http")]
-        McpListen::Http(addr) => http::serve_schema_json_over_http_blocking(
-            addr,
-            schema_json,
-            executable_path,
-            config,
-            in_process_handler,
-            serve_options,
-            metadata,
-        ),
-    }
+    build_mcp_blocking_runtime(&config)?.block_on(serve_mcp(
+        listen,
+        schema_json,
+        executable_path,
+        config,
+        in_process_handler,
+        serve_options,
+        metadata,
+    ))
 }
 
 #[cfg(feature = "http")]
@@ -2055,6 +2177,18 @@ where
     } else {
         <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
     }
+}
+
+/// Builds an in-process tool handler for type `T` when using [`serve_mcp`] or
+/// [`serve_mcp_blocking`] with `reinvocation_safe`.
+pub fn in_process_tool_handler_for<T>(
+    schema: ClapSchema,
+    capture_stdout: bool,
+) -> InProcessToolHandler
+where
+    T: ClapMcpToolExecutor + clap::CommandFactory + clap::FromArgMatches + 'static,
+{
+    make_in_process_handler::<T>(schema, capture_stdout)
 }
 
 fn make_in_process_handler<T>(schema: ClapSchema, capture_stdout: bool) -> InProcessToolHandler

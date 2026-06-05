@@ -8,6 +8,7 @@
 //! - `log-bridge`: With log crate forwarding (requires --features log)
 //! - `async-sleep`: Async tokio CLI with 3 sleep tasks, dedicated thread (requires --features tracing)
 //! - `async-sleep-shared`: Same but shares the MCP server's runtime (requires --features tracing)
+//! - `async-embedder-serve`: Imperative `serve_mcp` embedder path (requires --features tracing)
 
 use clap::{Parser, Subcommand};
 use rmcp::{
@@ -124,6 +125,9 @@ enum Cli {
     /// Test the async_sleep_shared example (requires --features tracing)
     #[cfg(feature = "tracing")]
     AsyncSleepShared,
+    /// Test the async_embedder_serve example (requires --features tracing)
+    #[cfg(feature = "tracing")]
+    AsyncEmbedderServe,
     /// Test the log_bridge example (requires --features log)
     #[cfg(feature = "log")]
     LogBridge,
@@ -131,7 +135,9 @@ enum Cli {
 
 fn server_args(example: &str) -> Vec<String> {
     let feature = match example {
-        "tracing_bridge" | "async_sleep" | "async_sleep_shared" => Some("tracing"),
+        "tracing_bridge" | "async_sleep" | "async_sleep_shared" | "async_embedder_serve" => {
+            Some("tracing")
+        }
         "log_bridge" => Some("log"),
         _ => None,
     };
@@ -192,7 +198,10 @@ async fn run_client(example: &str, json: bool) -> Result<(), rmcp::RmcpError> {
         run_optional_commands_tests(&client).await?;
     } else if example == "structured" {
         run_structured_tests(&client).await?;
-    } else if example == "async_sleep" || example == "async_sleep_shared" {
+    } else if example == "async_sleep"
+        || example == "async_sleep_shared"
+        || example == "async_embedder_serve"
+    {
         run_async_sleep_tests(&client).await?;
     } else if example == "tracing_bridge" || example == "log_bridge" {
         run_logging_tests(&client).await?;
@@ -350,6 +359,8 @@ async fn main() {
         Cli::AsyncSleep => "async_sleep",
         #[cfg(feature = "tracing")]
         Cli::AsyncSleepShared => "async_sleep_shared",
+        #[cfg(feature = "tracing")]
+        Cli::AsyncEmbedderServe => "async_embedder_serve",
         #[cfg(feature = "log")]
         Cli::LogBridge => "log_bridge",
     };

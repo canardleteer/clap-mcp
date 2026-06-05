@@ -11,47 +11,6 @@ You can take a look at the examples, but this is a **VERY** early draft. See
 [examples/README.md](examples/README.md) for detailed instructions on running
 them.
 
-## Development
-
-Contributors should follow these conventions:
-
-* Format code with `cargo fmt`. CI runs `cargo fmt --all -- --check`.
-* Run `cargo clippy --all-targets --all-features -- -D warnings` before
-  submitting; CI enforces this.
-* Document public API items and add a `// SAFETY:` comment above any `unsafe`
-  block explaining invariants.
-
-MCP task support matrix (including limitations) is under
-[MCP task-augmented `tools/call`](#mcp-task-augmented-toolscall) below.
-
-Run all tests (including feature-gated logging tests):
-
-```bash
-cargo test --all-features
-```
-
-### Code coverage
-
-Coverage is measured with
-[cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov). Install and run:
-
-```bash
-cargo install cargo-llvm-cov
-cargo llvm-cov test --workspace --all-features --summary-only
-```
-
-For an HTML report (opens in browser):
-
-```bash
-cargo llvm-cov test --workspace --all-features --html
-```
-
-Coverage focuses on the `clap-mcp` and `clap-mcp-macros` crates; the `examples`
-crate is excluded from coverage targets.
-
-Release prep includes building and running all example binaries (CI runs each
-with `--help` as a smoke test); see [examples/README.md](examples/README.md).
-
 ## Design
 
 Compared to a Command Line Interface, I'm not a huge fan of the
@@ -76,6 +35,10 @@ that. At the same time, we shouldn't force CLIs that don't do that, out of the
 ecosystem.
 
 ## Quick start
+
+> [!WARNING]
+> Clanker generated code, running an auto-release pipeline, without a stable API
+> yet.
 
 Add `clap-mcp` to your `Cargo.toml` (the default `derive` feature includes the
 macro):
@@ -238,7 +201,7 @@ In addition to the built-in **`clap://schema`** resource and the optional
 **logging guide** prompt, you can expose custom MCP resources and prompts. Add
 them to
 [`ClapMcpServeOptions`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html)
-and pass that into `parse_or_serve_mcp_with` or `serve_mcp_blocking`.
+and pass that into `parse_or_serve_mcp_with`, [`serve_mcp`], or [`serve_mcp_blocking`].
 
 ### Custom resources
 
@@ -547,6 +510,41 @@ clap_mcp::parse_or_serve_mcp_with::<Cli>(clap_mcp::ClapMcpRunOptions {
 
 Tools include `meta.clapMcp` with these hints for clients.
 
+### Async embedders
+
+When your application already uses `#[tokio::main]`, call [`serve_mcp`] to run
+MCP on the **caller's tokio runtime**. Use [`serve_mcp_blocking`] from a
+synchronous `fn main()` (it creates an internal runtime).
+
+| Entry | Who owns the runtime | Multi-thread when |
+|-------|----------------------|-------------------|
+| [`serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp.html)(...).await | Caller's `#[tokio::main]` | Required when [`ClapMcpConfig::needs_multi_thread_runtime`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#method.needs_multi_thread_runtime) is true (`reinvocation_safe` + `share_runtime` or `parallel_safe`) |
+| [`serve_mcp_blocking`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp_blocking.html)(...) | clap-mcp (internal runtime) | Handled automatically |
+| `parse_or_serve_mcp*` | Same as blocking | Same as blocking |
+
+```rust
+use clap_mcp::{serve_mcp, McpListen, ClapMcpConfig, ClapMcpSchemaMetadata, ClapMcpServeOptions};
+
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> Result<(), clap_mcp::ClapMcpError> {
+    serve_mcp(
+        McpListen::Stdio,
+        schema_json,
+        None,
+        config,
+        in_process_handler,
+        ClapMcpServeOptions::default(),
+        &ClapMcpSchemaMetadata::default(),
+    )
+    .await
+}
+```
+
+See [async_embedder_serve](examples/servers/async_embedder_serve.rs) (imperative
+`serve_mcp`) vs [async_sleep_shared](examples/servers/async_sleep_shared.rs)
+(derive + `parse_or_serve_mcp_with`). For HTTP, use `McpListen::Http(addr)` —
+see [docs/http.md](docs/http.md).
+
 ### Crash and panic behavior
 
 * **Subprocess (`reinvocation_safe` = false):** If the tool process exits with a
@@ -566,9 +564,10 @@ Tools include `meta.clapMcp` with these hints for clients.
 ### Async tools and share_runtime
 
 When your CLI has async subcommands (e.g. `tokio::sleep`, `tokio::spawn`), do
-async work
-inside your `run` function (e.g. call `clap_mcp::run_async_tool` or use a
-runtime handle).
+async work inside your `run` function (e.g. call `clap_mcp::run_async_tool` or
+use a runtime handle). This is separate from [Async embedders](#async-embedders)
+above: `share_runtime` controls whether **tool bodies** reuse the MCP server's
+tokio runtime, not whether MCP itself runs on your app's runtime.
 Set `share_runtime` in `#[clap_mcp(...)]` to share the MCP server's tokio
 runtime:
 
@@ -861,6 +860,7 @@ tracing_subscriber::registry()
 
 let mut opts = clap_mcp::ClapMcpServeOptions::default();
 opts.log_rx = Some(log_rx);
+// Pass opts to parse_or_serve_mcp_with, serve_mcp, or serve_mcp_blocking
 ```
 
 **Current limitations:**
@@ -887,6 +887,7 @@ log::set_max_level(log::LevelFilter::Info);
 
 let mut opts = clap_mcp::ClapMcpServeOptions::default();
 opts.log_rx = Some(log_rx);
+// Pass opts to parse_or_serve_mcp_with, serve_mcp, or serve_mcp_blocking
 ```
 
 **Trade-off:** The `log` crate supports exactly **one global logger**.
@@ -921,3 +922,44 @@ Example: `cargo run -p clap-mcp-examples --bin subcommands_http --features http
 Maintainers: MCP spec conformance against that example — `cargo xtask
 conformance` (local Docker) or see
 [docs/conformance-baseline.md](docs/conformance-baseline.md).
+
+## Development
+
+Contributors should follow these conventions:
+
+* Format code with `cargo fmt`. CI runs `cargo fmt --all -- --check`.
+* Run `cargo clippy --all-targets --all-features -- -D warnings` before
+  submitting; CI enforces this.
+* Document public API items and add a `// SAFETY:` comment above any `unsafe`
+  block explaining invariants.
+
+MCP task support matrix (including limitations) is under
+[MCP task-augmented `tools/call`](#mcp-task-augmented-toolscall) above.
+
+Run all tests (including feature-gated logging tests):
+
+```bash
+cargo test --all-features
+```
+
+### Code coverage
+
+Coverage is measured with
+[cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov). Install and run:
+
+```bash
+cargo install cargo-llvm-cov
+cargo llvm-cov test --workspace --all-features --summary-only
+```
+
+For an HTML report (opens in browser):
+
+```bash
+cargo llvm-cov test --workspace --all-features --html
+```
+
+Coverage focuses on the `clap-mcp` and `clap-mcp-macros` crates; the `examples`
+crate is excluded from coverage targets.
+
+Release prep includes building and running all example binaries (CI runs each
+with `--help` as a smoke test); see [examples/README.md](examples/README.md).

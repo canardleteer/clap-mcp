@@ -22,7 +22,7 @@
 //!
 //! let mut opts = clap_mcp::ClapMcpServeOptions::default();
 //! opts.log_rx = Some(log_rx);
-//! // Pass opts to parse_or_serve_mcp_with or serve_mcp_blocking
+//! // Pass opts to parse_or_serve_mcp_with, serve_mcp, or serve_mcp_blocking
 //! ```
 
 use rmcp::model::LoggingLevel;
