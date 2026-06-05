@@ -21,15 +21,19 @@ pub enum Cli {
     /// Add two integers together.
     Add {
         /// First addend.
+        #[arg(long)]
         a: i32,
         /// Second addend.
+        #[arg(long)]
         b: i32,
     },
     /// Subtract the second integer from the first (returns structured output).
     Sub {
         /// Minuend.
+        #[arg(long)]
         a: i32,
         /// Subtrahend.
+        #[arg(long)]
         b: i32,
     },
 }
