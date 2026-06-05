@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["clap-mcp", "clap-mcp/macros", "examples"]
+members = ["clap-mcp", "clap-mcp/macros", "examples", "xtask"]
 
 [workspace.package]
 version = "0.0.3-rc.1"
