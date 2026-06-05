@@ -5,7 +5,7 @@
 //! (SKILL.md) from the exposed tools, resources, and prompts.
 
 use async_trait::async_trait;
-use rust_mcp_sdk::schema::{Prompt, PromptMessage, Resource};
+use rmcp::model::{ErrorData, Prompt, PromptArgument, PromptMessage, RawResource, Resource};
 use std::sync::Arc;
 
 /// Content of a custom MCP resource: either static text or provided by an async callback.
@@ -58,17 +58,17 @@ pub struct CustomResource {
 impl CustomResource {
     /// Build an MCP `Resource` for list_resources.
     pub fn to_list_resource(&self) -> Resource {
-        Resource {
-            name: self.name.clone(),
-            uri: self.uri.clone(),
-            title: self.title.clone(),
-            description: self.description.clone(),
-            mime_type: self.mime_type.clone(),
-            annotations: None,
-            icons: vec![],
-            meta: None,
-            size: None,
+        let mut raw = RawResource::new(self.uri.clone(), self.name.clone());
+        if let Some(title) = &self.title {
+            raw = raw.with_title(title.clone());
         }
+        if let Some(description) = &self.description {
+            raw = raw.with_description(description.clone());
+        }
+        if let Some(mime_type) = &self.mime_type {
+            raw = raw.with_mime_type(mime_type.clone());
+        }
+        Resource::new(raw, None)
     }
 }
 
@@ -113,7 +113,7 @@ pub struct CustomPrompt {
     /// Optional description.
     pub description: Option<String>,
     /// Optional prompt arguments (MCP list declares these; get can receive values).
-    pub arguments: Vec<rust_mcp_sdk::schema::PromptArgument>,
+    pub arguments: Vec<PromptArgument>,
     /// Content: static messages or async provider.
     pub content: PromptContent,
 }
@@ -121,14 +121,19 @@ pub struct CustomPrompt {
 impl CustomPrompt {
     /// Build an MCP `Prompt` for list_prompts.
     pub fn to_list_prompt(&self) -> Prompt {
-        Prompt {
-            name: self.name.clone(),
-            description: self.description.clone(),
-            arguments: self.arguments.clone(),
-            icons: vec![],
-            meta: None,
-            title: self.title.clone(),
+        let mut prompt = Prompt::new(
+            self.name.clone(),
+            self.description.clone(),
+            if self.arguments.is_empty() {
+                None
+            } else {
+                Some(self.arguments.clone())
+            },
+        );
+        if let Some(title) = &self.title {
+            prompt = prompt.with_title(title.clone());
         }
+        prompt
     }
 }
 
@@ -136,12 +141,13 @@ impl CustomPrompt {
 pub async fn resolve_resource_content(
     r: &CustomResource,
     uri: &str,
-) -> std::result::Result<String, rust_mcp_sdk::schema::RpcError> {
+) -> std::result::Result<String, ErrorData> {
     match &r.content {
         ResourceContent::Static(s) => Ok(s.clone()),
-        ResourceContent::Dynamic(provider) => provider.read(uri).await.map_err(|e| {
-            rust_mcp_sdk::schema::RpcError::internal_error().with_message(e.to_string())
-        }),
+        ResourceContent::Dynamic(provider) => provider
+            .read(uri)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None)),
     }
 }
 
@@ -150,12 +156,13 @@ pub async fn resolve_prompt_content(
     p: &CustomPrompt,
     name: &str,
     arguments: &serde_json::Map<String, serde_json::Value>,
-) -> std::result::Result<Vec<PromptMessage>, rust_mcp_sdk::schema::RpcError> {
+) -> std::result::Result<Vec<PromptMessage>, ErrorData> {
     match &p.content {
         PromptContent::Static(msgs) => Ok(msgs.clone()),
-        PromptContent::Dynamic(provider) => provider.get(name, arguments).await.map_err(|e| {
-            rust_mcp_sdk::schema::RpcError::internal_error().with_message(e.to_string())
-        }),
+        PromptContent::Dynamic(provider) => provider
+            .get(name, arguments)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None)),
     }
 }
 
@@ -273,16 +280,16 @@ fn build_tool_body(tool: &Tool) -> String {
         .unwrap_or("MCP tool from clap-mcp");
     let mut body = format!("# {}\n\n{}\n", tool.name, description);
 
-    if let Some(ref props) = tool.input_schema.properties
+    let schema = tool.input_schema.as_ref();
+    if let Some(props) = schema.get("properties").and_then(|v| v.as_object())
         && !props.is_empty()
     {
         body.push_str("\n## Arguments\n\n");
-        let required_set: std::collections::HashSet<&str> = tool
-            .input_schema
-            .required
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
+        let required_set: std::collections::HashSet<&str> = schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
         let mut names: Vec<_> = props.keys().collect();
         names.sort();
         for name in names {
@@ -364,15 +371,17 @@ fn truncate_to_char_boundary(s: &str, max: usize) -> String {
     }
 }
 
-use rust_mcp_sdk::schema::Tool;
+use rmcp::model::Tool;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use clap::{Arg, Command};
-    use rust_mcp_sdk::schema::{ContentBlock, PromptArgument, ToolInputSchema};
+    use rmcp::model::{PromptArgument, PromptMessageRole, Tool};
     use std::error::Error;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -441,32 +450,30 @@ mod tests {
     }
 
     fn sample_messages() -> Vec<PromptMessage> {
-        vec![PromptMessage {
-            role: rust_mcp_sdk::schema::Role::User,
-            content: ContentBlock::text_content("hello from prompt".to_string()),
-        }]
+        vec![PromptMessage::new_text(
+            PromptMessageRole::User,
+            "hello from prompt",
+        )]
     }
 
-    fn sample_tool(name: &str, description: Option<&str>) -> Tool {
+    fn sample_tool(name: impl Into<String>, description: Option<String>) -> Tool {
+        let mut schema = serde_json::Map::new();
+        schema.insert("type".into(), serde_json::json!("object"));
         let mut count_property = serde_json::Map::new();
-        count_property.insert("type".to_string(), serde_json::json!("integer"));
+        count_property.insert("type".into(), serde_json::json!("integer"));
         count_property.insert(
-            "description".to_string(),
+            "description".into(),
             serde_json::json!("How many items to process"),
         );
-        let mut properties = std::collections::BTreeMap::new();
-        properties.insert("count".to_string(), count_property);
-        Tool {
-            name: name.to_string(),
-            title: None,
-            description: description.map(str::to_string),
-            input_schema: ToolInputSchema::new(vec!["count".to_string()], Some(properties), None),
-            annotations: None,
-            execution: None,
-            icons: vec![],
-            meta: None,
-            output_schema: None,
-        }
+        let mut properties = serde_json::Map::new();
+        properties.insert("count".into(), serde_json::Value::Object(count_property));
+        schema.insert("properties".into(), serde_json::Value::Object(properties));
+        schema.insert("required".into(), serde_json::json!(["count"]));
+        Tool::new_with_raw(
+            name.into(),
+            description.map(std::borrow::Cow::Owned),
+            Arc::new(schema),
+        )
     }
 
     fn sample_schema() -> crate::ClapSchema {
@@ -571,12 +578,11 @@ mod tests {
             name: "dynamic-prompt".to_string(),
             title: Some("Dynamic Prompt".to_string()),
             description: Some("dynamic prompt".to_string()),
-            arguments: vec![PromptArgument {
-                name: "topic".to_string(),
-                title: None,
-                description: Some("Topic to discuss".to_string()),
-                required: Some(true),
-            }],
+            arguments: vec![
+                PromptArgument::new("topic")
+                    .with_description("Topic to discuss")
+                    .with_required(true),
+            ],
             content: PromptContent::Dynamic(provider.clone()),
         };
 
@@ -620,7 +626,7 @@ mod tests {
         let schema = sample_schema();
         let tools = vec![sample_tool(
             "Run-Task",
-            Some("Runs the task.\nWith details."),
+            Some("Runs the task.\nWith details.".to_string()),
         )];
 
         export_skills(
@@ -651,7 +657,7 @@ mod tests {
         let output_dir = temp_output_dir("multi");
         let schema = sample_schema();
         let tools = vec![
-            sample_tool("First Tool", Some("First tool.")),
+            sample_tool("First Tool", Some("First tool.".to_string())),
             sample_tool("Second/Tool", None),
         ];
         let resources = vec![CustomResource {
@@ -666,12 +672,7 @@ mod tests {
             name: "guidance".to_string(),
             title: Some("Guidance".to_string()),
             description: Some("Prompt guidance".to_string()),
-            arguments: vec![PromptArgument {
-                name: "audience".to_string(),
-                title: None,
-                description: None,
-                required: Some(false),
-            }],
+            arguments: vec![PromptArgument::new("audience").with_required(false)],
             content: PromptContent::Static(sample_messages()),
         }];
 
@@ -758,12 +759,12 @@ mod tests {
             name: "prompt-name".to_string(),
             title: Some("Prompt Title".to_string()),
             description: Some("Helpful prompt".to_string()),
-            arguments: vec![PromptArgument {
-                name: "subject".to_string(),
-                title: Some("Subject".to_string()),
-                description: Some("What to discuss".to_string()),
-                required: Some(true),
-            }],
+            arguments: vec![
+                PromptArgument::new("subject")
+                    .with_title("Subject")
+                    .with_description("What to discuss")
+                    .with_required(true),
+            ],
             content: PromptContent::Static(sample_messages()),
         };
 
@@ -772,7 +773,11 @@ mod tests {
         assert_eq!(listed_resource.uri, "test://resource");
         assert_eq!(listed_resource.mime_type.as_deref(), Some("text/plain"));
         assert_eq!(listed_prompt.name, "prompt-name");
-        assert_eq!(listed_prompt.arguments.len(), 1);
-        assert_eq!(listed_prompt.arguments[0].name, "subject");
+        let prompt_args = listed_prompt
+            .arguments
+            .as_ref()
+            .expect("prompt arguments should be present");
+        assert_eq!(prompt_args.len(), 1);
+        assert_eq!(prompt_args[0].name, "subject");
     }
 }
