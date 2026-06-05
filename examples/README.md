@@ -7,16 +7,19 @@ directory). The examples depend on `clap-mcp` via a path dependency.
 
 ## 0.0.4 API (derive path)
 
-Since **0.0.4-rc.1**, examples use the slim derive entrypoints:
+Since **0.0.4-rc.1**, examples use the slim derive entrypoints and
+[`ServeMcpBuilder`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html)
+for imperative embedders:
 
 * **`ParseOrServeMcp::parse_or_serve_mcp()`** — default serve options; import
   `clap_mcp::ParseOrServeMcp`.
 * **`parse_or_serve_mcp_with(ClapMcpRunOptions { config, serve })`** — custom
   logging, resources, or HTTP-related serve options.
-* **`serve_mcp(...).await`** — async embedder entry for `#[tokio::main]` (see
-  `async_embedder_serve`).
-* **`serve_mcp_blocking(McpListen::Stdio, …)`** — sync embedder entry for
-  `fn main()` (see `placeholder_server`, `invalid_executable_server`).
+* **`ServeMcpBuilder::for_cli::<T>(listen)`** — derive CLI pre-filled; call
+  `.serve().await` or `.serve_blocking()` (see `async_embedder_serve`,
+  `placeholder_server`, `invalid_executable_server`).
+* **`ServeMcpBuilder::new()`** — hand-built schema/config for imperative embedders.
+* **`serve_mcp` / `serve_mcp_blocking`** — lower-level 7-arg equivalents (delegate to builder).
 * **`tools_from_schema_with_metadata`** — build MCP tools from schema +
   [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html)
   (including `#[clap_mcp(task_augmented_tools)]`).
@@ -44,7 +47,7 @@ Two patterns for async MCP servers with `share_runtime = true`:
 | Example | Pattern |
 |---------|---------|
 | **async_sleep_shared** | Derive path: `parse_or_serve_mcp_with` from sync `main` |
-| **async_embedder_serve** | Imperative path: `serve_mcp(McpListen::Stdio, ...).await` from `#[tokio::main]` |
+| **async_embedder_serve** | Imperative path: `ServeMcpBuilder::for_cli` + `.serve().await` from `#[tokio::main]` |
 
 See [README Async embedders](../README.md#async-embedders) for runtime selection details.
 
@@ -93,7 +96,7 @@ cargo run -p clap-mcp-examples --bin client -- async-sleep
 # Test async_sleep_shared (shared runtime, derive path)
 cargo run -p clap-mcp-examples --bin client -- async-sleep-shared
 
-# Test async_embedder_serve (shared runtime, imperative serve_mcp)
+# Test async_embedder_serve (shared runtime, imperative ServeMcpBuilder)
 cargo run -p clap-mcp-examples --bin client -- async-embedder-serve
 
 # Test log_bridge

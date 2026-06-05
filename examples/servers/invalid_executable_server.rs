@@ -1,6 +1,6 @@
 use clap::{Arg, Command};
 use clap_mcp::{
-    ClapMcpConfig, ClapMcpSchemaMetadata, McpListen, schema_from_command, serve_mcp_blocking,
+    ClapMcpConfig, ClapMcpSchemaMetadata, McpListen, ServeMcpBuilder, schema_from_command,
 };
 use std::path::PathBuf;
 
@@ -16,14 +16,12 @@ fn main() {
     );
     let schema_json = serde_json::to_string_pretty(&schema).expect("schema should serialize");
 
-    serve_mcp_blocking(
-        McpListen::Stdio,
-        schema_json,
-        Some(PathBuf::from("/definitely/not/a/real/clap-mcp-tool")),
-        ClapMcpConfig::default(),
-        None,
-        Default::default(),
-        &ClapMcpSchemaMetadata::default(),
-    )
-    .expect("invalid executable server should start");
+    ServeMcpBuilder::new()
+        .listen(McpListen::Stdio)
+        .schema_json(schema_json)
+        .executable_path(Some(PathBuf::from("/definitely/not/a/real/clap-mcp-tool")))
+        .config(ClapMcpConfig::default())
+        .metadata(ClapMcpSchemaMetadata::default())
+        .serve_blocking()
+        .expect("invalid executable server should start");
 }

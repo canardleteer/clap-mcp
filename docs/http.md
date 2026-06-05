@@ -59,48 +59,44 @@ mycli --mcp-http "127.0.0.1:${APP_PORT}"
 | Mutual exclusion | `--mcp` and `--mcp-http` cannot be combined |
 | Before subcommand | When `allow_mcp_without_subcommand` is true (default), MCP flags work without a subcommand — same as stdio |
 | DNS rebinding | Loopback-oriented `allowed_hosts` are applied; public binds (`0.0.0.0`) need reverse-proxy hardening |
-| Tokio runtime | When `reinvocation_safe` and (`share_runtime` or `parallel_safe`), embedders need a multi-thread runtime for [`serve_mcp`] or clap-mcp creates one for [`serve_mcp_blocking`] |
+| Tokio runtime | When `reinvocation_safe` and (`share_runtime` or `parallel_safe`), embedders need a multi-thread runtime for [`ServeMcpBuilder::serve`] or clap-mcp creates one for [`ServeMcpBuilder::serve_blocking`] |
 
 ## Low-level embed API
 
 For servers that build schema JSON without the derive path, use
-[`serve_mcp`] from `#[tokio::main]` or [`serve_mcp_blocking`] from sync `main`.
-See also the **Async embedders** section in [README.md](../README.md).
+[`ServeMcpBuilder`] from `#[tokio::main]` or [`ServeMcpBuilder::serve_blocking`]
+from sync `main`. Lower-level [`serve_mcp`] / [`serve_mcp_blocking`] free
+functions delegate to the builder. See also the **Async embedders** section in
+[README.md](../README.md).
 
 **Async (`#[tokio::main]`):**
 
 ```rust
-use clap_mcp::{serve_mcp, McpListen, ClapMcpConfig, ClapMcpSchemaMetadata, ClapMcpServeOptions};
+use clap_mcp::{ServeMcpBuilder, McpListen, ClapMcpServeOptions};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), clap_mcp::ClapMcpError> {
-    serve_mcp(
-        McpListen::Http("127.0.0.1:8080".parse()?),
-        schema_json,
-        executable_path,
-        config,
-        in_process_handler,
-        ClapMcpServeOptions::default(),
-        &metadata,
-    )
-    .await
+    ServeMcpBuilder::new()
+        .listen(McpListen::Http("127.0.0.1:8080".parse()?))
+        .schema_json(schema_json)
+        .config(config)
+        .metadata(metadata)
+        .executable_path(executable_path)
+        .in_process_handler(in_process_handler)
+        .serve_options(ClapMcpServeOptions::default())
+        .serve()
+        .await
 }
 ```
 
 **Blocking (sync `main`):**
 
 ```rust
-use clap_mcp::{serve_mcp_blocking, McpListen, ClapMcpConfig, ClapMcpSchemaMetadata, ClapMcpServeOptions};
+use clap_mcp::{ServeMcpBuilder, McpListen, ClapMcpServeOptions};
 
-serve_mcp_blocking(
-    McpListen::Http("127.0.0.1:8080".parse()?),
-    schema_json,
-    executable_path,
-    config,
-    in_process_handler,
-    ClapMcpServeOptions::default(),
-    &metadata,
-)?;
+ServeMcpBuilder::for_cli::<Cli>(McpListen::Http("127.0.0.1:8080".parse()?))
+    .serve_options(ClapMcpServeOptions::default())
+    .serve_blocking()?;
 ```
 
 ## OAuth (server vs client)
