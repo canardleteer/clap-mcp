@@ -1,0 +1,7 @@
+error: clap_mcp: task_augmented_tools requires reinvocation_safe (in-process execution); subprocess mode cannot use MCP task-augmented tools/call
+ --> tests/ui/fail/task_augmented_without_reinvoke.rs:6:25
+  |
+6 | #[derive(Debug, Parser, ClapMcp)]
+  |                         ^^^^^^^
+  |
+  = note: this error originates in the derive macro `ClapMcp` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **MCP task-augmented `tools/call` (in-process, serialized):** `ClapMcpConfig::task_augmented_tools`, `InitializeResult.capabilities.tasks`, `McpServerOptions.task_store`, `ServerHandler::handle_task_augmented_tool_call` with the same execution path as plain in-process calls and a shared lock when `parallel_safe` is false. Optional `#[clap_mcp(task)]` on enum variants fills `ClapMcpSchemaMetadata::task_tool_names` and `meta.clapMcp.taskAugmented` in `list_tools`. `#[clap_mcp(task_augmented_tools)]` without `reinvocation_safe` fails to compile in the derive. Task-augmented runs set `CreateTaskResult.meta.taskId` and, when logging is enabled, `LoggingMessageNotificationParams.meta.taskId` for the active task body.
+- **Examples:** `task_tools_dedicated`, `task_tools_shared`, and `task_augmented_client` (see [examples/README.md](examples/README.md)).
+
 ## [0.0.3-rc.1] - 2025-03-05
 
 ### Breaking

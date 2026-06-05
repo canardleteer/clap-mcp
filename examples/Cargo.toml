@@ -98,6 +98,31 @@ name = "client"
 path = "client.rs"
 required-features = ["tracing"]
 
+[[bin]]
+name = "task_augmented_client"
+path = "task_augmented_client.rs"
+required-features = ["tracing"]
+
+[[bin]]
+name = "task_tools_dedicated"
+path = "servers/task_tools_dedicated.rs"
+required-features = ["tracing"]
+
+[[bin]]
+name = "task_tools_shared"
+path = "servers/task_tools_shared.rs"
+required-features = ["tracing"]
+
+[[bin]]
+name = "task_serial_probe_dedicated"
+path = "servers/task_serial_probe_dedicated.rs"
+required-features = ["tracing"]
+
+[[bin]]
+name = "task_serial_probe_shared"
+path = "servers/task_serial_probe_shared.rs"
+required-features = ["tracing"]
+
 [features]
 default = ["tracing", "log"]
 tracing = []

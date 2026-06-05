@@ -10,8 +10,9 @@ use syn::{
     parse_macro_input,
 };
 
-/// Parsed `#[clap_mcp(...)]` config: parallel_safe, reinvocation_safe, share_runtime, catch_in_process_panics, allow_mcp_without_subcommand.
+/// Parsed `#[clap_mcp(...)]` config: parallel_safe, reinvocation_safe, share_runtime, catch_in_process_panics, allow_mcp_without_subcommand, task_augmented_tools.
 type ClapMcpAttrs = (
+    Option<bool>,
     Option<bool>,
     Option<bool>,
     Option<bool>,
@@ -19,13 +20,14 @@ type ClapMcpAttrs = (
     Option<bool>,
 );
 
-/// Parses `#[clap_mcp(...)]` attributes to extract parallel_safe, reinvocation_safe, share_runtime, catch_in_process_panics, and allow_mcp_without_subcommand.
+/// Parses `#[clap_mcp(...)]` attributes to extract parallel_safe, reinvocation_safe, share_runtime, catch_in_process_panics, allow_mcp_without_subcommand, and task_augmented_tools.
 fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> ClapMcpAttrs {
     let mut parallel_safe = None;
     let mut reinvocation_safe = None;
     let mut share_runtime = None;
     let mut catch_in_process_panics = None;
     let mut allow_mcp_without_subcommand = None;
+    let mut task_augmented_tools = None;
 
     for attr in attrs {
         if !attr.path().is_ident("clap_mcp") {
@@ -68,6 +70,13 @@ fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> ClapMcpAttrs {
                 } else {
                     allow_mcp_without_subcommand = Some(true); // shorthand
                 }
+            } else if meta.path.is_ident("task_augmented_tools") {
+                if meta.input.peek(syn::token::Eq) {
+                    let value: Expr = meta.value()?.parse()?;
+                    task_augmented_tools = Some(expr_to_bool(&value));
+                } else {
+                    task_augmented_tools = Some(true); // shorthand
+                }
             }
             Ok(())
         });
@@ -79,6 +88,7 @@ fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> ClapMcpAttrs {
         share_runtime,
         catch_in_process_panics,
         allow_mcp_without_subcommand,
+        task_augmented_tools,
     )
 }
 
@@ -106,6 +116,28 @@ fn field_has_command_subcommand(attrs: &[syn::Attribute]) -> bool {
             Ok(())
         });
         if has_subcommand {
+            return true;
+        }
+    }
+    false
+}
+
+/// Parses #[clap_mcp(task)] on enum variants — marks the tool as eligible for MCP task-augmented
+/// `tools/call` when [`ClapMcpConfig::task_augmented_tools`] is enabled. If no variant has this
+/// attribute, all tools are eligible when tasks are enabled.
+fn has_clap_mcp_task(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let mut found = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("task") {
+                found = true;
+            }
+            Ok(())
+        });
+        if found {
             return true;
         }
     }
@@ -429,6 +461,14 @@ fn is_option_type(ty: &Type) -> bool {
 /// - `allow_mcp_without_subcommand` / `allow_mcp_without_subcommand = true|false` — When true
 ///   (default), `myapp --mcp` starts the MCP server even when the root has `subcommand_required = true`.
 ///   See [`ClapMcpConfig::allow_mcp_without_subcommand`].
+/// - `task_augmented_tools` / `task_augmented_tools = true|false` — When true, advertise MCP task
+///   support and handle task-augmented `tools/call` (in-process only). Requires
+///   `reinvocation_safe`; combining with `reinvocation_safe = false` is a **compile error**.
+///
+/// ## `#[clap_mcp(task)]` (on variant)
+///
+/// When `task_augmented_tools` is enabled, marks this subcommand as eligible for task-augmented
+/// `tools/call`. If **no** variant has `#[clap_mcp(task)]`, **all** tools are eligible.
 ///
 /// ## `#[clap_mcp_output_from = "run"]` (on the enum)
 ///
@@ -515,7 +555,19 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
         share_runtime,
         catch_in_process_panics,
         allow_mcp_without_subcommand,
+        task_augmented_tools,
     ) = parse_clap_mcp_attrs(&input.attrs);
+
+    let reinvocation_effective = reinvocation_safe.unwrap_or(false);
+    if task_augmented_tools == Some(true) && !reinvocation_effective {
+        return TokenStream::from(
+            syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "clap_mcp: task_augmented_tools requires reinvocation_safe (in-process execution); subprocess mode cannot use MCP task-augmented tools/call",
+            )
+            .to_compile_error(),
+        );
+    }
 
     let parallel_safe_expr = parallel_safe
         .map(|b| quote! { #b })
@@ -534,6 +586,9 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
         .unwrap_or_else(
             || quote! { clap_mcp::ClapMcpConfig::default().allow_mcp_without_subcommand },
         );
+    let task_augmented_tools_expr = task_augmented_tools
+        .map(|b| quote! { #b })
+        .unwrap_or_else(|| quote! { clap_mcp::ClapMcpConfig::default().task_augmented_tools });
 
     let config_provider = quote! {
         impl clap_mcp::ClapMcpConfigProvider for #name {
@@ -544,6 +599,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                     share_runtime: #share_runtime_expr,
                     catch_in_process_panics: #catch_in_process_panics_expr,
                     allow_mcp_without_subcommand: #allow_mcp_without_subcommand_expr,
+                    task_augmented_tools: #task_augmented_tools_expr,
                 }
             }
         }
@@ -633,7 +689,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Builds the ClapMcpSchemaMetadataProvider impl from #[clap_mcp(skip)] and #[clap_mcp(requires)].
+/// Builds the ClapMcpSchemaMetadataProvider impl from #[clap_mcp(skip)], #[clap_mcp(requires)], and #[clap_mcp(task)].
 fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let name = &input.ident;
     let mut skip_commands = Vec::<String>::new();
@@ -641,6 +697,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         std::collections::HashMap::new();
     let mut requires_args: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
+    let mut task_tool_names = Vec::<String>::new();
     let mut warn_optional_positional = false;
 
     let optional_positional_warn_block: proc_macro2::TokenStream = quote! {
@@ -669,6 +726,9 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 let variant_reqs = get_clap_mcp_requires_variant(&v.attrs).unwrap_or_default();
                 if has_clap_mcp_skip(&v.attrs) {
                     skip_commands.push(cmd_name.clone());
+                }
+                if has_clap_mcp_task(&v.attrs) {
+                    task_tool_names.push(cmd_name.clone());
                 }
                 requires_args
                     .entry(cmd_name.clone())
@@ -751,9 +811,14 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     };
                     let merge = !skip_commands.is_empty()
                         || !skip_args.is_empty()
-                        || !requires_args.is_empty();
+                        || !requires_args.is_empty()
+                        || !task_tool_names.is_empty();
                     if merge {
                         let skip_commands_lit = skip_commands.iter().map(|s| {
+                            let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+                            quote! { #lit.to_string() }
+                        });
+                        let task_tool_names_lit = task_tool_names.iter().map(|s| {
                             let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
                             quote! { #lit.to_string() }
                         });
@@ -792,6 +857,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     #warn_block
                                     let mut m = <#sub_path as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata();
                                     m.skip_commands.extend([#(#skip_commands_lit),*]);
+                                    m.task_tool_names.extend([#(#task_tool_names_lit),*]);
                                     #(#skip_args_entries)*
                                     #(#requires_args_entries)*
                                     #skip_root_assign
@@ -848,6 +914,10 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
             m.requires_args.insert(#k_lit.to_string(), vec![#(#vs),*]);
         }
     });
+    let task_tool_names_lit = task_tool_names.iter().map(|s| {
+        let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+        quote! { #lit.to_string() }
+    });
 
     let warn_block = if warn_optional_positional {
         optional_positional_warn_block
@@ -861,6 +931,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 #warn_block
                 let mut m = clap_mcp::ClapMcpSchemaMetadata::default();
                 m.skip_commands.extend([#(#skip_commands_lit),*]);
+                m.task_tool_names.extend([#(#task_tool_names_lit),*]);
                 #(#skip_args_entries)*
                 #(#requires_args_entries)*
                 #output_schema_assign

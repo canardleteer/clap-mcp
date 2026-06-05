@@ -7,7 +7,7 @@ use clap_mcp::{
     ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpSchemaMetadata,
     ClapMcpSchemaMetadataProvider, ClapMcpToolExecutor, ClapMcpToolOutput,
     LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, PROMPT_LOGGING_GUIDE, ParseOrServeMcp,
-    run_async_tool, schema_from_command, schema_from_command_with_metadata,
+    run_async_tool, schema_from_command, schema_from_command_with_metadata, tool_task_eligible,
     tools_from_schema_with_config, tools_from_schema_with_config_and_metadata,
 };
 use serde::Serialize;
@@ -279,6 +279,28 @@ fn test_clap_mcp_config_provider_share_runtime_defaults_when_omitted() {
         !config.share_runtime,
         "share_runtime should default to false when omitted"
     );
+}
+
+#[test]
+fn test_tool_task_eligible_and_task_augmented_meta() {
+    let mut metadata = ClapMcpSchemaMetadata::default();
+    metadata.task_tool_names.push("foo".into());
+    let config = ClapMcpConfig {
+        reinvocation_safe: true,
+        task_augmented_tools: true,
+        parallel_safe: false,
+        ..Default::default()
+    };
+    assert!(tool_task_eligible("foo", &config, &metadata));
+    assert!(!tool_task_eligible("bar", &config, &metadata));
+    assert!(!tool_task_eligible(
+        "foo",
+        &ClapMcpConfig::default(),
+        &metadata
+    ));
+
+    let metadata_all = ClapMcpSchemaMetadata::default();
+    assert!(tool_task_eligible("bar", &config, &metadata_all));
 }
 
 #[test]

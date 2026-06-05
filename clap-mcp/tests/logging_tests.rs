@@ -3,7 +3,7 @@
 
 #![cfg(any(feature = "tracing", feature = "log"))]
 
-use clap_mcp::logging::{level_to_mcp, log_channel, log_params};
+use clap_mcp::logging::{McpTaskIdGuard, level_to_mcp, log_channel, log_params};
 use rust_mcp_sdk::schema::LoggingLevel;
 
 #[test]
@@ -27,6 +27,18 @@ fn test_log_params() {
     assert_eq!(params.level, LoggingLevel::Info);
     assert_eq!(params.logger, Some("test".to_string()));
     assert_eq!(params.data.as_str(), Some("hello"));
+    assert!(params.meta.is_none());
+}
+
+#[test]
+fn test_log_params_includes_task_id_when_guard_active() {
+    let _guard = McpTaskIdGuard::new("task-abc");
+    let params = log_params(LoggingLevel::Info, None, "during task");
+    let meta = params.meta.expect("meta");
+    assert_eq!(
+        meta.get("taskId").and_then(|v| v.as_str()),
+        Some("task-abc")
+    );
 }
 
 #[test]
