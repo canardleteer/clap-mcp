@@ -1,26 +1,31 @@
-# OAuth and clap-mcp HTTP
+# OAuth client (optional)
 
-clap-mcp CLIs expose tools over MCP. **stdio (`--mcp`) has no OAuth story** — there is no remote HTTP endpoint to protect.
+clap-mcp turns **local** CLIs into MCP servers (stdio or loopback HTTP). That
+path has no OAuth story — there is nothing to authorize on the server side, and
+clap-mcp does not ship an authorization server.
 
-For **Streamable HTTP** (`--mcp-http`, optional `http` feature):
-
-- clap-mcp serves plain MCP on `/mcp` (loopback-oriented defaults). See [http.md](http.md) for listen configuration and env vars.
-- **Production auth** is usually a reverse proxy, API gateway, or Bearer middleware in front of the server process.
-- clap-mcp does **not** embed an OAuth authorization server.
-
-## OAuth **client** flows (optional `http-oauth` feature)
-
-rmcp ships **OAuth client** support (discovery, PKCE, token refresh) for calling **remote** MCP servers. Enable on `clap-mcp`:
+The optional **`http-oauth`** feature is only for **clients**: CLIs or tools
+that call a **remote** MCP server over HTTP when that server requires OAuth
+(discovery, PKCE, token refresh via rmcp). Enable it when your binary acts as an
+MCP client, not when it is serving local tools.
 
 ```toml
-clap-mcp = { version = "0.0.4-rc.1", features = ["derive", "http", "http-oauth"] }
+clap-mcp = { version = "0.0.4-rc.1", features = ["derive", "http-oauth"] }
 ```
 
-Re-exports live in `clap_mcp::oauth` (`AuthClient`, `StreamableHttpClientTransport`). See rmcp `docs/OAUTH_SUPPORT.md` and `examples/clients` in the rust-sdk repo.
+(`http-oauth` implies `http` and rmcp's auth + streamable HTTP client
+transport.)
 
-### Environment variables (client config)
+Re-exports: `clap_mcp::oauth::AuthClient`, `StreamableHttpClientTransport`.
+See [OAuth in rmcp](https://github.com/modelcontextprotocol/rust-sdk/blob/main/docs/OAUTH_SUPPORT.md)
+and [client examples](https://github.com/modelcontextprotocol/rust-sdk/tree/main/examples/clients).
+Sketch:
+[`examples/clients/oauth_http_client.rs`](../examples/clients/oauth_http_client.rs).
 
-For CLIs that call OAuth-protected **remote** MCP servers, load client settings from the environment via [`clap_mcp::oauth::EnvConfig::from_env`](https://docs.rs/clap-mcp/latest/clap_mcp/oauth/struct.EnvConfig.html):
+## Environment variables
+
+Load client settings with
+[`clap_mcp::oauth::EnvConfig::from_env`](https://docs.rs/clap-mcp/latest/clap_mcp/oauth/struct.EnvConfig.html):
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
@@ -33,11 +38,10 @@ For CLIs that call OAuth-protected **remote** MCP servers, load client settings 
 ```rust
 let cfg = clap_mcp::oauth::EnvConfig::from_env()?;
 let oauth_cfg = cfg.oauth_client_config();
-// Wire cfg.issuer + oauth_cfg into rmcp AuthClient / discovery (see rmcp docs).
+// Wire cfg.issuer + oauth_cfg into rmcp AuthClient / discovery (see OAUTH_SUPPORT.md in rust-sdk).
 ```
 
-Constants for embedders: `clap_mcp::oauth::OAUTH_ISSUER_ENV`, `OAUTH_CLIENT_ID_ENV`, etc.
+Constants: `clap_mcp::oauth::OAUTH_ISSUER_ENV`, `OAUTH_CLIENT_ID_ENV`, etc.
 
-## CI / automated tests
-
-Full browser PKCE flows are **manual**. Automated smoke tests should use a Bearer-token fixture server (see rmcp `simple_auth_streamhttp` patterns), not live OAuth AS interaction.
+Browser PKCE flows are manual to run end-to-end; the example above only loads
+and validates env-based client config.

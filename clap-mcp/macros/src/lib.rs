@@ -464,6 +464,10 @@ fn is_option_type(ty: &Type) -> bool {
 /// - `task_augmented_tools` / `task_augmented_tools = true|false` — When true, advertise MCP task
 ///   support and handle task-augmented `tools/call` (in-process only). Requires
 ///   `reinvocation_safe`; combining with `reinvocation_safe = false` is a **compile error**.
+///   With `parallel_safe = false`, task and plain tool bodies share one serialization queue.
+///   With `parallel_safe = true`, task bodies may overlap with each other and with plain
+///   `tools/call`; logging during tasks uses per-task context so `meta.taskId` stays correct.
+///   `catch_in_process_panics = true` maps panics in task-scheduled work to task error payloads.
 ///
 /// ## `#[clap_mcp(task)]` (on variant)
 ///

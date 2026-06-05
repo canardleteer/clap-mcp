@@ -2126,6 +2126,10 @@ fn value_to_strings(v: &serde_json::Value) -> Option<Vec<String>> {
 /// | `true` | `false` | Dedicated thread with its own tokio runtime (default, recommended) |
 /// | `true` | `true` | Uses `Handle::current().block_on()` on the MCP server's runtime |
 ///
+/// When `parallel_safe` is true and `share_runtime` is false, `run_async_tool` uses
+/// `block_in_place` so the MCP server's multi-thread runtime can process overlapping calls
+/// while dedicated-thread work runs.
+///
 /// When `share_runtime` is true, uses `block_in_place` + `block_on` so the async
 /// work runs on the MCP server's multi-thread runtime without deadlock.
 ///
@@ -2153,20 +2157,32 @@ where
             Ok(handle.block_on(f()))
         })
     } else {
-        let task_id = crate::logging::current_mcp_task_id();
-        std::thread::scope(|s| {
-            let join_handle = s.spawn(move || {
-                let _task_id_guard = task_id.map(crate::logging::McpTaskIdGuard::new);
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?;
-                Ok(rt.block_on(f()))
-            });
-            match join_handle.join() {
-                Ok(inner) => inner,
-                Err(e) => Err(ClapMcpError::ToolThread(format!("{:?}", e))),
-            }
-        })
+        let catch_panics = config.catch_in_process_panics;
+        let run_on_dedicated_thread = || {
+            let task_id = crate::logging::current_mcp_task_id();
+            std::thread::scope(|s| {
+                let join_handle = s.spawn(move || {
+                    let _task_id_guard = task_id.map(crate::logging::McpTaskIdGuard::new);
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()?;
+                    Ok(rt.block_on(f()))
+                });
+                match join_handle.join() {
+                    Ok(inner) => inner,
+                    Err(payload) if catch_panics => {
+                        let msg = format_panic_payload(payload.as_ref());
+                        Err(ClapMcpError::ToolThread(format!("Tool panicked: {msg}")))
+                    }
+                    Err(payload) => std::panic::resume_unwind(payload),
+                }
+            })
+        };
+        if config.reinvocation_safe && config.parallel_safe {
+            tokio::task::block_in_place(run_on_dedicated_thread)
+        } else {
+            run_on_dedicated_thread()
+        }
     }
 }
 

@@ -27,8 +27,17 @@
 
 use rmcp::model::LoggingLevel;
 use serde_json::Value;
-use std::sync::Mutex;
+use std::cell::RefCell;
+use std::future::Future;
 use tokio::sync::mpsc;
+
+tokio::task_local! {
+    static TASK_MCP_TASK_ID: RefCell<Option<String>>;
+}
+
+thread_local! {
+    static THREAD_MCP_TASK_ID: RefCell<Option<String>> = const { RefCell::new(None) };
+}
 
 /// Parameters for a logging notification forwarded through [`log_channel`].
 ///
@@ -42,40 +51,60 @@ pub struct LoggingMessageNotificationParams {
     pub meta: Option<serde_json::Map<String, Value>>,
 }
 
-/// Process-wide MCP task id for the current serialized tool body (see [`McpTaskIdGuard`]).
-static CURRENT_MCP_TASK_ID: Mutex<Option<String>> = Mutex::new(None);
-
-/// Sets the MCP task id visible to [`log_params`] for the duration of this guard.
+/// Sets the MCP task id on the current thread for logging `meta.taskId`.
 ///
-/// Safe when `parallel_safe = false` (only one tool body runs at a time). Used during
-/// task-augmented `tools/call` execution, including across dedicated async tool threads.
+/// Used on dedicated async-tool threads. Prefer [`run_with_mcp_task_id`] in async task bodies
+/// when `parallel_safe = true` so concurrent tasks do not share one id slot.
 pub struct McpTaskIdGuard {
     previous: Option<String>,
 }
 
 impl McpTaskIdGuard {
-    /// Installs `task_id` for logging `meta.taskId` until this guard is dropped.
+    /// Installs `task_id` on the current thread until this guard is dropped.
     pub fn new(task_id: impl Into<String>) -> Self {
-        let mut slot = CURRENT_MCP_TASK_ID
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let previous = slot.replace(task_id.into());
+        let previous = THREAD_MCP_TASK_ID.with(|slot| {
+            let prev = slot.borrow().clone();
+            *slot.borrow_mut() = Some(task_id.into());
+            prev
+        });
         Self { previous }
     }
 }
 
 impl Drop for McpTaskIdGuard {
     fn drop(&mut self) {
-        let mut slot = CURRENT_MCP_TASK_ID
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        *slot = self.previous.take();
+        THREAD_MCP_TASK_ID.with(|slot| {
+            *slot.borrow_mut() = self.previous.take();
+        });
     }
 }
 
+/// Runs an async future with `task_id` in task-local and thread-local logging context.
+pub async fn run_with_mcp_task_id<F, T>(task_id: String, f: F) -> T
+where
+    F: Future<Output = T>,
+{
+    let thread_previous = THREAD_MCP_TASK_ID.with(|slot| {
+        let prev = slot.borrow().clone();
+        *slot.borrow_mut() = Some(task_id.clone());
+        prev
+    });
+    let out = TASK_MCP_TASK_ID.scope(RefCell::new(Some(task_id)), f).await;
+    THREAD_MCP_TASK_ID.with(|slot| {
+        *slot.borrow_mut() = thread_previous;
+    });
+    out
+}
+
 /// Returns the MCP task id for the current tool body, if any.
+///
+/// Prefers the current async task's task-local id, then the current thread's id.
 pub fn current_mcp_task_id() -> Option<String> {
-    CURRENT_MCP_TASK_ID.lock().ok().and_then(|g| g.clone())
+    TASK_MCP_TASK_ID
+        .try_with(|slot| slot.borrow().clone())
+        .ok()
+        .flatten()
+        .or_else(|| THREAD_MCP_TASK_ID.with(|slot| slot.borrow().clone()))
 }
 
 fn log_meta_with_task_id() -> Option<serde_json::Map<String, Value>> {

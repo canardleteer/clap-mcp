@@ -1,6 +1,8 @@
 # Streamable HTTP embedder guide
 
-clap-mcp can serve MCP over **Streamable HTTP** (optional `http` feature) instead of stdio. This document is for authors embedding clap-mcp in another CLI or service binary.
+clap-mcp can serve MCP over **Streamable HTTP** (optional `http` feature)
+instead of stdio. This document is for authors embedding clap-mcp in another
+CLI or service binary.
 
 ## Enable the feature
 
@@ -8,7 +10,10 @@ clap-mcp can serve MCP over **Streamable HTTP** (optional `http` feature) instea
 clap-mcp = { version = "0.0.4-rc.1", features = ["derive", "http"] }
 ```
 
-Derive `ClapMcp` on your CLI type and call [`ParseOrServeMcp::parse_or_serve_mcp`] or [`parse_or_serve_mcp_with`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.parse_or_serve_mcp_with.html). clap-mcp adds global flags `--mcp` (stdio) and `--mcp-http` (HTTP).
+Derive `ClapMcp` on your CLI type and call
+[`ParseOrServeMcp::parse_or_serve_mcp`] or
+[`parse_or_serve_mcp_with`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.parse_or_serve_mcp_with.html).
+clap-mcp adds global flags `--mcp` (stdio) and `--mcp-http` (HTTP).
 
 ## Listen address resolution
 
@@ -16,10 +21,13 @@ Precedence (first match wins):
 
 1. `--mcp-http=HOST:PORT` or `--mcp-http HOST:PORT`
 2. **`--mcp-http` alone** → environment (see below)
-3. `CLAP_MCP_HTTP_LISTEN=HOST:PORT` ([`MCP_HTTP_LISTEN_ENV`](https://docs.rs/clap-mcp/latest/clap_mcp/constant.MCP_HTTP_LISTEN_ENV.html))
-4. `CLAP_MCP_HTTP_BIND` + `CLAP_MCP_HTTP_PORT` together when `CLAP_MCP_HTTP_LISTEN` is unset
+3. `CLAP_MCP_HTTP_LISTEN=HOST:PORT`
+   ([`MCP_HTTP_LISTEN_ENV`](https://docs.rs/clap-mcp/latest/clap_mcp/constant.MCP_HTTP_LISTEN_ENV.html))
+4. `CLAP_MCP_HTTP_BIND` + `CLAP_MCP_HTTP_PORT` together when
+   `CLAP_MCP_HTTP_LISTEN` is unset
 
-There is **no silent default port**. If HTTP mode is requested without a resolvable address, the process exits with an error listing the options above.
+There is **no silent default port**. If HTTP mode is requested without a
+resolvable address, the process exits with an error listing the options above.
 
 ### Examples
 
@@ -36,7 +44,8 @@ mycli --mcp-http 0.0.0.0:9000
 
 ### Coexistence with host CLI env vars
 
-clap-mcp only reads **`CLAP_MCP_*`** variables. If your application already uses `APP_PORT` or similar, read those in `main` and pass an explicit address:
+clap-mcp only reads **`CLAP_MCP_*`** variables. If your application already
+uses `APP_PORT` or similar, read those in `main` and pass an explicit address:
 
 ```bash
 mycli --mcp-http "127.0.0.1:${APP_PORT}"
@@ -72,8 +81,12 @@ serve_mcp_blocking(
 
 ## OAuth (server vs client)
 
-HTTP **server** auth is out of scope for clap-mcp — use a reverse proxy or middleware. OAuth **client** helpers for calling remote MCP servers live under the `http-oauth` feature; see [oauth.md](oauth.md).
+HTTP **server** auth is out of scope for clap-mcp — use a reverse proxy or
+middleware. OAuth **client** helpers for calling remote MCP servers live under
+the `http-oauth` feature; see [oauth.md](oauth.md).
 
 ## Conformance
 
-Maintainers: `cargo xtask conformance` runs the official MCP conformance harness against the `subcommands_http` example. See [conformance-baseline.md](conformance-baseline.md).
+Maintainers: `cargo xtask conformance` runs the official MCP conformance
+harness against the `subcommands_http` example. See
+[conformance-baseline.md](conformance-baseline.md).

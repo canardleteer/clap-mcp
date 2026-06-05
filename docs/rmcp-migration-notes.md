@@ -1,8 +1,14 @@
 # rmcp migration notes (rust-mcp-sdk 0.9 → rmcp 1.7)
 
-Workstream **W0** reference for the clap-mcp port. Handler rewrites are **W1–W2**; this document captures dependency pinning and API mapping only.
+Workstream **W0** reference for the clap-mcp port. Handler rewrites are
+**W1–W2**; this document captures dependency pinning and API mapping only.
 
-**Sources:** `rmcp` 1.7.0 crate (`Cargo.toml` features, `handler/server.rs`, `transport.rs`), [modelcontextprotocol/rust-sdk](https://github.com/modelcontextprotocol/rust-sdk) CHANGELOG (0.x → 1.x, especially 1.0.0 / 1.0.0-alpha “api ergonomics follow-up” [#720]), and current clap-mcp `rust_mcp_sdk` usage.
+**Sources:** `rmcp` 1.7.0 crate (`Cargo.toml` features, `handler/server.rs`,
+`transport.rs`), [modelcontextprotocol/rust-sdk](https://github.com/modelcontextprotocol/rust-sdk)
+[CHANGELOG](https://github.com/modelcontextprotocol/rust-sdk/blob/main/crates/rmcp/CHANGELOG.md)
+(0.x → 1.x, especially 1.0.0 / 1.0.0-alpha “api ergonomics follow-up”
+[#720](https://github.com/modelcontextprotocol/rust-sdk/pull/720)), and current
+clap-mcp `rust_mcp_sdk` usage.
 
 ## Workspace dependency (W0)
 
@@ -16,7 +22,8 @@ rmcp = { version = "1.7", default-features = false, features = [
 ] }
 ```
 
-Confirmed feature names in **rmcp 1.7.0** `Cargo.toml` (others exist for HTTP/OAuth; out of scope for stdio port):
+Confirmed feature names in **rmcp 1.7.0** `Cargo.toml` (others exist for
+HTTP/OAuth; out of scope for stdio port):
 
 | Feature | Role |
 |---------|------|
@@ -26,7 +33,8 @@ Confirmed feature names in **rmcp 1.7.0** `Cargo.toml` (others exist for HTTP/OA
 | `transport-io` | `rmcp::transport::stdio()` — stdin/stdout server transport |
 | `transport-child-process` | `TokioChildProcess` — spawn server binary for integration tests / example clients |
 
-`default` on rmcp enables `base64`, `macros`, `server` — we set `default-features = false` and enable explicitly.
+`default` on rmcp enables `base64`, `macros`, `server` — we set
+`default-features = false` and enable explicitly.
 
 ## Module / type mapping
 
@@ -47,9 +55,13 @@ Confirmed feature names in **rmcp 1.7.0** `Cargo.toml` (others exist for HTTP/OA
 
 ## `RpcError` → `ErrorData`
 
-rust-mcp-sdk handlers and prompt providers return `rust_mcp_sdk::schema::RpcError` with builder-style helpers (e.g. `.with_message(...)`).
+rust-mcp-sdk handlers and prompt providers return
+`rust_mcp_sdk::schema::RpcError` with builder-style helpers (e.g.
+`.with_message(...)`).
 
-rmcp uses **`ErrorData`** (`rmcp::ErrorData`, also exposed from `rmcp::error`). In server code, `crate::error::ErrorData` is often aliased as **`McpError`** in `ServerHandler` method signatures.
+rmcp uses **`ErrorData`** (`rmcp::ErrorData`, also exposed from
+`rmcp::error`). In server code, `crate::error::ErrorData` is often aliased as
+**`McpError`** in `ServerHandler` method signatures.
 
 | rust-mcp-sdk `RpcError` | rmcp `ErrorData` |
 |-------------------------|------------------|
@@ -58,13 +70,18 @@ rmcp uses **`ErrorData`** (`rmcp::ErrorData`, also exposed from `rmcp::error`). 
 | `RpcError::internal_error().with_message(msg)` | `ErrorData::internal_error(msg, None)` |
 | `RpcError::method_not_found()` | `ErrorData::method_not_found::<M>()` or `ErrorData::new(ErrorCode::METHOD_NOT_FOUND, ...)` |
 
-**clap-mcp impact:** `content.rs` prompt provider traits (`resolve_template`, `resolve_messages`) and all `ServerHandler` methods in `lib.rs` must switch return error type to `ErrorData` (public API note for CHANGELOG).
+**clap-mcp impact:** `content.rs` prompt provider traits (`resolve_template`,
+`resolve_messages`) and all `ServerHandler` methods in `lib.rs` must switch
+return error type to `ErrorData` (public API note for CHANGELOG).
 
 ## `ServerHandler` method mapping
 
-rust-mcp-sdk uses **`async fn handle_*_request`** with an `Arc<dyn McpServer>` runtime argument.
+rust-mcp-sdk uses **`async fn handle_*_request`** with an
+`Arc<dyn McpServer>` runtime argument.
 
-rmcp uses **short names**, **`RequestContext<RoleServer>`** (peer, extensions), and **`impl Future<Output = Result<..., McpError>>`** (not `async fn` on the trait).
+rmcp uses **short names**, **`RequestContext<RoleServer>`** (peer,
+extensions), and **`impl Future<Output = Result<..., McpError>>`** (not
+`async fn` on the trait).
 
 | rust-mcp-sdk `ServerHandler` | rmcp `ServerHandler` |
 |------------------------------|----------------------|
@@ -80,13 +97,20 @@ rmcp uses **short names**, **`RequestContext<RoleServer>`** (peer, extensions), 
 | `handle_get_task_request` / payload (task APIs) | `get_task_info`, `get_task_result`, `list_tasks`, `cancel_task` |
 | `runtime.notify_log_message(params)` | Peer notification via `context.peer` / service APIs (W4) |
 
-Task-augmented `tools/call`: rmcp **`Service<RoleServer>`** dispatches to `enqueue_task` when `CallToolRequestParams.task` is `Some`; clap-mcp’s `OperationProcessor` / serialization queue maps to **W5**.
+Task-augmented `tools/call`: rmcp **`Service<RoleServer>`** dispatches to
+`enqueue_task` when `CallToolRequestParams.task` is `Some`; clap-mcp’s
+`OperationProcessor` / serialization queue maps to **W5**.
 
 ## Transport & stdio (1.x ergonomics)
 
-- **Server:** `rmcp::transport::stdio()` → `serve_server(handler, transport).await` or `handler.serve(rmcp::transport::stdio()).await`.
-- **Client (tests/examples):** `TokioChildProcess::new(command)` (feature `transport-child-process`) instead of `StdioTransport::create_with_server_launch`.
-- **No** `rust-mcp-sdk` `TransportOptions` / `StdioTransport::<ClientMessage>::new` — rmcp uses `IntoTransport` on `(AsyncRead, AsyncWrite)` or child-process adapter.
+* **Server:** `rmcp::transport::stdio()` → `serve_server(handler,
+  transport).await` or `handler.serve(rmcp::transport::stdio()).await`.
+* **Client (tests/examples):** `TokioChildProcess::new(command)` (feature
+  `transport-child-process`) instead of
+  `StdioTransport::create_with_server_launch`.
+* **No** `rust-mcp-sdk` `TransportOptions` /
+  `StdioTransport::<ClientMessage>::new` — rmcp uses `IntoTransport` on
+  `(AsyncRead, AsyncWrite)` or child-process adapter.
 
 ## Errors & `ClapMcpError` (W1)
 
@@ -95,18 +119,27 @@ Task-augmented `tools/call`: rmcp **`Service<RoleServer>`** dispatches to `enque
 | `Transport(TransportError)` | Map from `ServiceError` / I/O errors |
 | `McpSdk(McpSdkError)` | Map from `RmcpError` |
 
-## Key 1.x differences (from upstream CHANGELOG / API)
+## Key 1.x differences (from upstream [CHANGELOG](https://github.com/modelcontextprotocol/rust-sdk/blob/main/crates/rmcp/CHANGELOG.md) / API)
 
-1. **Crate split:** Official **`rmcp`** on crates.io (not `rust-mcp-stack` / `rust-mcp-sdk`).
-2. **Handler model:** Handlers are **`Service<RoleServer>`**; JSON-RPC routing is internal; methods are granular `list_tools`, `call_tool`, etc.
-3. **Runtime parameter removed:** Use **`RequestContext`** / **`Peer`** instead of `Arc<dyn McpServer>`.
-4. **Tasks:** Spec-aligned names (`get_task_info`, `get_task_result`); built-in task dispatch on `CallToolRequest` with `task` metadata.
-5. **Structured tool output:** `Tool.outputSchema` / `CallToolResult.structuredContent` (already used by clap-mcp output-schema feature).
+1. **Crate split:** Official **`rmcp`** on crates.io (not `rust-mcp-stack` /
+   `rust-mcp-sdk`).
+2. **Handler model:** Handlers are **`Service<RoleServer>`**; JSON-RPC routing
+   is internal; methods are granular `list_tools`, `call_tool`, etc.
+3. **Runtime parameter removed:** Use **`RequestContext`** / **`Peer`**
+   instead of `Arc<dyn McpServer>`.
+4. **Tasks:** Spec-aligned names (`get_task_info`, `get_task_result`);
+   built-in task dispatch on `CallToolRequest` with `task` metadata.
+5. **Structured tool output:** `Tool.outputSchema` /
+   `CallToolResult.structuredContent` (already used by clap-mcp output-schema
+   feature).
 6. **SSE transport removed** in 0.11+ (not used by clap-mcp stdio path).
 
 ## W0 compile expectation
 
-After W0, `cargo check -p clap-mcp` **should fail** on unresolved `rust_mcp_sdk` imports in `lib.rs`, `content.rs`, `logging.rs` until **W1** (schema/errors) and **W2** (server handler / `serve_schema_json_over_stdio`) land.
+After W0, `cargo check -p clap-mcp` **should fail** on unresolved
+`rust_mcp_sdk` imports in `lib.rs`, `content.rs`, `logging.rs` until **W1**
+(schema/errors) and **W2** (server handler / `serve_schema_json_over_stdio`)
+land.
 
 ## Readiness for W1 + W2
 
@@ -121,11 +154,34 @@ After W0, `cargo check -p clap-mcp` **should fail** on unresolved `rust_mcp_sdk`
 
 Public embedder surface after `0.0.4-rc.1`:
 
-- **Derive entry:** `ParseOrServeMcp::parse_or_serve_mcp()` / `parse_or_serve_mcp_with(ClapMcpRunOptions { .. })`
-- **Imperative entry:** unchanged `get_matches_or_serve_mcp*` ladder
-- **Low-level serve:** `serve_mcp_blocking(McpListen::Stdio | McpListen::Http(addr), ...)`
-- **Tasks flag:** `ClapMcpSchemaMetadata::task_augmented_tools` (from `#[clap_mcp(task_augmented_tools)]`)
-- **Errors alias:** `ClapMcpErrorData` = `rmcp::model::ErrorData`
+* **Derive entry:** `ParseOrServeMcp::parse_or_serve_mcp()` /
+  `parse_or_serve_mcp_with(ClapMcpRunOptions { .. })`
+* **Imperative entry:** unchanged `get_matches_or_serve_mcp*` ladder
+* **Low-level serve:** `serve_mcp_blocking(McpListen::Stdio |
+  McpListen::Http(addr), ...)`
+* **Tasks flag:** `ClapMcpSchemaMetadata::task_augmented_tools` (from
+  `#[clap_mcp(task_augmented_tools)]`)
+* **Errors alias:** `ClapMcpErrorData` = `rmcp::model::ErrorData`
 
-Removed: freestanding `parse_or_serve_mcp*`, `tools_from_schema*`, public `serve_schema_json_over_*`, `ClapMcpConfig::task_augmented_tools`, public `tool_task_eligible`, public `ClapMcpServer` / `build_clap_mcp_server`.
+Removed: freestanding `parse_or_serve_mcp*`, `tools_from_schema*`, public
+`serve_schema_json_over_*`, `ClapMcpConfig::task_augmented_tools`, public
+`tool_task_eligible`, public `ClapMcpServer` / `build_clap_mcp_server`.
 
+## Task-augmented `tools/call` addendum (0.0.4-rc.1+)
+
+Shipped beyond the initial serialized baseline:
+
+* **`parallel_safe = true`** with `task_augmented_tools` — task and plain tool
+  bodies may overlap; per-task logging context (`tokio::task_local!` / thread-local
+  for dedicated async-tool threads) keeps `meta.taskId` correct under concurrency.
+* **`catch_in_process_panics = true`** with `task_augmented_tools` — panics in
+  task-scheduled work map to `CallToolResult` error payloads on `tasks/result`;
+  sync panics in `run()` use `catch_unwind`; async panics on dedicated threads
+  are caught at join when `catch_in_process_panics` is enabled.
+
+Still **not supported:** subprocess (`reinvocation_safe = false`) + tasks (derive
+compile error).
+
+Examples: `task_parallel_probe_*`, `task_panic_catch`, `task_panic_catch_parallel`
+(integration-test helpers); user-facing demos in `task_tools_*` and
+`task_panic_catch`.

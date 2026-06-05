@@ -313,17 +313,37 @@ impl ServerHandler for ClapMcpServer {
             let future_lock = lock.clone();
             let task_id_for_body = task_id.clone();
 
+            let catch_panics = future_inner.catch_in_process_panics;
+            let task_id_result = task_id_for_body.clone();
             let future = Box::pin(async move {
                 let _guard = if let Some(l) = &future_lock {
                     Some(l.lock().await)
                 } else {
                     None
                 };
-                let _task_id_guard = crate::logging::McpTaskIdGuard::new(task_id_for_body.clone());
-                let result = future_inner
-                    .call_tool(&future_request, &future_context)
-                    .await;
-                Ok(Box::new(ToolCallTaskResult::new(task_id_for_body, result))
+                let run_body = async move {
+                    crate::logging::run_with_mcp_task_id(task_id_for_body, async move {
+                        future_inner
+                            .call_tool(&future_request, &future_context)
+                            .await
+                    })
+                    .await
+                };
+                let result = if catch_panics {
+                    match tokio::task::spawn(run_body).await {
+                        Ok(r) => r,
+                        Err(join_err) if join_err.is_panic() => {
+                            Ok(call_tool_result_from_panic(join_err.into_panic().as_ref()))
+                        }
+                        Err(join_err) => Err(McpError::internal_error(
+                            format!("task body join error: {join_err}"),
+                            None,
+                        )),
+                    }
+                } else {
+                    run_body.await
+                };
+                Ok(Box::new(ToolCallTaskResult::new(task_id_result, result))
                     as Box<dyn rmcp::task_manager::OperationResultTransport>)
             });
 
@@ -579,7 +599,8 @@ pub(crate) fn serve_schema_json_over_stdio_blocking(
     serve_options: ClapMcpServeOptions,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Result<(), ClapMcpError> {
-    let use_multi_thread = config.reinvocation_safe && config.share_runtime;
+    let use_multi_thread =
+        config.reinvocation_safe && (config.share_runtime || config.parallel_safe);
     let rt = if use_multi_thread {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
