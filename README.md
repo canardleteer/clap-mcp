@@ -479,7 +479,7 @@ fn run(cmd: Cli) -> AsStructured<SleepResult> {
 
 ### MCP task-augmented `tools/call`
 
-[Tasks](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) let a client send `tools/call` with `task` metadata, receive a [`CreateTaskResult`](https://docs.rs/rust-mcp-sdk/latest/rust_mcp_sdk/schema/struct.CreateTaskResult.html) immediately, and poll `tasks/get` / `tasks/result` for completion.
+[Tasks](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) let a client send `tools/call` with `task` metadata, receive a [`CreateTaskResult`](https://docs.rs/rmcp/latest/rmcp/model/task/struct.CreateTaskResult.html) immediately, and poll `tasks/get` / `tasks/result` for completion.
 
 **Supported in clap-mcp (this release):** in-process servers only (`reinvocation_safe = true`), serialized tool execution (`parallel_safe = false`), both `share_runtime = false` and `share_runtime = true`, and `catch_in_process_panics = false`. Task-augmented and plain `tools/call` share the same serialization queue when `parallel_safe` is false.
 
@@ -487,11 +487,11 @@ fn run(cmd: Cli) -> AsStructured<SleepResult> {
 - Optionally mark subcommands with `#[clap_mcp(task)]` so only those tools advertise `meta.clapMcp.taskAugmented` and accept task-augmented calls. If no variant has `#[clap_mcp(task)]`, every tool is eligible when `task_augmented_tools` is on.
 - **Not supported:** subprocess (`reinvocation_safe = false`) + tasks; supporting that would need non-blocking waits, task lifecycle, and stderr correlation—out of scope here.
 
-**Pinned stack (review on bump):** workspace `rust-mcp-sdk` **0.9.0** (see root `Cargo.toml`); JSON types come from **`rust-mcp-schema`** (run `cargo tree -p rust-mcp-schema` for the resolved version). The server negotiates [`LATEST_PROTOCOL_VERSION`](https://docs.rs/rust-mcp-sdk/latest/rust_mcp_sdk/schema/constant.LATEST_PROTOCOL_VERSION.html) (**2025-11-25**), which includes tasks.
+**Pinned stack (review on bump):** workspace [`rmcp`](https://docs.rs/rmcp) **1.7.x** (see root `Cargo.toml`; features `server`, `client`, `macros`, `transport-io`, `transport-child-process`). Protocol **2025-11-25** (tasks). Migration notes: [docs/rmcp-migration-notes.md](docs/rmcp-migration-notes.md).
 
-**Examples:** [task_tools_dedicated](examples/servers/task_tools_dedicated.rs) (dedicated async runtime), [task_tools_shared](examples/servers/task_tools_shared.rs) (shared MCP runtime), and [task_augmented_client](examples/task_augmented_client.rs) (rust-mcp-sdk client with `task: Some(...)`, polling, and `server_task_store`).
+**Examples:** [task_tools_dedicated](examples/servers/task_tools_dedicated.rs) (dedicated async runtime), [task_tools_shared](examples/servers/task_tools_shared.rs) (shared MCP runtime), and [task_augmented_client](examples/task_augmented_client.rs) (rmcp client with task-augmented `tools/call` and polling).
 
-**Logging during tasks:** When `ClapMcpServeOptions::log_rx` is set and you use the `tracing` or `log` bridges, log notifications emitted during a task-augmented tool body include `meta.taskId` matching `CreateTaskResult.meta.taskId` (serialized servers only run one body at a time).
+**Logging during tasks:** When `ClapMcpServeOptions::log_rx` is set and you use the `tracing` or `log` bridges, log notifications emitted during a task-augmented tool body include `meta.taskId` in notification extensions, matching `CreateTaskResult.task.task_id` (serialized servers only run one body at a time).
 
 `share_runtime` only applies when `reinvocation_safe` is true. When tools run
 in subprocesses (`reinvocation_safe = false`), `share_runtime` is ignored.
