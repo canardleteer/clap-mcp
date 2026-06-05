@@ -704,3 +704,16 @@ opts.log_rx = Some(log_rx);
 need a multiplexing wrapper — either a custom `Log` impl that fans out to
 multiple sinks, or a crate like
 [`multi_log`](https://crates.io/crates/multi_log).
+
+## Streamable HTTP (`http` feature)
+
+Enable the optional `http` feature on `clap-mcp` to serve MCP over Streamable HTTP instead of stdio:
+
+```toml
+clap-mcp = { version = "...", features = ["derive", "http"] }
+```
+
+Run with `--mcp-http 127.0.0.1:8080` (or set `CLAP_MCP_HTTP_LISTEN`). `--mcp` (stdio) and `--mcp-http` are mutually exclusive.
+
+Example: `cargo run -p clap-mcp-examples --bin subcommands_http --features http -- --mcp-http 127.0.0.1:8080`
+

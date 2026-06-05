@@ -16,6 +16,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["registry", "fmt"] }
 log = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 
 [[bin]]
 name = "subcommands"
@@ -127,3 +128,26 @@ required-features = ["tracing"]
 default = ["tracing", "log"]
 tracing = []
 log = []
+http = ["clap-mcp/http"]
+elicitation = ["clap-mcp/elicitation"]
+http-oauth = ["clap-mcp/http-oauth", "dep:reqwest"]
+
+[[bin]]
+name = "subcommands_http"
+path = "servers/subcommands_http.rs"
+required-features = ["http"]
+
+[[bin]]
+name = "task_tools_http"
+path = "servers/task_tools_http.rs"
+required-features = ["http", "tracing"]
+
+[[bin]]
+name = "elicitation_confirm"
+path = "servers/elicitation_confirm.rs"
+required-features = ["elicitation"]
+
+[[bin]]
+name = "oauth_http_client"
+path = "clients/oauth_http_client.rs"
+required-features = ["http-oauth"]

@@ -55,6 +55,7 @@ fn main() {
         capture_stdout: false,
         custom_resources: vec![],
         custom_prompts: vec![],
+        elicitation_enabled: false,
     };
 
     let cli = clap_mcp::parse_or_serve_mcp_with_config_and_options::<Cli>(

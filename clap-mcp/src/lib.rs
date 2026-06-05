@@ -39,7 +39,16 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 mod server;
 
+#[cfg(feature = "http")]
+mod http;
+
+#[cfg(feature = "http-oauth")]
+pub mod oauth;
+
 pub use server::{ClapMcpServer, build_clap_mcp_server, serve_schema_json_over_stdio};
+
+#[cfg(feature = "http")]
+pub use http::{serve_schema_json_over_http, serve_schema_json_over_http_blocking};
 
 pub mod logging;
 
@@ -86,6 +95,14 @@ macro_rules! clap_mcp_main {
 
 /// Long flag that triggers MCP server mode. Add to your CLI via [`command_with_mcp_flag`].
 pub const MCP_FLAG_LONG: &str = "mcp";
+
+/// Long flag for Streamable HTTP MCP server (`http` feature).
+#[cfg(feature = "http")]
+pub const MCP_HTTP_FLAG_LONG: &str = "mcp-http";
+
+/// Environment variable for HTTP listen address when `--mcp-http` is omitted.
+#[cfg(feature = "http")]
+pub const MCP_HTTP_LISTEN_ENV: &str = "CLAP_MCP_HTTP_LISTEN";
 
 /// Long flag that triggers [Agent Skills](https://agentskills.io/specification) export (generates SKILL.md). Add via [`command_with_export_skills_flag`].
 pub const EXPORT_SKILLS_FLAG_LONG: &str = "export-skills";
@@ -574,6 +591,9 @@ pub struct ClapMcpServeOptions {
 
     /// Custom MCP prompts (static or async dynamic). Merged with the built-in logging guide when logging is enabled.
     pub custom_prompts: Vec<content::CustomPrompt>,
+
+    /// When true (requires `elicitation` feature), tools named `confirm-echo` may call `peer.elicit` during execution.
+    pub elicitation_enabled: bool,
 }
 
 /// Log interpretation hint for MCP clients (included in `instructions` when logging is enabled).
@@ -1079,8 +1099,125 @@ pub fn command_with_export_skills_flag(mut cmd: Command) -> Command {
 
 /// Adds both `--mcp` and `--export-skills` flags to the command.
 /// Use this so schema extraction omits both; check for export-skills before mcp in the parse flow.
-pub fn command_with_mcp_and_export_skills_flags(cmd: Command) -> Command {
-    command_with_export_skills_flag(command_with_mcp_flag(cmd))
+pub fn command_with_mcp_and_export_skills_flags(mut cmd: Command) -> Command {
+    cmd = command_with_mcp_flag(cmd);
+    #[cfg(feature = "http")]
+    {
+        cmd = command_with_mcp_http_flag(cmd);
+    }
+    command_with_export_skills_flag(cmd)
+}
+#[cfg(feature = "http")]
+fn command_with_mcp_http_flag(mut cmd: Command) -> Command {
+    let already = cmd
+        .get_arguments()
+        .any(|a| a.get_long().is_some_and(|l| l == MCP_HTTP_FLAG_LONG));
+    if already {
+        return cmd;
+    }
+
+    cmd = cmd.arg(
+        Arg::new(MCP_HTTP_FLAG_LONG)
+            .long(MCP_HTTP_FLAG_LONG)
+            .value_name("ADDR")
+            .help("Run an MCP server over Streamable HTTP at ADDR (e.g. 127.0.0.1:8080)")
+            .global(true),
+    );
+    cmd
+}
+
+#[cfg(feature = "http")]
+pub(crate) fn argv_mcp_http_listen_from_args(args: &[String]) -> Option<String> {
+    for (i, arg) in args.iter().enumerate() {
+        if arg == "--mcp-http" {
+            return args.get(i + 1).filter(|s| !s.starts_with('-')).cloned();
+        }
+        if let Some(addr) = arg.strip_prefix("--mcp-http=") {
+            return Some(addr.to_string());
+        }
+    }
+    std::env::var(MCP_HTTP_LISTEN_ENV).ok()
+}
+
+#[cfg(feature = "http")]
+fn argv_mcp_http_listen() -> Option<String> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    argv_mcp_http_listen_from_args(&args)
+}
+
+#[cfg(feature = "http")]
+fn parse_mcp_http_listen(raw: &str) -> Result<std::net::SocketAddr, ClapMcpError> {
+    raw.parse().map_err(|_| {
+        ClapMcpError::InvalidConfig(format!(
+            "invalid MCP HTTP listen address `{raw}` (expected host:port)"
+        ))
+    })
+}
+
+#[cfg(feature = "http")]
+fn serve_prepared_mcp_blocking(
+    http_listen: Option<std::net::SocketAddr>,
+    schema_json: String,
+    executable_path: Option<PathBuf>,
+    config: ClapMcpConfig,
+    in_process_handler: Option<InProcessToolHandler>,
+    serve_options: ClapMcpServeOptions,
+    metadata: &ClapMcpSchemaMetadata,
+) -> Result<(), ClapMcpError> {
+    if let Some(listen) = http_listen {
+        serve_schema_json_over_http_blocking(
+            listen,
+            schema_json,
+            executable_path,
+            config,
+            in_process_handler,
+            serve_options,
+            metadata,
+        )
+    } else {
+        serve_schema_json_over_stdio_blocking(
+            schema_json,
+            executable_path,
+            config,
+            in_process_handler,
+            serve_options,
+            metadata,
+        )
+    }
+}
+
+#[cfg(not(feature = "http"))]
+fn serve_prepared_mcp_blocking(
+    _http_listen: Option<std::net::SocketAddr>,
+    schema_json: String,
+    executable_path: Option<PathBuf>,
+    config: ClapMcpConfig,
+    in_process_handler: Option<InProcessToolHandler>,
+    serve_options: ClapMcpServeOptions,
+    metadata: &ClapMcpSchemaMetadata,
+) -> Result<(), ClapMcpError> {
+    serve_schema_json_over_stdio_blocking(
+        schema_json,
+        executable_path,
+        config,
+        in_process_handler,
+        serve_options,
+        metadata,
+    )
+}
+
+#[cfg(feature = "http")]
+pub(crate) fn argv_requests_mcp_http_without_subcommand_from_args(
+    args: &[String],
+    cmd: &Command,
+) -> bool {
+    let subcommand_names: std::collections::HashSet<String> = cmd
+        .get_subcommands()
+        .map(|s| s.get_name().to_string())
+        .collect();
+    let has_http = argv_mcp_http_listen_from_args(args).is_some();
+    let has_subcommand = args.iter().any(|a| subcommand_names.contains(a.as_str()));
+    has_http && !has_subcommand
 }
 
 /// Returns true if argv contains `--mcp` and no token is a root-level subcommand name.
@@ -1175,7 +1312,14 @@ fn command_to_schema_with_metadata(
         .get_arguments()
         .filter(|a| {
             let long = a.get_long();
-            long != Some(MCP_FLAG_LONG) && long != Some(EXPORT_SKILLS_FLAG_LONG)
+            if long == Some(MCP_FLAG_LONG) || long == Some(EXPORT_SKILLS_FLAG_LONG) {
+                return false;
+            }
+            #[cfg(feature = "http")]
+            if long == Some(MCP_HTTP_FLAG_LONG) {
+                return false;
+            }
+            true
         })
         .map(arg_to_schema)
         .collect();
@@ -1283,7 +1427,19 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
         std::process::exit(0);
     }
 
-    if config.allow_mcp_without_subcommand && argv_requests_mcp_without_subcommand(&cmd) {
+    if config.allow_mcp_without_subcommand
+        && (argv_requests_mcp_without_subcommand(&cmd) || {
+            #[cfg(feature = "http")]
+            {
+                let args: Vec<String> = std::env::args().skip(1).collect();
+                argv_requests_mcp_http_without_subcommand_from_args(&args, &cmd)
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                false
+            }
+        })
+    {
         let schema_json = match serde_json::to_string_pretty(&schema) {
             Ok(s) => s,
             Err(e) => {
@@ -1291,7 +1447,20 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
                 std::process::exit(1);
             }
         };
-        if let Err(e) = serve_schema_json_over_stdio_blocking(
+        #[cfg(feature = "http")]
+        let http_listen = argv_mcp_http_listen()
+            .as_deref()
+            .map(parse_mcp_http_listen)
+            .transpose()
+            .unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(2);
+            });
+        #[cfg(not(feature = "http"))]
+        let http_listen: Option<std::net::SocketAddr> = None;
+
+        if let Err(e) = serve_prepared_mcp_blocking(
+            http_listen,
             schema_json,
             None,
             config,
@@ -1306,7 +1475,25 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
     }
 
     let matches = cmd.get_matches();
-    if matches.get_flag(MCP_FLAG_LONG) {
+    let mcp_requested = matches.get_flag(MCP_FLAG_LONG);
+    #[cfg(feature = "http")]
+    let http_listen = matches
+        .get_one::<String>(MCP_HTTP_FLAG_LONG)
+        .map(|s| parse_mcp_http_listen(s))
+        .transpose()
+        .unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(2);
+        });
+    #[cfg(not(feature = "http"))]
+    let http_listen: Option<std::net::SocketAddr> = None;
+
+    if mcp_requested && http_listen.is_some() {
+        eprintln!("--mcp and --mcp-http are mutually exclusive");
+        std::process::exit(2);
+    }
+
+    if mcp_requested || http_listen.is_some() {
         let schema_json = match serde_json::to_string_pretty(&schema) {
             Ok(s) => s,
             Err(e) => {
@@ -1314,7 +1501,8 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
                 std::process::exit(1);
             }
         };
-        if let Err(e) = serve_schema_json_over_stdio_blocking(
+        if let Err(e) = serve_prepared_mcp_blocking(
+            http_listen,
             schema_json,
             None,
             config,
@@ -1540,7 +1728,19 @@ where
         std::process::exit(0);
     }
 
-    if config.allow_mcp_without_subcommand && argv_requests_mcp_without_subcommand(&cmd) {
+    if config.allow_mcp_without_subcommand
+        && (argv_requests_mcp_without_subcommand(&cmd) || {
+            #[cfg(feature = "http")]
+            {
+                let args: Vec<String> = std::env::args().skip(1).collect();
+                argv_requests_mcp_http_without_subcommand_from_args(&args, &cmd)
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                false
+            }
+        })
+    {
         let base_cmd = T::command();
         let metadata = T::clap_mcp_schema_metadata();
         let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
@@ -1563,7 +1763,23 @@ where
             None
         };
 
-        if let Err(e) = serve_schema_json_over_stdio_blocking(
+        #[cfg(feature = "http")]
+        let http_listen = match argv_mcp_http_listen()
+            .as_deref()
+            .map(parse_mcp_http_listen)
+            .transpose()
+        {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        };
+        #[cfg(not(feature = "http"))]
+        let http_listen: Option<std::net::SocketAddr> = None;
+
+        if let Err(e) = serve_prepared_mcp_blocking(
+            http_listen,
             schema_json,
             if config.reinvocation_safe { None } else { exe },
             config,
@@ -1580,8 +1796,27 @@ where
 
     let matches = cmd.get_matches();
     let mcp_requested = matches.get_flag(MCP_FLAG_LONG);
+    #[cfg(feature = "http")]
+    let http_listen = match matches
+        .get_one::<String>(MCP_HTTP_FLAG_LONG)
+        .map(|s| parse_mcp_http_listen(s))
+        .transpose()
+    {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
+    #[cfg(not(feature = "http"))]
+    let http_listen: Option<std::net::SocketAddr> = None;
 
-    if mcp_requested {
+    if mcp_requested && http_listen.is_some() {
+        eprintln!("--mcp and --mcp-http are mutually exclusive");
+        std::process::exit(2);
+    }
+
+    if mcp_requested || http_listen.is_some() {
         let base_cmd = T::command();
         let metadata = T::clap_mcp_schema_metadata();
         let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
@@ -1604,7 +1839,23 @@ where
             None
         };
 
-        if let Err(e) = serve_schema_json_over_stdio_blocking(
+        #[cfg(feature = "http")]
+        let http_listen = match argv_mcp_http_listen()
+            .as_deref()
+            .map(parse_mcp_http_listen)
+            .transpose()
+        {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        };
+        #[cfg(not(feature = "http"))]
+        let http_listen: Option<std::net::SocketAddr> = None;
+
+        if let Err(e) = serve_prepared_mcp_blocking(
+            http_listen,
             schema_json,
             if config.reinvocation_safe { None } else { exe },
             config,
