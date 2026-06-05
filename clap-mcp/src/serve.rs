@@ -4,12 +4,14 @@
 use crate::http;
 use crate::{
     ClapMcpConfig, ClapMcpConfigProvider, ClapMcpError, ClapMcpSchemaMetadata,
-    ClapMcpSchemaMetadataProvider, ClapMcpServeOptions, ClapMcpToolExecutor, InProcessToolHandler,
-    McpListen, build_mcp_blocking_runtime, make_in_process_handler,
-    schema_from_command_with_metadata, server,
+    ClapMcpSchemaMetadataProvider, ClapMcpServeOptions, ClapMcpToolExecutor,
+    ClapMcpToolExecutorWithState, InProcessToolHandler, McpListen, build_mcp_blocking_runtime,
+    make_in_process_handler, make_in_process_handler_with_state, schema_from_command_with_metadata,
+    server,
 };
 use clap::CommandFactory;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Bundled MCP serve parameters, produced by [`ServeMcpBuilder::build`].
 ///
@@ -133,6 +135,54 @@ impl ServeMcpBuilder {
             #[cfg(not(unix))]
             let capture_stdout = false;
             Some(make_in_process_handler::<T>(schema, capture_stdout))
+        } else {
+            None
+        };
+
+        let executable_path = if config.reinvocation_safe {
+            None
+        } else {
+            std::env::current_exe().ok()
+        };
+
+        Self {
+            listen: Some(listen),
+            schema_json: Some(schema_json),
+            config: Some(config),
+            metadata: Some(metadata),
+            serve_options: ClapMcpServeOptions::default(),
+            executable_path,
+            in_process_handler,
+        }
+    }
+
+    /// Like [`Self::for_cli`], but captures shared `state` in the in-process handler.
+    pub fn for_cli_with_state<T, S>(listen: McpListen, state: Arc<S>) -> Self
+    where
+        T: ClapMcpToolExecutorWithState<S>
+            + ClapMcpSchemaMetadataProvider
+            + ClapMcpConfigProvider
+            + CommandFactory
+            + clap::FromArgMatches
+            + 'static,
+        S: Send + Sync + 'static,
+    {
+        let config = T::clap_mcp_config();
+        let metadata = T::clap_mcp_schema_metadata();
+        let base_cmd = T::command();
+        let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
+        let schema_json = serde_json::to_string_pretty(&schema).expect("schema should serialize");
+
+        let in_process_handler = if config.reinvocation_safe {
+            #[cfg(unix)]
+            let capture_stdout = false;
+            #[cfg(not(unix))]
+            let capture_stdout = false;
+            Some(make_in_process_handler_with_state::<T, S>(
+                schema,
+                state,
+                capture_stdout,
+            ))
         } else {
             None
         };
