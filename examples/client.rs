@@ -8,7 +8,7 @@
 //! - `log-bridge`: With log crate forwarding (requires --features log)
 //! - `async-sleep`: Async tokio CLI with 3 sleep tasks, dedicated thread (requires --features tracing)
 //! - `async-sleep-shared`: Same but shares the MCP server's runtime (requires --features tracing)
-//! - `async-embedder-serve`: Imperative `serve_mcp` embedder path (requires --features tracing)
+//! - `async-embedder-serve`: Imperative `ServeMcpBuilder` embedder path (requires --features tracing)
 
 use clap::{Parser, Subcommand};
 use rmcp::{

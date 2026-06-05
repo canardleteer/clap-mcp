@@ -157,10 +157,13 @@ Public embedder surface after `0.0.4-rc.1`:
 * **Derive entry:** `ParseOrServeMcp::parse_or_serve_mcp()` /
   `parse_or_serve_mcp_with(ClapMcpRunOptions { .. })`
 * **Imperative entry:** unchanged `get_matches_or_serve_mcp*` ladder
-* **Low-level serve:** [`serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp.html)
-  (async, caller's tokio runtime) and
+* **Low-level serve:** [`ServeMcpBuilder`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html)
+  (recommended; `.serve().await` or `.serve_blocking()`) with
+  [`ServeMcpBuilder::for_cli`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.for_cli)
+  for derive CLIs or `.new()` for hand-built schemas;
+  [`serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp.html) /
   [`serve_mcp_blocking`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp_blocking.html)
-  (sync `main`) with [`McpListen::Stdio`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.McpListen.html)
+  remain as lower-level 7-arg delegators with [`McpListen::Stdio`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.McpListen.html)
   or `McpListen::Http(addr)` (`http` feature)
 * **Tasks flag:** `ClapMcpSchemaMetadata::task_augmented_tools` (from
   `#[clap_mcp(task_augmented_tools)]`)
@@ -170,12 +173,14 @@ Removed (hard break — use unified serve API above):
 
 | Removed | Replacement |
 |---------|-------------|
-| `serve_schema_json_over_stdio` | `serve_mcp(McpListen::Stdio, ...).await` |
-| `serve_schema_json_over_stdio_blocking` | `serve_mcp_blocking(McpListen::Stdio, ...)` |
-| `serve_schema_json_over_http` | `serve_mcp(McpListen::Http(addr), ...).await` |
-| `serve_schema_json_over_http_blocking` | `serve_mcp_blocking(McpListen::Http(addr), ...)` |
+| `serve_schema_json_over_stdio` | `ServeMcpBuilder::new().listen(McpListen::Stdio).…serve().await` or `serve_mcp(...)` |
+| `serve_schema_json_over_stdio_blocking` | `ServeMcpBuilder::…serve_blocking()` or `serve_mcp_blocking(...)` |
+| `serve_schema_json_over_http` | `ServeMcpBuilder::new().listen(McpListen::Http(addr)).…serve().await` |
+| `serve_schema_json_over_http_blocking` | `ServeMcpBuilder::…serve_blocking()` or `serve_mcp_blocking(...)` |
 
-Also removed: freestanding `parse_or_serve_mcp*`, `tools_from_schema*`,
+Also removed: `parse_or_serve_mcp_with_config*` (use
+`parse_or_serve_mcp_with(ClapMcpRunOptions { .. })`), freestanding
+`tools_from_schema*` (use `tools_from_schema_with_metadata`),
 `ClapMcpConfig::task_augmented_tools`, public `tool_task_eligible`, public
 `ClapMcpServer` / `build_clap_mcp_server`.
 

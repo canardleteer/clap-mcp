@@ -7,9 +7,8 @@ use clap_mcp::{
     ClapMcpConfig, ClapMcpConfigProvider, ClapMcpError, ClapMcpRunnable, ClapMcpSchemaMetadata,
     ClapMcpSchemaMetadataProvider, ClapMcpToolExecutor, ClapMcpToolOutput,
     LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, McpListen, PROMPT_LOGGING_GUIDE,
-    ParseOrServeMcp, mcp_config_needs_multi_thread_runtime, run_async_tool, schema_from_command,
-    schema_from_command_with_metadata, serve_mcp, serve_mcp_blocking,
-    tools_from_schema_with_metadata,
+    ParseOrServeMcp, ServeMcpBuilder, run_async_tool, schema_from_command,
+    schema_from_command_with_metadata, serve_mcp, tools_from_schema_with_metadata,
 };
 use serde::Serialize;
 
@@ -580,11 +579,6 @@ fn test_needs_multi_thread_runtime_matrix() {
             expected,
             "reinvocation_safe={reinvocation_safe} share_runtime={share_runtime} parallel_safe={parallel_safe}"
         );
-        assert_eq!(
-            mcp_config_needs_multi_thread_runtime(&config),
-            expected,
-            "helper should match method"
-        );
     }
 }
 
@@ -625,10 +619,10 @@ fn test_serve_mcp_rejects_current_thread_when_multi_thread_required() {
         ))
         .expect_err("current_thread should be rejected");
     match err {
-        ClapMcpError::InvalidConfig(msg) => {
-            assert!(msg.contains("multi-thread"));
+        ClapMcpError::RequiresMultiThreadRuntime { reason } => {
+            assert!(reason.contains("multi-thread"));
         }
-        other => panic!("expected InvalidConfig, got {other:?}"),
+        other => panic!("expected RequiresMultiThreadRuntime, got {other:?}"),
     }
 }
 
@@ -640,16 +634,13 @@ fn test_serve_mcp_blocking_accepts_share_runtime_config() {
         share_runtime: true,
         ..Default::default()
     };
-    let err = serve_mcp_blocking(
-        McpListen::Stdio,
-        "not-json".to_string(),
-        None,
-        config,
-        None,
-        Default::default(),
-        &ClapMcpSchemaMetadata::default(),
-    )
-    .expect_err("invalid schema");
+    let err = ServeMcpBuilder::new()
+        .listen(McpListen::Stdio)
+        .schema_json("not-json".to_string())
+        .config(config)
+        .metadata(ClapMcpSchemaMetadata::default())
+        .serve_blocking()
+        .expect_err("invalid schema");
     assert!(matches!(err, ClapMcpError::SchemaJson(_)));
 }
 
