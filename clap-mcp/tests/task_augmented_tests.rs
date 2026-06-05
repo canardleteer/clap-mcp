@@ -1,55 +1,32 @@
 //! Integration tests for MCP task-augmented `tools/call` (both `share_runtime` configurations).
 
-#![allow(clippy::await_holding_lock)] // `serial_test_guard` intentionally serializes subprocess MCP tests
+#![allow(clippy::await_holding_lock)]
 
+mod common;
+
+use common::{
+    ExampleClient, ExamplePeer, assert_create_task_meta, call_tool_task, example_binary_path,
+    get_task_payload, poll_until_completed, shutdown, task_call_params,
+};
+use rmcp::{
+    ClientHandler, RoleClient, ServiceExt,
+    model::{
+        CallToolRequestParams, LoggingLevel, LoggingMessageNotificationParam, Meta,
+        SetLevelRequestParams,
+    },
+    service::NotificationContext,
+    transport::{ConfigureCommandExt, TokioChildProcess},
+};
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
-use rust_mcp_sdk::{
-    McpClient, StdioTransport, ToMcpClientHandler, TransportOptions,
-    error::SdkResult,
-    mcp_client::{ClientHandler, ClientRuntime, McpClientOptions, client_runtime},
-    schema::{
-        CallToolRequestParams, CallToolResult, ClientCapabilities, CreateTaskResult, GetTaskParams,
-        GetTaskPayloadParams, Implementation, InitializeRequestParams, LATEST_PROTOCOL_VERSION,
-        LoggingLevel, LoggingMessageNotificationParams, ProgressNotificationParams, RpcError,
-        SetLevelRequestParams, TaskMetadata, TaskStatus,
-        schema_utils::{ClientJsonrpcRequest, RequestFromClient, ResultFromServer},
-    },
-    task_store::InMemoryTaskStore,
-};
-
-/// Tool body duration for the "long" slot in probe serialization tests.
 const PROBE_LONG_MS: u64 = 120;
-/// Tool body duration for the "short" slot (issued concurrently with long).
 const PROBE_SHORT_MS: u64 = 15;
-
 const PROBE_ENV: &str = "CLAP_MCP_SERIAL_PROBE";
 
-fn workspace_root() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("workspace")
-        .to_path_buf()
-}
-
-fn cargo_target_dir() -> std::path::PathBuf {
-    std::env::var_os("CARGO_TARGET_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join("target"))
-}
-
-fn example_binary_path(bin: &str) -> std::path::PathBuf {
-    let name = format!("{}{}", bin, std::env::consts::EXE_SUFFIX);
-    cargo_target_dir().join("debug").join(name)
-}
-
-/// Serializes example builds (cargo build lock) and MCP subprocess tests (avoid parallel stdio races).
 static TEST_SERIAL_LOCK: Mutex<()> = Mutex::new(());
 
 fn serial_test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -123,14 +100,13 @@ fn probe_interval(events: &[ProbeEvent], label: &str) -> (u64, u64) {
     (start, end)
 }
 
-/// Strong serialization check: tool bodies must not overlap (mutex / unified queue).
 fn assert_probe_bodies_non_overlapping(events: &[ProbeEvent], label_a: &str, label_b: &str) {
     let (a0, a1) = probe_interval(events, label_a);
     let (b0, b1) = probe_interval(events, label_b);
     let overlaps = a0 < b1 && b0 < a1;
     assert!(
         !overlaps,
-        "tool bodies must not overlap (serialized server): {label_a} [{a0},{a1}] vs {label_b} [{b0},{b1}]; events={events:?}"
+        "tool bodies must not overlap: {label_a} [{a0},{a1}] vs {label_b} [{b0},{b1}]; events={events:?}"
     );
 }
 
@@ -145,52 +121,24 @@ fn assert_probe_expected_calls(events: &[ProbeEvent], long_call: &str, short_cal
 }
 
 #[derive(Clone)]
-struct NoOpHandler;
-
-#[async_trait]
-impl ClientHandler for NoOpHandler {
-    async fn handle_logging_message_notification(
-        &self,
-        _params: LoggingMessageNotificationParams,
-        _runtime: &dyn McpClient,
-    ) -> std::result::Result<(), RpcError> {
-        Ok(())
-    }
-
-    async fn handle_progress_notification(
-        &self,
-        _params: ProgressNotificationParams,
-        _runtime: &dyn McpClient,
-    ) -> std::result::Result<(), RpcError> {
-        Ok(())
-    }
-}
-
-#[derive(Clone)]
 struct LogCapturingHandler {
-    logs: Arc<Mutex<Vec<LoggingMessageNotificationParams>>>,
+    task_ids: Arc<Mutex<Vec<String>>>,
 }
 
-#[async_trait]
 impl ClientHandler for LogCapturingHandler {
-    async fn handle_logging_message_notification(
+    async fn on_logging_message(
         &self,
-        params: LoggingMessageNotificationParams,
-        _runtime: &dyn McpClient,
-    ) -> std::result::Result<(), RpcError> {
-        self.logs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(params);
-        Ok(())
-    }
-
-    async fn handle_progress_notification(
-        &self,
-        _params: ProgressNotificationParams,
-        _runtime: &dyn McpClient,
-    ) -> std::result::Result<(), RpcError> {
-        Ok(())
+        _params: LoggingMessageNotificationParam,
+        context: NotificationContext<RoleClient>,
+    ) {
+        if let Some(meta) = context.extensions.get::<Meta>()
+            && let Some(tid) = meta.0.get("taskId").and_then(|v| v.as_str())
+        {
+            self.task_ids
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(tid.to_string());
+        }
     }
 }
 
@@ -198,9 +146,9 @@ async fn launch_task_example<H>(
     bin: &str,
     handler: H,
     probe_path: Option<&Path>,
-) -> SdkResult<Arc<ClientRuntime>>
+) -> Result<rmcp::service::RunningService<RoleClient, H>, rmcp::RmcpError>
 where
-    H: ClientHandler + Send + Sync + 'static,
+    H: ClientHandler + Clone + Send + Sync + 'static,
 {
     {
         let status = std::process::Command::new("cargo")
@@ -213,163 +161,73 @@ where
                 "--features",
                 "tracing",
             ])
-            .current_dir(workspace_root())
+            .current_dir(common::workspace_root())
             .status()
             .expect("cargo build");
         assert!(status.success(), "build {bin}");
     }
 
-    let client_details = InitializeRequestParams {
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "task-augmented-tests".into(),
-            version: "0.1.0".into(),
-            title: None,
-            description: None,
-            icons: vec![],
-            website_url: None,
-        },
-        protocol_version: LATEST_PROTOCOL_VERSION.into(),
-        meta: None,
-    };
-
-    let server_task_store: Arc<InMemoryTaskStore<ClientJsonrpcRequest, ResultFromServer>> =
-        Arc::new(InMemoryTaskStore::new(None));
-
-    let env = probe_path.map(|p| {
-        let mut m = std::collections::HashMap::new();
-        m.insert(PROBE_ENV.to_string(), p.to_string_lossy().into_owned());
-        m
-    });
-
-    let transport = StdioTransport::create_with_server_launch(
-        example_binary_path(bin).to_string_lossy().to_string(),
-        vec!["--mcp".into()],
-        env,
-        TransportOptions::default(),
-    )?;
-
-    let client = client_runtime::create_client(McpClientOptions {
-        client_details,
-        transport,
-        handler: handler.to_mcp_client_handler(),
-        task_store: None,
-        server_task_store: Some(server_task_store),
-        message_observer: None,
-    });
-    client.clone().start().await?;
-    Ok(client)
-}
-
-async fn launch_with_noop(bin: &str) -> SdkResult<Arc<ClientRuntime>> {
-    launch_task_example(bin, NoOpHandler, None).await
-}
-
-async fn launch_with_probe(bin: &str, probe_path: &Path) -> SdkResult<Arc<ClientRuntime>> {
-    launch_task_example(bin, NoOpHandler, Some(probe_path)).await
-}
-
-async fn poll_until_completed(client: &Arc<ClientRuntime>, task_id: &str) -> SdkResult<()> {
-    let mut poll_ms = 50u64;
-    loop {
-        let st = client
-            .request_get_task(GetTaskParams {
-                task_id: task_id.to_string(),
-            })
-            .await?;
-        match st.status {
-            TaskStatus::Completed => return Ok(()),
-            TaskStatus::Failed | TaskStatus::Cancelled => {
-                panic!("unexpected task status {:?}", st.status);
+    let transport = TokioChildProcess::new(
+        tokio::process::Command::new(example_binary_path(bin)).configure(|cmd| {
+            if let Some(path) = probe_path {
+                cmd.env(PROBE_ENV, path);
             }
-            TaskStatus::Working | TaskStatus::InputRequired => {
-                if let Some(p) = st.poll_interval {
-                    poll_ms = p.clamp(5, 500) as u64;
-                }
-                tokio::time::sleep(Duration::from_millis(poll_ms)).await;
-            }
-        }
-    }
+            cmd.arg("--mcp");
+        }),
+    )
+    .map_err(rmcp::RmcpError::transport_creation::<TokioChildProcess>)?;
+
+    handler.serve(transport).await.map_err(Into::into)
 }
 
-async fn call_plain(client: &Arc<ClientRuntime>, ms: u64) -> SdkResult<CallToolResult> {
-    let r: ResultFromServer = client
-        .request(
-            RequestFromClient::CallToolRequest(CallToolRequestParams {
-                name: "sleep".into(),
-                arguments: Some(sleep_args(ms)),
-                meta: None,
-                task: None,
-            }),
-            None,
-        )
-        .await?;
-    r.try_into().map_err(Into::into)
+async fn launch_with_noop(bin: &str) -> Result<ExampleClient, rmcp::RmcpError> {
+    launch_task_example(bin, common::NoOpHandler, None).await
+}
+
+async fn launch_with_probe(bin: &str, probe_path: &Path) -> Result<ExampleClient, rmcp::RmcpError> {
+    launch_task_example(bin, common::NoOpHandler, Some(probe_path)).await
+}
+
+async fn call_plain(
+    peer: &ExamplePeer,
+    ms: u64,
+) -> Result<rmcp::model::CallToolResult, rmcp::ServiceError> {
+    peer.call_tool(CallToolRequestParams::new("sleep").with_arguments(sleep_args(ms)))
+        .await
 }
 
 async fn call_plain_probe(
-    client: &Arc<ClientRuntime>,
+    peer: &ExamplePeer,
     ms: u64,
     label: &str,
-) -> SdkResult<CallToolResult> {
-    let r: ResultFromServer = client
-        .request(
-            RequestFromClient::CallToolRequest(CallToolRequestParams {
-                name: "sleep".into(),
-                arguments: Some(sleep_probe_args(ms, label, "plain")),
-                meta: None,
-                task: None,
-            }),
-            None,
-        )
-        .await?;
-    r.try_into().map_err(Into::into)
+) -> Result<rmcp::model::CallToolResult, rmcp::ServiceError> {
+    peer.call_tool(
+        CallToolRequestParams::new("sleep").with_arguments(sleep_probe_args(ms, label, "plain")),
+    )
+    .await
 }
 
 async fn call_task_create_probe(
-    client: &Arc<ClientRuntime>,
+    peer: &ExamplePeer,
     ms: u64,
     label: &str,
-) -> SdkResult<CreateTaskResult> {
-    let r: ResultFromServer = client
-        .request(
-            RequestFromClient::CallToolRequest(CallToolRequestParams {
-                name: "sleep".into(),
-                arguments: Some(sleep_probe_args(ms, label, "task")),
-                meta: None,
-                task: Some(TaskMetadata::default()),
-            }),
-            None,
-        )
-        .await?;
-    r.try_into().map_err(Into::into)
+) -> Result<rmcp::model::CreateTaskResult, rmcp::ServiceError> {
+    call_tool_task(
+        peer,
+        task_call_params("sleep", sleep_probe_args(ms, label, "task")),
+    )
+    .await
 }
 
-async fn call_task_create(client: &Arc<ClientRuntime>, ms: u64) -> SdkResult<CreateTaskResult> {
-    let r: ResultFromServer = client
-        .request(
-            RequestFromClient::CallToolRequest(CallToolRequestParams {
-                name: "sleep".into(),
-                arguments: Some(sleep_args(ms)),
-                meta: None,
-                task: Some(TaskMetadata::default()),
-            }),
-            None,
-        )
-        .await?;
-    r.try_into().map_err(Into::into)
+async fn call_task_create(
+    peer: &ExamplePeer,
+    ms: u64,
+) -> Result<rmcp::model::CreateTaskResult, rmcp::ServiceError> {
+    call_tool_task(peer, task_call_params("sleep", sleep_args(ms))).await
 }
 
-fn assert_create_task_meta(create: &CreateTaskResult) {
-    let meta = create.meta.as_ref().expect("CreateTaskResult.meta");
-    let tid_json = meta.get("taskId").expect("taskId in meta");
-    assert_eq!(tid_json.as_str().unwrap(), create.task.task_id);
-}
-
-/// Issues long + short tool calls concurrently, then asserts probe ordering proves
-/// the two tool bodies never overlapped (strict serialization).
 async fn assert_concurrent_probe_serialization(
-    client: Arc<ClientRuntime>,
+    peer: ExamplePeer,
     probe_path: &Path,
     long_is_task: bool,
     short_is_task: bool,
@@ -377,7 +235,7 @@ async fn assert_concurrent_probe_serialization(
     reset_probe_file(probe_path);
 
     let path = probe_path.to_path_buf();
-    let client_long = client.clone();
+    let client_long = peer.clone();
     let long_fut = async move {
         if long_is_task {
             let create = call_task_create_probe(&client_long, PROBE_LONG_MS, "long")
@@ -393,7 +251,7 @@ async fn assert_concurrent_probe_serialization(
         }
     };
 
-    let client_short = client.clone();
+    let client_short = peer.clone();
     let short_fut = async move {
         if short_is_task {
             let create = call_task_create_probe(&client_short, PROBE_SHORT_MS, "short")
@@ -428,30 +286,29 @@ async fn task_augmented_tools_call_dedicated_runtime() {
     let client = launch_with_noop("task_tools_dedicated")
         .await
         .expect("client");
-    let create = call_task_create(&client, 20).await.expect("call");
+    let peer = client.peer();
+    let create = call_task_create(peer, 20).await.expect("call");
     assert_create_task_meta(&create);
-    poll_until_completed(&client, &create.task.task_id)
+    poll_until_completed(peer, &create.task.task_id)
         .await
         .expect("poll");
-    let _payload = client
-        .request_get_task_payload(GetTaskPayloadParams {
-            task_id: create.task.task_id,
-        })
+    let _payload = get_task_payload(peer, &create.task.task_id)
         .await
         .expect("payload");
-    client.shut_down().await.expect("shutdown");
+    shutdown(client).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_augmented_tools_call_shared_runtime() {
     let _serial = serial_test_guard();
     let client = launch_with_noop("task_tools_shared").await.expect("client");
-    let create = call_task_create(&client, 20).await.expect("call");
+    let peer = client.peer();
+    let create = call_task_create(peer, 20).await.expect("call");
     assert_create_task_meta(&create);
-    poll_until_completed(&client, &create.task.task_id)
+    poll_until_completed(peer, &create.task.task_id)
         .await
         .expect("poll");
-    client.shut_down().await.expect("shutdown");
+    shutdown(client).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -461,17 +318,17 @@ async fn plain_tool_call_unchanged_dedicated() {
         .await
         .expect("client");
     let t0 = Instant::now();
-    let _ = call_plain(&client, 25).await.expect("plain");
+    let _ = call_plain(client.peer(), 25).await.expect("plain");
     assert!(t0.elapsed() >= Duration::from_millis(15));
-    client.shut_down().await.expect("shutdown");
+    shutdown(client).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn plain_tool_call_unchanged_shared() {
     let _serial = serial_test_guard();
     let client = launch_with_noop("task_tools_shared").await.expect("client");
-    let _ = call_plain(&client, 25).await.expect("plain");
-    client.shut_down().await.expect("shutdown");
+    let _ = call_plain(client.peer(), 25).await.expect("plain");
+    shutdown(client).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -481,8 +338,8 @@ async fn task_plus_task_concurrent_serializes_dedicated_probe() {
     let client = launch_with_probe("task_serial_probe_dedicated", &probe)
         .await
         .expect("client");
-    assert_concurrent_probe_serialization(client.clone(), &probe, true, true).await;
-    client.shut_down().await.expect("shutdown");
+    assert_concurrent_probe_serialization(client.peer().clone(), &probe, true, true).await;
+    shutdown(client).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -492,8 +349,8 @@ async fn plain_plus_plain_concurrent_serializes_dedicated_probe() {
     let client = launch_with_probe("task_serial_probe_dedicated", &probe)
         .await
         .expect("client");
-    assert_concurrent_probe_serialization(client.clone(), &probe, false, false).await;
-    client.shut_down().await.expect("shutdown");
+    assert_concurrent_probe_serialization(client.peer().clone(), &probe, false, false).await;
+    shutdown(client).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -503,8 +360,8 @@ async fn plain_then_task_concurrent_serializes_dedicated_probe() {
     let client = launch_with_probe("task_serial_probe_dedicated", &probe)
         .await
         .expect("client");
-    assert_concurrent_probe_serialization(client.clone(), &probe, false, true).await;
-    client.shut_down().await.expect("shutdown");
+    assert_concurrent_probe_serialization(client.peer().clone(), &probe, false, true).await;
+    shutdown(client).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -514,8 +371,8 @@ async fn task_then_plain_concurrent_serializes_dedicated_probe() {
     let client = launch_with_probe("task_serial_probe_dedicated", &probe)
         .await
         .expect("client");
-    assert_concurrent_probe_serialization(client.clone(), &probe, true, false).await;
-    client.shut_down().await.expect("shutdown");
+    assert_concurrent_probe_serialization(client.peer().clone(), &probe, true, false).await;
+    shutdown(client).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -525,8 +382,8 @@ async fn task_plus_task_concurrent_serializes_shared_probe() {
     let client = launch_with_probe("task_serial_probe_shared", &probe)
         .await
         .expect("client");
-    assert_concurrent_probe_serialization(client.clone(), &probe, true, true).await;
-    client.shut_down().await.expect("shutdown");
+    assert_concurrent_probe_serialization(client.peer().clone(), &probe, true, true).await;
+    shutdown(client).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -536,8 +393,8 @@ async fn plain_then_task_concurrent_serializes_shared_probe() {
     let client = launch_with_probe("task_serial_probe_shared", &probe)
         .await
         .expect("client");
-    assert_concurrent_probe_serialization(client.clone(), &probe, false, true).await;
-    client.shut_down().await.expect("shutdown");
+    assert_concurrent_probe_serialization(client.peer().clone(), &probe, false, true).await;
+    shutdown(client).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -547,53 +404,41 @@ async fn task_then_plain_concurrent_serializes_shared_probe() {
     let client = launch_with_probe("task_serial_probe_shared", &probe)
         .await
         .expect("client");
-    assert_concurrent_probe_serialization(client.clone(), &probe, true, false).await;
-    client.shut_down().await.expect("shutdown");
+    assert_concurrent_probe_serialization(client.peer().clone(), &probe, true, false).await;
+    shutdown(client).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_augmented_logging_meta_task_id_dedicated() {
     let _serial = serial_test_guard();
-    let logs = Arc::new(Mutex::new(Vec::new()));
-    let handler = LogCapturingHandler { logs: logs.clone() };
+    let task_ids = Arc::new(Mutex::new(Vec::new()));
+    let handler = LogCapturingHandler {
+        task_ids: task_ids.clone(),
+    };
     let client = launch_task_example("task_tools_dedicated", handler, None)
         .await
         .expect("client");
 
     let _ = client
-        .request_set_logging_level(SetLevelRequestParams {
-            level: LoggingLevel::Debug,
-            meta: None,
-        })
+        .set_level(SetLevelRequestParams::new(LoggingLevel::Debug))
         .await;
 
-    let create = call_task_create(&client, 40).await.expect("task call");
+    let peer = client.peer();
+    let create = call_task_create(peer, 40).await.expect("task call");
     assert_create_task_meta(&create);
-    poll_until_completed(&client, &create.task.task_id)
+    poll_until_completed(peer, &create.task.task_id)
         .await
         .expect("poll");
 
     let deadline = Instant::now() + Duration::from_secs(2);
     let with_task_id = loop {
-        let captured = logs.lock().unwrap_or_else(|e| e.into_inner());
-        let matching: Vec<_> = captured
-            .iter()
-            .filter_map(|p| {
-                p.meta
-                    .as_ref()
-                    .and_then(|m| m.get("taskId"))
-                    .and_then(|v| v.as_str())
-                    .map(|tid| tid.to_string())
-            })
-            .collect();
-        if !matching.is_empty() {
-            break matching;
+        let captured = task_ids.lock().unwrap_or_else(|e| e.into_inner());
+        if !captured.is_empty() {
+            break captured.clone();
         }
+        drop(captured);
         if Instant::now() >= deadline {
-            panic!(
-                "expected logging notification with meta.taskId; got {} messages",
-                captured.len()
-            );
+            panic!("expected logging notification with meta.taskId");
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     };
@@ -602,5 +447,5 @@ async fn task_augmented_logging_meta_task_id_dedicated() {
         "logging meta.taskId must match CreateTaskResult"
     );
 
-    client.shut_down().await.expect("shutdown");
+    shutdown(client).await;
 }

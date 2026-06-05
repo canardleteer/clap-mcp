@@ -1,0 +1,205 @@
+//! Shared rmcp client helpers for clap-mcp integration tests.
+
+#![allow(dead_code)]
+
+use rmcp::{
+    ClientHandler, RoleClient, ServiceExt,
+    model::{
+        CallToolRequestParams, CallToolResult, ClientRequest, CreateTaskResult, GetTaskInfoParams,
+        GetTaskPayloadResult, GetTaskResult, GetTaskResultParams, PromptMessageContent,
+        ReadResourceResult, Request, ResourceContents, ServerResult, TaskStatus,
+    },
+    service::Peer,
+    transport::{ConfigureCommandExt, TokioChildProcess},
+};
+use std::path::Path;
+use std::sync::Mutex;
+use std::time::Duration;
+
+pub fn workspace_root() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+pub fn cargo_target_dir() -> std::path::PathBuf {
+    std::env::var_os("CARGO_LLVM_COV_TARGET_DIR")
+        .or_else(|| std::env::var_os("CARGO_TARGET_DIR"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| workspace_root().join("target"))
+}
+
+pub fn example_binary_path(bin: &str) -> std::path::PathBuf {
+    let name = format!("{}{}", bin, std::env::consts::EXE_SUFFIX);
+    cargo_target_dir().join("debug").join(name)
+}
+
+static BUILD_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Clone, Default)]
+pub struct NoOpHandler;
+
+impl ClientHandler for NoOpHandler {}
+
+pub type ExampleClient = rmcp::service::RunningService<RoleClient, NoOpHandler>;
+pub type ExamplePeer = Peer<RoleClient>;
+
+pub async fn launch_example_with_args(
+    bin: &str,
+    extra_args: &[&str],
+    features: Option<&str>,
+) -> Result<ExampleClient, rmcp::RmcpError> {
+    {
+        let _guard = BUILD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cmd = std::process::Command::new("cargo");
+        cmd.args(["build", "-p", "clap-mcp-examples", "--bin", bin]);
+        if let Some(features) = features {
+            cmd.args(["--features", features]);
+        }
+        let status = cmd
+            .current_dir(workspace_root())
+            .status()
+            .expect("cargo build");
+        assert!(status.success(), "example binary {bin} should build");
+    }
+
+    let transport = TokioChildProcess::new(
+        tokio::process::Command::new(example_binary_path(bin)).configure(|cmd| {
+            for arg in extra_args {
+                cmd.arg(arg);
+            }
+            cmd.arg("--mcp");
+        }),
+    )
+    .map_err(rmcp::RmcpError::transport_creation::<TokioChildProcess>)?;
+
+    NoOpHandler.serve(transport).await.map_err(Into::into)
+}
+
+pub async fn launch_example(bin: &str) -> Result<ExampleClient, rmcp::RmcpError> {
+    launch_example_with_args(bin, &[], None).await
+}
+
+pub fn tool_text(result: &CallToolResult) -> String {
+    result
+        .content
+        .iter()
+        .filter_map(|block| match &block.raw {
+            rmcp::model::RawContent::Text(text) => Some(text.text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn read_text(result: &ReadResourceResult) -> String {
+    result
+        .contents
+        .iter()
+        .filter_map(|content| match content {
+            ResourceContents::TextResourceContents { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn prompt_has_text(messages: &[rmcp::model::PromptMessage], needle: &str) -> bool {
+    messages.iter().any(|message| match &message.content {
+        PromptMessageContent::Text { text, .. } => text.contains(needle),
+        _ => false,
+    })
+}
+
+pub async fn shutdown<H: ClientHandler>(client: rmcp::service::RunningService<RoleClient, H>) {
+    let _ = client.cancel().await;
+}
+
+pub fn task_call_params(
+    name: impl Into<String>,
+    args: serde_json::Map<String, serde_json::Value>,
+) -> CallToolRequestParams {
+    CallToolRequestParams::new(name.into())
+        .with_arguments(args)
+        .with_task(rmcp::object!({}))
+}
+
+pub async fn call_tool_task(
+    peer: &ExamplePeer,
+    params: CallToolRequestParams,
+) -> Result<CreateTaskResult, rmcp::ServiceError> {
+    let resp = peer
+        .send_request(ClientRequest::CallToolRequest(Request::new(params)))
+        .await?;
+    match resp {
+        ServerResult::CreateTaskResult(result) => Ok(result),
+        _ => Err(rmcp::ServiceError::UnexpectedResponse),
+    }
+}
+
+pub async fn get_task_info(
+    peer: &ExamplePeer,
+    task_id: &str,
+) -> Result<GetTaskResult, rmcp::ServiceError> {
+    let resp = peer
+        .send_request(ClientRequest::GetTaskInfoRequest(Request::new(
+            GetTaskInfoParams {
+                meta: None,
+                task_id: task_id.to_string(),
+            },
+        )))
+        .await?;
+    match resp {
+        ServerResult::GetTaskResult(result) => Ok(result),
+        _ => Err(rmcp::ServiceError::UnexpectedResponse),
+    }
+}
+
+pub async fn get_task_payload(
+    peer: &ExamplePeer,
+    task_id: &str,
+) -> Result<GetTaskPayloadResult, rmcp::ServiceError> {
+    let resp = peer
+        .send_request(ClientRequest::GetTaskResultRequest(Request::new(
+            GetTaskResultParams {
+                meta: None,
+                task_id: task_id.to_string(),
+            },
+        )))
+        .await?;
+    match resp {
+        ServerResult::GetTaskPayloadResult(result) => Ok(result),
+        ServerResult::CustomResult(value) => Ok(GetTaskPayloadResult::new(value.0)),
+        ServerResult::CallToolResult(result) => Ok(GetTaskPayloadResult::new(
+            serde_json::to_value(result).expect("task payload should serialize"),
+        )),
+        _ => Err(rmcp::ServiceError::UnexpectedResponse),
+    }
+}
+
+pub async fn poll_until_completed(
+    peer: &ExamplePeer,
+    task_id: &str,
+) -> Result<(), rmcp::ServiceError> {
+    let mut poll_ms = 50u64;
+    loop {
+        let st = get_task_info(peer, task_id).await?;
+        match st.task.status {
+            TaskStatus::Completed => return Ok(()),
+            TaskStatus::Failed | TaskStatus::Cancelled => {
+                panic!("unexpected task status {:?}", st.task.status);
+            }
+            TaskStatus::Working | TaskStatus::InputRequired => {
+                if let Some(p) = st.task.poll_interval {
+                    poll_ms = p.clamp(5, 500);
+                }
+                tokio::time::sleep(Duration::from_millis(poll_ms)).await;
+            }
+        }
+    }
+}
+
+pub fn assert_create_task_meta(create: &CreateTaskResult) {
+    assert!(!create.task.task_id.is_empty(), "task id must be set");
+}

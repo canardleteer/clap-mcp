@@ -665,7 +665,7 @@ fn test_skip_root_command_when_subcommands() {
     let schema = schema_from_command_with_metadata(&cmd, &metadata);
     let config = ClapMcpConfig::default();
     let tools = tools_from_schema_with_config_and_metadata(&schema, &config, &metadata);
-    let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(
         !names.contains(&"test-struct-optional-cli"),
         "root should be excluded when skip_root_command_when_subcommands is true"
@@ -687,7 +687,7 @@ fn test_skip_root_when_subcommands_derive() {
     let schema = schema_from_command_with_metadata(&cmd, &metadata);
     let config = ClapMcpConfig::default();
     let tools = tools_from_schema_with_config_and_metadata(&schema, &config, &metadata);
-    let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(
         !names.contains(&"test-root-skip-when-subcommands"),
         "root should be excluded when using #[clap_mcp(skip_root_when_subcommands)]"
