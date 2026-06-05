@@ -5,7 +5,8 @@
 //!
 //! Demonstrates `share_runtime = true` — uses the MCP server's tokio runtime
 //! instead of a dedicated thread. Shares the same business logic as async_sleep
-//! via the async_sleep_common module.
+//! via the async_sleep_common module. Compare with `async_embedder_serve` for
+//! the imperative [`clap_mcp::serve_mcp`] embedder path.
 
 mod async_sleep_common;
 

@@ -90,35 +90,3 @@ pub(crate) async fn serve_schema_json_over_http(
     axum::serve(listener, router).await?;
     Ok(())
 }
-
-/// Blocking wrapper for [`serve_schema_json_over_http`].
-pub(crate) fn serve_schema_json_over_http_blocking(
-    listen: SocketAddr,
-    schema_json: String,
-    executable_path: Option<PathBuf>,
-    config: ClapMcpConfig,
-    in_process_handler: Option<InProcessToolHandler>,
-    serve_options: ClapMcpServeOptions,
-    metadata: &ClapMcpSchemaMetadata,
-) -> Result<(), ClapMcpError> {
-    let use_multi_thread =
-        config.reinvocation_safe && (config.share_runtime || config.parallel_safe);
-    let rt = if use_multi_thread {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?
-    } else {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?
-    };
-    rt.block_on(serve_schema_json_over_http(
-        listen,
-        schema_json,
-        executable_path,
-        config,
-        in_process_handler,
-        serve_options,
-        metadata,
-    ))
-}
