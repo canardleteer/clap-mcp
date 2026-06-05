@@ -27,7 +27,52 @@
 
 use rust_mcp_sdk::schema::{LoggingLevel, LoggingMessageNotificationParams};
 use serde_json::Value;
+use std::sync::Mutex;
 use tokio::sync::mpsc;
+
+/// Process-wide MCP task id for the current serialized tool body (see [`McpTaskIdGuard`]).
+static CURRENT_MCP_TASK_ID: Mutex<Option<String>> = Mutex::new(None);
+
+/// Sets the MCP task id visible to [`log_params`] for the duration of this guard.
+///
+/// Safe when `parallel_safe = false` (only one tool body runs at a time). Used during
+/// task-augmented `tools/call` execution, including across dedicated async tool threads.
+pub struct McpTaskIdGuard {
+    previous: Option<String>,
+}
+
+impl McpTaskIdGuard {
+    /// Installs `task_id` for logging `meta.taskId` until this guard is dropped.
+    pub fn new(task_id: impl Into<String>) -> Self {
+        let mut slot = CURRENT_MCP_TASK_ID
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let previous = slot.replace(task_id.into());
+        Self { previous }
+    }
+}
+
+impl Drop for McpTaskIdGuard {
+    fn drop(&mut self) {
+        let mut slot = CURRENT_MCP_TASK_ID
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *slot = self.previous.take();
+    }
+}
+
+/// Returns the MCP task id for the current tool body, if any.
+pub fn current_mcp_task_id() -> Option<String> {
+    CURRENT_MCP_TASK_ID.lock().ok().and_then(|g| g.clone())
+}
+
+fn log_meta_with_task_id() -> Option<serde_json::Map<String, Value>> {
+    current_mcp_task_id().map(|task_id| {
+        let mut meta = serde_json::Map::new();
+        meta.insert("taskId".into(), Value::String(task_id));
+        meta
+    })
+}
 
 /// Maps a level string to MCP `LoggingLevel`.
 ///
@@ -109,7 +154,7 @@ pub fn log_params(
         data: message.into(),
         level,
         logger,
-        meta: None,
+        meta: log_meta_with_task_id(),
     }
 }
 

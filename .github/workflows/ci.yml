@@ -29,11 +29,14 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Run cargo audit
+        run: cargo audit
+
       - name: Build and run examples (release validation)
         shell: bash
         run: |
           cargo build -p clap-mcp-examples --all-features
-          for bin in subcommands structured tracing_bridge log_bridge async_sleep async_sleep_shared struct_subcommand optional_commands_and_args result_output subprocess_exit_handling panic_catch_opt_in client; do
+          for bin in subcommands structured tracing_bridge log_bridge async_sleep async_sleep_shared struct_subcommand optional_commands_and_args result_output subprocess_exit_handling panic_catch_opt_in client task_tools_dedicated task_tools_shared task_augmented_client task_serial_probe_dedicated task_serial_probe_shared; do
             cargo run -p clap-mcp-examples --all-features --bin "$bin" -- --help
           done
 

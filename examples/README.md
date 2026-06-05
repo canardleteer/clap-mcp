@@ -5,7 +5,8 @@ This directory contains example CLIs that demonstrate clap-mcp capabilities.
 Run all commands from the **workspace root** (the parent of this `examples/` directory). The examples depend on `clap-mcp` via a path dependency.
 
 - **`client.rs`** — MCP client that exercises the server examples (easiest way to see everything working)
-- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, result_output, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared, **subprocess_exit_handling**, **panic_catch_opt_in**, **custom_resources_prompts**, **vec_and_flags**)
+- **`task_augmented_client.rs`** — Minimal client for MCP task-augmented `tools/call` (requires `--features tracing`; use with `task_tools_dedicated` or `task_tools_shared`)
+- **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand, optional_commands_and_args, result_output, structured, tracing_bridge, log_bridge, async_sleep, async_sleep_shared, **task_tools_dedicated**, **task_tools_shared**, **subprocess_exit_handling**, **panic_catch_opt_in**, **custom_resources_prompts**, **vec_and_flags**)
 
 ## Crash / panic behavior
 
@@ -212,6 +213,20 @@ cargo run -p clap-mcp-examples --bin async_sleep_shared -- sleep-demo
 cargo run -p clap-mcp-examples --bin async_sleep_shared -- --mcp
 ```
 
+### task_tools_dedicated / task_tools_shared
+
+MCP **task-augmented** `tools/call` with `#[clap_mcp(task_augmented_tools)]` and `#[clap_mcp(task)]` on the async sleep subcommand. **task_tools_dedicated** uses `share_runtime = false` (dedicated async runtime per call); **task_tools_shared** uses `share_runtime = true`. Requires `--features tracing`.
+
+Use **task_augmented_client** to run an end-to-end client (`CallToolRequestParams` with `task: Some(...)`, poll `tasks/get`, then `tasks/result`):
+
+```bash
+cargo run -p clap-mcp-examples --bin task_tools_dedicated --features tracing -- sleep --ms 80
+cargo run -p clap-mcp-examples --bin task_tools_dedicated --features tracing -- --mcp
+
+cargo run -p clap-mcp-examples --bin task_augmented_client --features tracing -- task_tools_dedicated
+cargo run -p clap-mcp-examples --bin task_augmented_client --features tracing -- task_tools_shared
+```
+
 ### subprocess_exit_handling
 
 Subprocess execution (`reinvocation_safe = false`) with a tool that exits non-zero.
@@ -273,6 +288,9 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **log_bridge**     | `servers/log_bridge.rs`      | `log` crate integration, MCP log forwarding       |
 | **async_sleep**       | `servers/async_sleep.rs`        | Async tokio, 3 sleep tasks, `share_runtime = false` |
 | **async_sleep_shared** | `servers/async_sleep_shared.rs` | Same, `share_runtime = true` (shares `async_sleep_common`) |
+| **task_tools_dedicated** | `servers/task_tools_dedicated.rs` | Task-augmented `tools/call`, `share_runtime = false` |
+| **task_tools_shared** | `servers/task_tools_shared.rs` | Task-augmented `tools/call`, `share_runtime = true` |
+| **task_augmented_client** | `task_augmented_client.rs` | rust-mcp-sdk client + task polling |
 | **subprocess_exit_handling** | `servers/subprocess_exit_handling.rs` | Subprocess non-zero exit → MCP `is_error: true` |
 | **panic_catch_opt_in** | `servers/panic_catch_opt_in.rs` | In-process panic catching (opt-in), server stays up |
 | **client**            | `client.rs`                    | MCP client that exercises the server examples      |
