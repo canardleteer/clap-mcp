@@ -2,7 +2,7 @@
 
 use clap::Parser;
 use clap_mcp::ClapMcp;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 #[derive(Default)]
 struct State {}
@@ -15,10 +15,10 @@ enum Cli {
     Foo,
 }
 
-fn run(_cmd: Cli, _state: &Arc<Mutex<State>>) -> &'static str {
+fn run(_cmd: Cli, _state: &Mutex<State>) -> &'static str {
     "ok"
 }
 
 fn main() {
-    let _ = run(Cli::Foo, &Arc::new(Mutex::new(State::default())));
+    let _ = run(Cli::Foo, &Mutex::new(State::default()));
 }

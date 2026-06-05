@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use clap_mcp::ClapMcp;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 #[derive(Default)]
 pub struct CounterState {
@@ -8,8 +8,7 @@ pub struct CounterState {
 }
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe = true)]
-#[clap_mcp_state_type = "Mutex<CounterState>"]
+#[clap_mcp(reinvocation_safe = true, stateful)]
 #[command(name = "stateful-counter", subcommand_required = true)]
 pub struct App {
     #[command(subcommand)]
@@ -27,7 +26,7 @@ pub enum Command {
     Read,
 }
 
-pub fn run(cmd: Command, state: &Arc<Mutex<CounterState>>) -> String {
+pub fn run(cmd: Command, state: &Mutex<CounterState>) -> String {
     let mut guard = state.lock().expect("counter mutex");
     match cmd {
         Command::Increment => {
