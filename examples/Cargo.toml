@@ -47,6 +47,11 @@ path = "servers/async_sleep_shared.rs"
 required-features = ["tracing"]
 
 [[bin]]
+name = "async_embedder_serve"
+path = "servers/async_embedder_serve.rs"
+required-features = ["tracing"]
+
+[[bin]]
 name = "struct_subcommand"
 path = "servers/struct_subcommand.rs"
 

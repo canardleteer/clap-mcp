@@ -4,10 +4,11 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_mcp::AsStructured;
 use clap_mcp::ClapMcp;
 use clap_mcp::{
-    ClapMcpConfig, ClapMcpConfigProvider, ClapMcpRunnable, ClapMcpSchemaMetadata,
+    ClapMcpConfig, ClapMcpConfigProvider, ClapMcpError, ClapMcpRunnable, ClapMcpSchemaMetadata,
     ClapMcpSchemaMetadataProvider, ClapMcpToolExecutor, ClapMcpToolOutput,
-    LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, PROMPT_LOGGING_GUIDE, ParseOrServeMcp,
-    run_async_tool, schema_from_command, schema_from_command_with_metadata,
+    LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, McpListen, PROMPT_LOGGING_GUIDE,
+    ParseOrServeMcp, mcp_config_needs_multi_thread_runtime, run_async_tool, schema_from_command,
+    schema_from_command_with_metadata, serve_mcp, serve_mcp_blocking,
     tools_from_schema_with_metadata,
 };
 use serde::Serialize;
@@ -556,7 +557,101 @@ fn test_run_async_tool_returns_complex_type() {
 
 // Shared runtime path (reinvocation_safe=true + share_runtime=true) is exercised
 // via integration: run the async_sleep example with share_runtime in #[clap_mcp].
-// Unit-testing it would require block_on from within a tokio worker, which panics.
+
+#[test]
+fn test_needs_multi_thread_runtime_matrix() {
+    let cases = [
+        (false, false, false, false),
+        (false, true, true, false),
+        (true, false, false, false),
+        (true, true, false, true),
+        (true, false, true, true),
+        (true, true, true, true),
+    ];
+    for (reinvocation_safe, share_runtime, parallel_safe, expected) in cases {
+        let config = ClapMcpConfig {
+            reinvocation_safe,
+            share_runtime,
+            parallel_safe,
+            ..Default::default()
+        };
+        assert_eq!(
+            config.needs_multi_thread_runtime(),
+            expected,
+            "reinvocation_safe={reinvocation_safe} share_runtime={share_runtime} parallel_safe={parallel_safe}"
+        );
+        assert_eq!(
+            mcp_config_needs_multi_thread_runtime(&config),
+            expected,
+            "helper should match method"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_run_async_tool_shared_runtime_on_multi_thread_runtime() {
+    let config = ClapMcpConfig {
+        reinvocation_safe: true,
+        parallel_safe: false,
+        share_runtime: true,
+        ..Default::default()
+    };
+    let result = tokio::task::block_in_place(|| {
+        run_async_tool(&config, || async { 123 }).expect("shared runtime ok")
+    });
+    assert_eq!(result, 123);
+}
+
+#[test]
+fn test_serve_mcp_rejects_current_thread_when_multi_thread_required() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let config = ClapMcpConfig {
+        reinvocation_safe: true,
+        share_runtime: true,
+        ..Default::default()
+    };
+    let err = rt
+        .block_on(serve_mcp(
+            McpListen::Stdio,
+            "{}".to_string(),
+            None,
+            config,
+            None,
+            Default::default(),
+            &ClapMcpSchemaMetadata::default(),
+        ))
+        .expect_err("current_thread should be rejected");
+    match err {
+        ClapMcpError::InvalidConfig(msg) => {
+            assert!(msg.contains("multi-thread"));
+        }
+        other => panic!("expected InvalidConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_serve_mcp_blocking_accepts_share_runtime_config() {
+    // Smoke: blocking path builds runtime and fails fast on invalid schema (not on runtime).
+    let config = ClapMcpConfig {
+        reinvocation_safe: true,
+        share_runtime: true,
+        ..Default::default()
+    };
+    let err = serve_mcp_blocking(
+        McpListen::Stdio,
+        "not-json".to_string(),
+        None,
+        config,
+        None,
+        Default::default(),
+        &ClapMcpSchemaMetadata::default(),
+    )
+    .expect_err("invalid schema");
+    assert!(matches!(err, ClapMcpError::SchemaJson(_)));
+}
 
 // --- struct root with #[command(subcommand)] ---
 
