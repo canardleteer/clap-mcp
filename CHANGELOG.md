@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP stack:** migrate from `rust-mcp-sdk` 0.9 to official [`rmcp`](https://docs.rs/rmcp) **1.7.x** (stdio server + example/test clients). Internal schema types are now `rmcp::model::*`; custom prompt/resource providers return `rmcp::model::ErrorData` instead of `RpcError`. Unknown tool/resource/prompt requests surface as RPC `ErrorData` (`invalid_params`) where appropriate. Logging `meta.taskId` is carried in notification **extensions** (`Meta`) on the rmcp path. See [docs/rmcp-migration-notes.md](docs/rmcp-migration-notes.md).
+
 ### Added
 
 - **MCP task-augmented `tools/call` (in-process, serialized):** `ClapMcpConfig::task_augmented_tools`, `InitializeResult.capabilities.tasks`, `McpServerOptions.task_store`, `ServerHandler::handle_task_augmented_tool_call` with the same execution path as plain in-process calls and a shared lock when `parallel_safe` is false. Optional `#[clap_mcp(task)]` on enum variants fills `ClapMcpSchemaMetadata::task_tool_names` and `meta.clapMcp.taskAugmented` in `list_tools`. `#[clap_mcp(task_augmented_tools)]` without `reinvocation_safe` fails to compile in the derive. Task-augmented runs set `CreateTaskResult.meta.taskId` and, when logging is enabled, `LoggingMessageNotificationParams.meta.taskId` for the active task body.
