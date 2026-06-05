@@ -290,7 +290,7 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **async_sleep_shared** | `servers/async_sleep_shared.rs` | Same, `share_runtime = true` (shares `async_sleep_common`) |
 | **task_tools_dedicated** | `servers/task_tools_dedicated.rs` | Task-augmented `tools/call`, `share_runtime = false` |
 | **task_tools_shared** | `servers/task_tools_shared.rs` | Task-augmented `tools/call`, `share_runtime = true` |
-| **task_augmented_client** | `task_augmented_client.rs` | rust-mcp-sdk client + task polling |
+| **task_augmented_client** | `task_augmented_client.rs` | rmcp client + task polling |
 | **subprocess_exit_handling** | `servers/subprocess_exit_handling.rs` | Subprocess non-zero exit → MCP `is_error: true` |
 | **panic_catch_opt_in** | `servers/panic_catch_opt_in.rs` | In-process panic catching (opt-in), server stays up |
 | **client**            | `client.rs`                    | MCP client that exercises the server examples      |
