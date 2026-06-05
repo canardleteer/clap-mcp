@@ -208,15 +208,15 @@ Examples: `task_parallel_probe_*`, `task_panic_catch`, `task_panic_catch_paralle
 Additive API on `0.0.4-rc.1+` (ports [#11](https://github.com/canardleteer/clap-mcp/pull/11)
 and [#12](https://github.com/canardleteer/clap-mcp/pull/12)):
 
-* **`ClapMcpToolExecutorWithState<S>`** — in-process tool execution with
-  `Arc<S>` shared across calls
-* Derive attrs: `#[clap_mcp_output_from_with_state = "run"]`,
-  `#[clap_mcp_state_type = "Type"]` (both required on enums; struct roots may
-  use `state_type` alone to delegate)
+* **`ClapMcpToolExecutorWithState`** — in-process execution with associated
+  `State`; tool code receives `&Self::State` (server holds `Arc` internally)
+* Derive: `#[clap_mcp_output_from_with_state = "run"]` +
+  `#[clap_mcp_state_type = "Type"]` on **leaf** enums (`Type` must match `run`'s
+  second parameter); `#[clap_mcp(stateful)]` on struct roots / delegating enums
 * **`ParseOrServeMcpWithState`**, `parse_or_serve_mcp_with_state`,
   **`ServeMcpBuilder::for_cli_with_state`**
 * **`compile_error!`** when a derive target has two or more bare positional scalar
-  fields (use `#[arg(long)]` instead)
+  fields (use `#[arg(long)]` instead) — see [PR #12](https://github.com/canardleteer/clap-mcp/pull/12)
 
 Example: `examples/servers/stateful_counter.rs`; integration test:
 `clap-mcp/tests/stateful_server_tests.rs`.

@@ -516,10 +516,18 @@ the root and set the field, or build metadata manually).
 
 ### Stateful MCP tools (shared session state)
 
-When `reinvocation_safe` is true, in-process tool calls can share an
-`Arc<S>` captured for the MCP server lifetime. Add both attributes on the
-**subcommand enum** (and `#[clap_mcp_state_type = "..."]` on a struct root that
-delegates to subcommands):
+When `reinvocation_safe` is true, in-process tool calls can share session state
+for the MCP server lifetime. The server stores state in an [`Arc`] internally; your
+`run` function receives **`&Self::State`** on each call (not `&Arc<…>`).
+
+Setup (see also [`ClapMcpToolExecutorWithState`] rustdoc):
+
+* **Leaf subcommand enum:** `#[clap_mcp_output_from_with_state = "run"]` plus
+  `#[clap_mcp_state_type = "Type"]` where `Type` matches the second parameter of
+  `run` (e.g. `run(cmd, state: &Mutex<CounterState>)` →
+  `#[clap_mcp_state_type = "Mutex<CounterState>"]`).
+* **Struct root / intermediate enums:** `#[clap_mcp(stateful)]` — `State` is
+  inferred from the subcommand field; do not repeat `state_type`.
 
 ```rust
 use clap_mcp::{ClapMcp, ParseOrServeMcpWithState};
@@ -529,8 +537,7 @@ use std::sync::{Arc, Mutex};
 struct CounterState { count: u64 }
 
 #[derive(Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe = true)]
-#[clap_mcp_state_type = "Mutex<CounterState>"]
+#[clap_mcp(reinvocation_safe = true, stateful)]
 struct App {
     #[command(subcommand)]
     command: Command,
@@ -542,7 +549,7 @@ struct App {
 #[clap_mcp_state_type = "Mutex<CounterState>"]
 enum Command { Increment, Read }
 
-fn run(cmd: Command, state: &Arc<Mutex<CounterState>>) -> String { /* ... */ }
+fn run(cmd: Command, state: &Mutex<CounterState>) -> String { /* ... */ }
 
 fn main() {
     let state = Arc::new(Mutex::new(CounterState::default()));
@@ -553,9 +560,9 @@ fn main() {
 
 Entrypoints: [`ParseOrServeMcpWithState::parse_or_serve_mcp_with_state`],
 [`parse_or_serve_mcp_with_state`], and
-[`ServeMcpBuilder::for_cli_with_state`]. Requires `reinvocation_safe` (subprocess
-mode cannot share in-process state). Example:
-[stateful_counter](examples/servers/stateful_counter.rs).
+[`ServeMcpBuilder::for_cli_with_state`]. Requires `reinvocation_safe`. Example:
+[stateful_counter](examples/servers/stateful_counter.rs) (ported from
+[PR #11](https://github.com/canardleteer/clap-mcp/pull/11) by Eddy Stefes / fneddy).
 
 ### Runtime config
 
