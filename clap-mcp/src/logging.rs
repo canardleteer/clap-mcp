@@ -25,10 +25,22 @@
 //! // Pass opts to parse_or_serve_mcp_with_config_and_options
 //! ```
 
-use rust_mcp_sdk::schema::{LoggingLevel, LoggingMessageNotificationParams};
+use rmcp::model::LoggingLevel;
 use serde_json::Value;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
+
+/// Parameters for a logging notification forwarded through [`log_channel`].
+///
+/// Includes optional `meta` (e.g. `taskId` during task-augmented tool bodies). The MCP server
+/// bridge maps `meta` to notification extensions when calling `notify_logging_message`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoggingMessageNotificationParams {
+    pub level: LoggingLevel,
+    pub logger: Option<String>,
+    pub data: Value,
+    pub meta: Option<serde_json::Map<String, Value>>,
+}
 
 /// Process-wide MCP task id for the current serialized tool body (see [`McpTaskIdGuard`]).
 static CURRENT_MCP_TASK_ID: Mutex<Option<String>> = Mutex::new(None);
@@ -85,7 +97,7 @@ fn log_meta_with_task_id() -> Option<serde_json::Map<String, Value>> {
 /// # #[cfg(any(feature = "tracing", feature = "log"))]
 /// # {
 /// use clap_mcp::logging::level_to_mcp;
-/// use rust_mcp_sdk::schema::LoggingLevel;
+/// use rmcp::model::LoggingLevel;
 ///
 /// assert!(matches!(level_to_mcp("debug"), LoggingLevel::Debug));
 /// assert!(matches!(level_to_mcp("info"), LoggingLevel::Info));
@@ -139,7 +151,7 @@ pub fn log_channel(
 /// # #[cfg(any(feature = "tracing", feature = "log"))]
 /// # {
 /// use clap_mcp::logging::log_params;
-/// use rust_mcp_sdk::schema::LoggingLevel;
+/// use rmcp::model::LoggingLevel;
 ///
 /// let params = log_params(LoggingLevel::Info, Some("myapp".into()), "Hello");
 /// assert_eq!(params.logger, Some("myapp".to_string()));
