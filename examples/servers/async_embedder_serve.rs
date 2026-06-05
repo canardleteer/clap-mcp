@@ -1,9 +1,9 @@
-//! Example CLI using imperative async embedder serve (`serve_mcp`).
+//! Example CLI using imperative async embedder serve ([`ServeMcpBuilder`]).
 //!
 //! Run: `cargo run -p clap-mcp-examples --bin async_embedder_serve --features tracing -- sleep-demo`
 //! Run: `cargo run -p clap-mcp-examples --bin async_embedder_serve --features tracing -- --mcp`
 //!
-//! Demonstrates `share_runtime = true` with [`clap_mcp::serve_mcp`] on the caller's tokio
+//! Demonstrates `share_runtime = true` with [`ServeMcpBuilder::serve`] on the caller's tokio
 //! runtime. Same business logic as `async_sleep_shared` (derive + `parse_or_serve_mcp` path);
 //! this binary shows the low-level async embedder pattern for `#[tokio::main]` apps.
 
@@ -11,20 +11,17 @@ mod async_sleep_common;
 
 use async_sleep_common::run_sleep_demo;
 use clap::{CommandFactory, FromArgMatches, Parser};
-use clap_mcp::{AsStructured, ClapMcp, ClapMcpSchemaMetadataProvider};
+use clap_mcp::{AsStructured, ClapMcp, ClapMcpConfigProvider};
 
 #[cfg(feature = "tracing")]
-use clap_mcp::{
-    ClapMcpConfigProvider, McpListen, in_process_tool_handler_for,
-    schema_from_command_with_metadata, serve_mcp,
-};
+use clap_mcp::{McpListen, ServeMcpBuilder, command_with_mcp_flag};
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime)]
 #[clap_mcp_output_from = "run"]
 #[command(
     name = "async-embedder-serve-example",
-    about = "Async embedder serve_mcp example: 3 sleep tasks (shared runtime)",
+    about = "Async embedder ServeMcpBuilder example: 3 sleep tasks (shared runtime)",
     subcommand_required = false
 )]
 enum Cli {
@@ -55,12 +52,6 @@ async fn main() -> Result<(), clap_mcp::ClapMcpError> {
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
 
-    let config = Cli::clap_mcp_config();
-    let metadata = Cli::clap_mcp_schema_metadata();
-    let base_cmd = Cli::command();
-    let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
-    let schema_json = serde_json::to_string_pretty(&schema).expect("schema should serialize");
-
     let serve_options = clap_mcp::ClapMcpServeOptions {
         log_rx: Some(log_rx),
         #[cfg(unix)]
@@ -70,22 +61,17 @@ async fn main() -> Result<(), clap_mcp::ClapMcpError> {
         elicitation_enabled: false,
     };
 
-    if std::env::args().any(|arg| arg == "--mcp") {
-        let in_process_handler = in_process_tool_handler_for::<Cli>(schema, false);
-        serve_mcp(
-            McpListen::Stdio,
-            schema_json,
-            None,
-            config,
-            Some(in_process_handler),
-            serve_options,
-            &metadata,
-        )
-        .await?;
+    let cmd = command_with_mcp_flag(Cli::command());
+    let matches = cmd.get_matches();
+
+    if matches.get_flag("mcp") {
+        ServeMcpBuilder::for_cli::<Cli>(McpListen::Stdio)
+            .serve_options(serve_options)
+            .serve()
+            .await?;
         return Ok(());
     }
 
-    let matches = base_cmd.get_matches();
     let cli = Cli::from_arg_matches(&matches).expect("parse cli");
     match cli {
         Cli::SleepDemo => {

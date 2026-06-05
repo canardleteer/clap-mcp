@@ -1,4 +1,4 @@
-//! Integration tests for imperative async embedder serve (`serve_mcp`).
+//! Integration tests for imperative async embedder serve ([`ServeMcpBuilder`]).
 
 mod common;
 

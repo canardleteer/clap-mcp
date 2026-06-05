@@ -184,9 +184,13 @@ the **struct_subcommand** example in [examples/README.md](examples/README.md).
 
 | Flag | Enables |
 | --- | --- |
+| `derive` (default) | `#[derive(ClapMcp)]` proc-macro and `ParseOrServeMcp` |
 | `tracing` | `ClapMcpTracingLayer` — a `tracing_subscriber::Layer` that forwards tracing events to MCP clients via `notifications/message`. |
 | `log` | `ClapMcpLogBridge` — a `log::Log` implementation that forwards `log` crate messages to MCP clients. |
 | `output-schema` | `schemars`-based JSON schema generation for structured tool output. Enables [`output_schema_for_type`], [`output_schema_one_of!`], and `#[clap_mcp_output_type]` / `#[clap_mcp_output_one_of]` to set each tool's `output_schema` for MCP clients. |
+| `http` | Streamable HTTP MCP server (`--mcp-http`); see [docs/http.md](docs/http.md). |
+| `http-oauth` | OAuth client helpers for calling remote MCP servers; see [docs/oauth.md](docs/oauth.md). |
+| `elicitation` | Server-side elicitation during tool execution (experimental). |
 
 Enable features in `Cargo.toml`:
 
@@ -201,7 +205,8 @@ In addition to the built-in **`clap://schema`** resource and the optional
 **logging guide** prompt, you can expose custom MCP resources and prompts. Add
 them to
 [`ClapMcpServeOptions`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html)
-and pass that into `parse_or_serve_mcp_with`, [`serve_mcp`], or [`serve_mcp_blocking`].
+and pass that into `parse_or_serve_mcp_with`, [`ServeMcpBuilder`], or the
+lower-level [`serve_mcp`] / [`serve_mcp_blocking`] functions.
 
 ### Custom resources
 
@@ -512,38 +517,38 @@ Tools include `meta.clapMcp` with these hints for clients.
 
 ### Async embedders
 
-When your application already uses `#[tokio::main]`, call [`serve_mcp`] to run
-MCP on the **caller's tokio runtime**. Use [`serve_mcp_blocking`] from a
-synchronous `fn main()` (it creates an internal runtime).
+When your application already uses `#[tokio::main]`, use [`ServeMcpBuilder`] to run
+MCP on the **caller's tokio runtime**. Use [`ServeMcpBuilder::serve_blocking`]
+from a synchronous `fn main()` (it creates an internal runtime).
 
 | Entry | Who owns the runtime | Multi-thread when |
 |-------|----------------------|-------------------|
-| [`serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp.html)(...).await | Caller's `#[tokio::main]` | Required when [`ClapMcpConfig::needs_multi_thread_runtime`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#method.needs_multi_thread_runtime) is true (`reinvocation_safe` + `share_runtime` or `parallel_safe`) |
-| [`serve_mcp_blocking`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp_blocking.html)(...) | clap-mcp (internal runtime) | Handled automatically |
+| [`ServeMcpBuilder::serve`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.serve)().await | Caller's `#[tokio::main]` | Required when [`ClapMcpConfig::needs_multi_thread_runtime`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#method.needs_multi_thread_runtime) is true (`reinvocation_safe` + `share_runtime` or `parallel_safe`) |
+| [`ServeMcpBuilder::serve_blocking`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.serve_blocking) | clap-mcp (internal runtime) | Handled automatically |
+| [`serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp.html) / [`serve_mcp_blocking`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp_blocking.html) | Same as builder | Same as builder (lower-level 7-arg equivalents) |
 | `parse_or_serve_mcp*` | Same as blocking | Same as blocking |
 
 ```rust
-use clap_mcp::{serve_mcp, McpListen, ClapMcpConfig, ClapMcpSchemaMetadata, ClapMcpServeOptions};
+use clap_mcp::{ServeMcpBuilder, McpListen, ClapMcpServeOptions};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), clap_mcp::ClapMcpError> {
-    serve_mcp(
-        McpListen::Stdio,
-        schema_json,
-        None,
-        config,
-        in_process_handler,
-        ClapMcpServeOptions::default(),
-        &ClapMcpSchemaMetadata::default(),
-    )
-    .await
+    ServeMcpBuilder::for_cli::<Cli>(McpListen::Stdio)
+        .serve_options(ClapMcpServeOptions::default())
+        .serve()
+        .await
 }
 ```
 
 See [async_embedder_serve](examples/servers/async_embedder_serve.rs) (imperative
-`serve_mcp`) vs [async_sleep_shared](examples/servers/async_sleep_shared.rs)
+[`ServeMcpBuilder`]) vs [async_sleep_shared](examples/servers/async_sleep_shared.rs)
 (derive + `parse_or_serve_mcp_with`). For HTTP, use `McpListen::Http(addr)` —
 see [docs/http.md](docs/http.md).
+
+If [`ClapMcpConfig::needs_multi_thread_runtime`] is true and you call
+[`ServeMcpBuilder::serve`] on a `current_thread` runtime, you get
+[`ClapMcpError::RequiresMultiThreadRuntime`]; use
+`#[tokio::main(flavor = "multi_thread")]` or [`ServeMcpBuilder::serve_blocking`].
 
 ### Crash and panic behavior
 
@@ -860,7 +865,7 @@ tracing_subscriber::registry()
 
 let mut opts = clap_mcp::ClapMcpServeOptions::default();
 opts.log_rx = Some(log_rx);
-// Pass opts to parse_or_serve_mcp_with, serve_mcp, or serve_mcp_blocking
+// Pass opts to parse_or_serve_mcp_with or ServeMcpBuilder::serve_options
 ```
 
 **Current limitations:**
@@ -887,7 +892,7 @@ log::set_max_level(log::LevelFilter::Info);
 
 let mut opts = clap_mcp::ClapMcpServeOptions::default();
 opts.log_rx = Some(log_rx);
-// Pass opts to parse_or_serve_mcp_with, serve_mcp, or serve_mcp_blocking
+// Pass opts to parse_or_serve_mcp_with or ServeMcpBuilder::serve_options
 ```
 
 **Trade-off:** The `log` crate supports exactly **one global logger**.
@@ -912,10 +917,6 @@ Run with `--mcp-http 127.0.0.1:8080`, `--mcp-http` alone with
 [docs/http.md](docs/http.md). `--mcp` (stdio) and `--mcp-http` are mutually
 exclusive.
 
-```toml
-clap-mcp = { version = "0.0.4-rc.1", features = ["derive", "http"] }
-```
-
 Example: `cargo run -p clap-mcp-examples --bin subcommands_http --features http
 -- --mcp-http 127.0.0.1:8080`
 
@@ -925,7 +926,8 @@ conformance` (local Docker) or see
 
 ## Development
 
-Contributors should follow these conventions:
+Contributors should follow these conventions. AI agents should also read
+[AGENTS.md](AGENTS.md) for design priorities and doc touchpoints.
 
 * Format code with `cargo fmt`. CI runs `cargo fmt --all -- --check`.
 * Run `cargo clippy --all-targets --all-features -- -D warnings` before
