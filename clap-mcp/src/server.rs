@@ -42,6 +42,7 @@ pub(crate) struct ServeHandlerInner {
     pub logging_enabled: bool,
     pub task_augmented_tools: bool,
     pub task_tool_filter: Option<HashSet<String>>,
+    pub elicitation_enabled: bool,
 }
 
 impl ServeHandlerInner {
@@ -70,6 +71,46 @@ impl ServeHandlerInner {
 
         let args_map = params.arguments.clone().unwrap_or_default();
         validate_tool_argument_names(tool, &params.name, &args_map)?;
+
+        #[cfg(feature = "elicitation")]
+        if self.elicitation_enabled && params.name == "confirm-echo" {
+            use rmcp::model::{
+                CreateElicitationRequestParams, ElicitationAction, ElicitationSchemaBuilder,
+            };
+            let prompt = format!(
+                "Confirm running confirm-echo with arguments: {}",
+                serde_json::to_string(&args_map).unwrap_or_else(|_| "{}".into())
+            );
+            let schema = ElicitationSchemaBuilder::new()
+                .required_string_property("value", |s| s)
+                .build_unchecked();
+            let response = context
+                .peer
+                .create_elicitation_with_timeout(
+                    CreateElicitationRequestParams::FormElicitationParams {
+                        meta: None,
+                        message: prompt,
+                        requested_schema: schema,
+                    },
+                    None,
+                )
+                .await
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            return match response.action {
+                ElicitationAction::Accept => {
+                    let answer = response
+                        .content
+                        .and_then(|v| v.get("value").and_then(|x| x.as_str()).map(str::to_string))
+                        .unwrap_or_else(|| "accepted".into());
+                    Ok(CallToolResult::success(vec![Content::text(format!(
+                        "confirmed: {answer}"
+                    ))]))
+                }
+                ElicitationAction::Decline | ElicitationAction::Cancel => Ok(
+                    CallToolResult::success(vec![Content::text("elicitation declined")]),
+                ),
+            };
+        }
 
         if let Some(ref handler) = self.in_process_handler {
             let name = params.name.to_string();
@@ -464,6 +505,7 @@ pub fn build_clap_mcp_server(
         logging_enabled,
         task_augmented_tools: config.task_augmented_tools,
         task_tool_filter,
+        elicitation_enabled: serve_options.elicitation_enabled,
     });
 
     Ok(ClapMcpServer {
@@ -474,13 +516,31 @@ pub fn build_clap_mcp_server(
     })
 }
 
+pub(crate) fn spawn_log_forwarder(
+    server: &ClapMcpServer,
+    log_rx: Option<tokio::sync::mpsc::Receiver<LoggingMessageNotificationParams>>,
+) {
+    if let Some(mut log_rx) = log_rx {
+        let log_peer = server.log_peer.clone();
+        tokio::spawn(async move {
+            while let Some(params) = log_rx.recv().await {
+                let peer = log_peer.lock().ok().and_then(|g| g.clone());
+                let Some(peer) = peer else {
+                    continue;
+                };
+                let _ = notify_log(&peer, params).await;
+            }
+        });
+    }
+}
+
 /// Starts an MCP server over stdio exposing `clap://schema` with the provided JSON payload.
 pub async fn serve_schema_json_over_stdio(
     schema_json: String,
     executable_path: Option<PathBuf>,
     config: ClapMcpConfig,
     in_process_handler: Option<InProcessToolHandler>,
-    serve_options: ClapMcpServeOptions,
+    mut serve_options: ClapMcpServeOptions,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Result<(), ClapMcpError> {
     let schema: crate::ClapSchema = serde_json::from_str(&schema_json)?;
@@ -498,18 +558,7 @@ pub async fn serve_schema_json_over_stdio(
         metadata,
     )?;
 
-    if let Some(mut log_rx) = serve_options.log_rx {
-        let log_peer = server.log_peer.clone();
-        tokio::spawn(async move {
-            while let Some(params) = log_rx.recv().await {
-                let peer = log_peer.lock().ok().and_then(|g| g.clone());
-                let Some(peer) = peer else {
-                    continue;
-                };
-                let _ = notify_log(&peer, params).await;
-            }
-        });
-    }
+    spawn_log_forwarder(&server, serve_options.log_rx.take());
 
     let service = server
         .serve(rmcp::transport::stdio())

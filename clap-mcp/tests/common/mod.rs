@@ -35,7 +35,7 @@ pub fn example_binary_path(bin: &str) -> std::path::PathBuf {
     cargo_target_dir().join("debug").join(name)
 }
 
-static BUILD_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) static BUILD_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Default)]
 pub struct NoOpHandler;
@@ -202,4 +202,63 @@ pub async fn poll_until_completed(
 
 pub fn assert_create_task_meta(create: &CreateTaskResult) {
     assert!(!create.task.task_id.is_empty(), "task id must be set");
+}
+
+#[cfg(feature = "http")]
+pub struct HttpExampleServer {
+    pub child: tokio::process::Child,
+}
+
+#[cfg(feature = "http")]
+impl HttpExampleServer {
+    pub async fn shutdown(mut self) {
+        let _ = self.child.start_kill();
+        let _ = self.child.wait().await;
+    }
+}
+
+#[cfg(feature = "http")]
+pub async fn launch_http_example_with_addr(
+    bin: &str,
+    listen: std::net::SocketAddr,
+) -> Result<(ExampleClient, HttpExampleServer), rmcp::RmcpError> {
+    use rmcp::transport::StreamableHttpClientTransport;
+
+    {
+        let _guard = BUILD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cmd = std::process::Command::new("cargo");
+        cmd.args([
+            "build",
+            "-p",
+            "clap-mcp-examples",
+            "--bin",
+            bin,
+            "--features",
+            "http",
+        ]);
+        let status = cmd
+            .current_dir(workspace_root())
+            .status()
+            .expect("cargo build");
+        assert!(status.success(), "example binary {bin} should build");
+    }
+
+    let listen_str = listen.to_string();
+    let child = tokio::process::Command::new(example_binary_path(bin))
+        .arg("--mcp-http")
+        .arg(&listen_str)
+        .spawn()
+        .expect("spawn http server");
+
+    for _ in 0..100 {
+        if tokio::net::TcpStream::connect(listen).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let uri = format!("http://{listen}/mcp");
+    let transport = StreamableHttpClientTransport::from_uri(uri);
+    let client = NoOpHandler.serve(transport).await?;
+    Ok((client, HttpExampleServer { child }))
 }
