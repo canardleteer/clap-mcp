@@ -7,6 +7,11 @@ git_release_enable = true
 publish_all_features = true
 
 [[package]]
+name = "xtask"
+release = false
+publish = false
+
+[[package]]
 name = "clap-mcp-examples"
 release = false
 publish = false

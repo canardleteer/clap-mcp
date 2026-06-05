@@ -55,7 +55,9 @@ fn run(cmd: Cli) -> String {
 
 #[cfg(feature = "tracing")]
 fn main() {
-    let cli = clap_mcp::parse_or_serve_mcp_with_config::<Cli>(Cli::clap_mcp_config());
+    let cli = clap_mcp::parse_or_serve_mcp_with::<Cli>(clap_mcp::ClapMcpRunOptions::from_config(
+        Cli::clap_mcp_config(),
+    ));
     match cli {
         Cli::Sleep { .. } => println!("{}", run(cli)),
     }

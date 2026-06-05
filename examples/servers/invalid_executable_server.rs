@@ -1,7 +1,6 @@
 use clap::{Arg, Command};
 use clap_mcp::{
-    ClapMcpConfig, ClapMcpSchemaMetadata, schema_from_command,
-    serve_schema_json_over_stdio_blocking,
+    ClapMcpConfig, ClapMcpSchemaMetadata, McpListen, schema_from_command, serve_mcp_blocking,
 };
 use std::path::PathBuf;
 
@@ -17,7 +16,8 @@ fn main() {
     );
     let schema_json = serde_json::to_string_pretty(&schema).expect("schema should serialize");
 
-    serve_schema_json_over_stdio_blocking(
+    serve_mcp_blocking(
+        McpListen::Stdio,
         schema_json,
         Some(PathBuf::from("/definitely/not/a/real/clap-mcp-tool")),
         ClapMcpConfig::default(),
