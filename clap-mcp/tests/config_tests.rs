@@ -105,8 +105,12 @@ fn run_structured(cmd: TestCliStructured) -> AsStructured<SubResult> {
 #[clap_mcp_output_from = "run"]
 #[command(name = "test-cli-output-from")]
 enum TestCliOutputFrom {
-    TextOut { x: i32 },
-    OptionOut { present: bool },
+    TextOut {
+        x: i32,
+    },
+    OptionOut {
+        present: bool,
+    },
     ResultOk,
     ResultErr,
     StructuredOut {

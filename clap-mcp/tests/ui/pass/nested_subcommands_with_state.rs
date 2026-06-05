@@ -2,7 +2,7 @@
 
 use clap::{Parser, Subcommand};
 use clap_mcp::{ClapMcp, ClapMcpToolExecutorWithState};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 #[derive(Default)]
 struct State {
@@ -10,8 +10,7 @@ struct State {
 }
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe = true)]
-#[clap_mcp_state_type = "Mutex<State>"]
+#[clap_mcp(reinvocation_safe = true, stateful)]
 #[command(name = "nested-subcommands-with-state-pass", subcommand_required = true)]
 struct Root {
     #[command(subcommand)]
@@ -21,7 +20,6 @@ struct Root {
 #[derive(Debug, Subcommand, ClapMcp)]
 #[clap_mcp(reinvocation_safe = true)]
 #[clap_mcp_output_from_with_state = "run_top_level"]
-#[clap_mcp_state_type = "Mutex<State>"]
 enum TopLevel {
     Parent {
         #[command(subcommand)]
@@ -40,13 +38,13 @@ enum ChildCommand {
     },
 }
 
-fn run_top_level(cmd: TopLevel, state: &Arc<Mutex<State>>) -> String {
+fn run_top_level(cmd: TopLevel, state: &Mutex<State>) -> String {
     match cmd {
         TopLevel::Parent { command } => run_child(command, state),
     }
 }
 
-fn run_child(cmd: ChildCommand, state: &Arc<Mutex<State>>) -> String {
+fn run_child(cmd: ChildCommand, state: &Mutex<State>) -> String {
     match cmd {
         ChildCommand::Leaf { value } => {
             state.lock().expect("state mutex").value = value.clone();
@@ -56,7 +54,7 @@ fn run_child(cmd: ChildCommand, state: &Arc<Mutex<State>>) -> String {
 }
 
 fn main() {
-    let state = Arc::new(Mutex::new(State::default()));
+    let state = Mutex::new(State::default());
     let cli = Root {
         command: TopLevel::Parent {
             command: ChildCommand::Leaf {

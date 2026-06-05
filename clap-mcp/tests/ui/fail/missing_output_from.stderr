@@ -1,4 +1,4 @@
-error: clap_mcp: enum must have #[clap_mcp_output_from = "run"] and/or #[clap_mcp_output_from_with_state = "run"] with #[clap_mcp_state_type = "Type"]
+error: clap_mcp: enum must have #[clap_mcp_output_from = "run"] and/or #[clap_mcp_output_from_with_state = "run"] (with #[clap_mcp_state_type = "Type"] on leaf enums)
  --> tests/ui/fail/missing_output_from.rs:9:6
   |
 9 | enum Cli {

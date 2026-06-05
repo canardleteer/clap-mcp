@@ -1,8 +1,8 @@
 #![allow(unused_variables)]
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use clap_mcp::{ClapMcp, ClapMcpToolExecutorWithState};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 #[derive(Default)]
 struct State {
@@ -18,7 +18,7 @@ enum Cli {
     Bump,
 }
 
-fn run(cmd: Cli, state: &Arc<Mutex<State>>) -> String {
+fn run(cmd: Cli, state: &Mutex<State>) -> String {
     let _ = cmd;
     let mut guard = state.lock().expect("state mutex");
     guard.hits += 1;
@@ -26,7 +26,7 @@ fn run(cmd: Cli, state: &Arc<Mutex<State>>) -> String {
 }
 
 fn main() {
-    let state = Arc::new(Mutex::new(State::default()));
+    let state = Mutex::new(State::default());
     let out = Cli::Bump
         .execute_for_mcp_with_state(&state)
         .expect("stateful tool should run");
