@@ -4,7 +4,7 @@
 #![cfg(any(feature = "tracing", feature = "log"))]
 
 use clap_mcp::logging::{McpTaskIdGuard, level_to_mcp, log_channel, log_params};
-use rust_mcp_sdk::schema::LoggingLevel;
+use rmcp::model::LoggingLevel;
 
 #[test]
 fn test_level_to_mcp() {

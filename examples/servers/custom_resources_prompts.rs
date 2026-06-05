@@ -9,7 +9,7 @@
 use clap::Parser;
 use clap_mcp::content::{CustomPrompt, CustomResource, PromptContent, ResourceContent};
 use clap_mcp::{ClapMcp, ClapMcpServeOptions};
-use rust_mcp_sdk::schema::{ContentBlock, PromptMessage, Role};
+use rmcp::model::{PromptMessage, PromptMessageRole};
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
@@ -53,12 +53,10 @@ fn main() {
         title: Some("Example prompt".into()),
         description: Some("A static prompt that returns a short instruction".into()),
         arguments: vec![],
-        content: PromptContent::Static(vec![PromptMessage {
-            content: ContentBlock::text_content(
-                "When using this example CLI via MCP, prefer the echo tool for simple text.".into(),
-            ),
-            role: Role::User,
-        }]),
+        content: PromptContent::Static(vec![PromptMessage::new_text(
+            PromptMessageRole::User,
+            "When using this example CLI via MCP, prefer the echo tool for simple text.",
+        )]),
     });
 
     let config = clap_mcp::ClapMcpConfig::default();
