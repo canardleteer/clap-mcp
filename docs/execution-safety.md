@@ -304,6 +304,13 @@ fn run(cmd: Cli) -> AsStructured<SleepResult> {
 **Shared runtime:** same pattern; set `share_runtime = true` in
 `#[clap_mcp(...)]`.
 
+When MCP task-augmented `tools/call` and logging are both enabled,
+`run_async_tool` re-establishes per-task logging context inside `block_on`
+(because tokio task-local from the MCP task body does not always propagate into
+the nested future under concurrent load). Always route async tool bodies through
+`run_async_tool` rather than calling `Handle::block_on` directly. See
+[Logging — task-augmented tools](logging.md#task-augmented-tools-and-metataskid).
+
 `share_runtime` only applies when `reinvocation_safe` is true. When tools run
 in subprocesses (`reinvocation_safe = false`), `share_runtime` is ignored.
 

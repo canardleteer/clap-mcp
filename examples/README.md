@@ -43,7 +43,7 @@ for imperative embedders:
 
 Removed: `parse_or_serve_mcp_with_config*`, freestanding `tools_from_schema*`,
 public `ClapMcpServer` / `build_clap_mcp_server`. See
-[API slim notes](../docs/rmcp-migration-notes.md#004-rc1-api-slim-post-rmcp-port).
+[Migration notes](../docs/migration-notes.md#breaking-api-changes-004-rc1).
 
 * **`client.rs`** — MCP client that exercises the server examples (easiest way
   to see everything working)

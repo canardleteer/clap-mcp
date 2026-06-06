@@ -153,6 +153,33 @@ impl ClientHandler for LogCapturingHandler {
     }
 }
 
+fn captured_both_task_ids(captured: &[String], id_a: &str, id_b: &str) -> bool {
+    captured.iter().any(|tid| tid == id_a) && captured.iter().any(|tid| tid == id_b)
+}
+
+async fn wait_for_task_log_ids(
+    task_ids: &Arc<Mutex<Vec<String>>>,
+    id_a: &str,
+    id_b: &str,
+    timeout: Duration,
+) -> Vec<String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let captured = task_ids.lock().unwrap_or_else(|e| e.into_inner());
+        if captured_both_task_ids(&captured, id_a, id_b) {
+            return captured.clone();
+        }
+        drop(captured);
+        if Instant::now() >= deadline {
+            let captured = task_ids.lock().unwrap_or_else(|e| e.into_inner());
+            panic!(
+                "expected logging notifications with meta.taskId for both tasks ({id_a}, {id_b}); got {captured:?}"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 async fn launch_task_example<H>(
     bin: &str,
     handler: H,
@@ -633,20 +660,13 @@ async fn concurrent_task_logging_distinct_task_ids_parallel_probe() {
             .await
             .expect("poll b");
     };
-    let ((), ()) = tokio::join!(poll_a, poll_b);
-
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let captured = loop {
-        let captured = task_ids.lock().unwrap_or_else(|e| e.into_inner());
-        if captured.len() >= 2 {
-            break captured.clone();
-        }
-        drop(captured);
-        if Instant::now() >= deadline {
-            panic!("expected logging notifications with meta.taskId for both tasks");
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    };
+    let wait_logs = wait_for_task_log_ids(
+        &task_ids,
+        &create_a.task.task_id,
+        &create_b.task.task_id,
+        Duration::from_secs(10),
+    );
+    let ((), (), captured) = tokio::join!(poll_a, poll_b, wait_logs);
 
     assert!(
         captured.iter().any(|tid| tid == &create_a.task.task_id),

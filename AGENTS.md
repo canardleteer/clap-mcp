@@ -34,7 +34,7 @@ priorities below.
   decision.
 
 Early-stage warning: the crate is pre-stable API (`0.0.4-rc.1`). See
-[rmcp migration notes](docs/rmcp-migration-notes.md) for recent API slimming.
+[migration notes](docs/migration-notes.md) for recent API slimming.
 
 ## Repository layout
 
@@ -142,7 +142,7 @@ Every file below must appear in the README Documentation table.
 | [docs/logging.md](docs/logging.md) | Embedders | `tracing` / `log` bridges, MCP notifications |
 | [docs/http.md](docs/http.md) | Embedders | Streamable HTTP listen (`--mcp-http`) |
 | [docs/oauth.md](docs/oauth.md) | Embedders | OAuth client helpers (scaffolding) |
-| [docs/rmcp-migration-notes.md](docs/rmcp-migration-notes.md) | Embedders / maintainers | API migration table, breaking renames |
+| [docs/migration-notes.md](docs/migration-notes.md) | Embedders / maintainers | 0.0.3-rc.1 → 0.0.4-rc.1 upgrade, breaking renames |
 | [docs/conformance-baseline.md](docs/conformance-baseline.md) | Maintainers | MCP conformance harness, baseline YAML |
 
 ## Documentation touchpoints
@@ -154,8 +154,8 @@ same change:
 * [README.md](README.md) — Crate Features bullets, Feature Flags table, CLI
   compatibility examples, Documentation index
 * [examples/README.md](examples/README.md) — if examples or flags change
-* [docs/rmcp-migration-notes.md](docs/rmcp-migration-notes.md) — breaking renames
-  or API slimming
+* [docs/migration-notes.md](docs/migration-notes.md) — breaking renames or API
+  slimming
 * [AGENTS.md](AGENTS.md) — if layout or agent rules change
 
 Common mappings: HTTP listen → `docs/http.md`; logging bridges → `docs/logging.md`;

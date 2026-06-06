@@ -55,6 +55,8 @@ pub struct LoggingMessageNotificationParams {
 ///
 /// Used on dedicated async-tool threads. Prefer [`run_with_mcp_task_id`] in async task bodies
 /// when `parallel_safe = true` so concurrent tasks do not share one id slot.
+/// With `share_runtime = true`, [`crate::run_async_tool`] also re-scopes the task id
+/// inside `Handle::block_on` because outer task-local context does not always propagate.
 pub struct McpTaskIdGuard {
     previous: Option<String>,
 }

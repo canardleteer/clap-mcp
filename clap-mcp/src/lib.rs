@@ -2687,6 +2687,18 @@ fn value_to_strings(v: &serde_json::Value) -> Option<Vec<String>> {
 /// When `share_runtime` is true, uses `block_in_place` + `block_on` so the async
 /// work runs on the MCP server's multi-thread runtime without deadlock.
 ///
+/// # Task logging (`meta.taskId`)
+///
+/// When MCP task-augmented `tools/call` is active, the MCP server wraps tool
+/// bodies with [`crate::logging::run_with_mcp_task_id`]. For **`share_runtime =
+/// true`**, this function captures [`crate::logging::current_mcp_task_id`] before
+/// `block_on` and re-installs it inside the nested future. Tokio task-local from
+/// the outer MCP task body does not always propagate into futures polled by
+/// `block_on` (especially under concurrent `parallel_safe` load), so the
+/// re-scope keeps `meta.taskId` on forwarded log notifications. The dedicated-
+/// thread path (`share_runtime = false`) uses [`crate::logging::McpTaskIdGuard`]
+/// instead. This behavior is platform-independent.
+///
 /// # Example (async inside `run`)
 ///
 /// ```rust,ignore
@@ -2708,7 +2720,17 @@ where
         tokio::task::block_in_place(|| {
             let handle = tokio::runtime::Handle::try_current()
                 .map_err(|e| ClapMcpError::RuntimeContext(e.to_string()))?;
-            Ok(handle.block_on(f()))
+            // Capture before `block_on`: task-local from the MCP task body does not always
+            // propagate into the nested future polled by `block_on` (notably under concurrent
+            // `parallel_safe` load). Re-install via `run_with_mcp_task_id`, mirroring the
+            // dedicated-thread `McpTaskIdGuard` path below.
+            let task_id = crate::logging::current_mcp_task_id();
+            Ok(handle.block_on(async move {
+                match task_id {
+                    Some(id) => crate::logging::run_with_mcp_task_id(id, f()).await,
+                    None => f().await,
+                }
+            }))
         })
     } else {
         let catch_panics = config.catch_in_process_panics;
