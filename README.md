@@ -50,6 +50,37 @@ clap-mcp = "0.0.4-rc.1"
 
 For derive usage, `use clap_mcp::ClapMcp` so you can write `#[derive(ClapMcp)]`.
 
+## CLI compatibility
+
+Adding clap-mcp should not change how your CLI runs unless you explicitly opt into MCP.
+
+1. **MCP is flag-opt-in only.** A server starts only when the user passes **`--mcp`**
+   (stdio) or **`--mcp-http`** ([`http`](docs/http.md) feature). Normal invocations
+   never accidentally enter MCP mode.
+
+2. **Non-MCP behavior is unchanged.** Any argv **without** an MCP flag must parse and
+   run the same as before you added clap-mcp: same errors, same success paths, same
+   subcommand rules. Swap `Cli::parse()` for [`ParseOrServeMcp::parse_or_serve_mcp`]
+   (or [`get_matches_or_serve_mcp`] imperatively) — **do not** change subcommand types
+   or `subcommand_required` unless you already planned to.
+
+3. **`--mcp` does not require `Option<Commands>`.** If your CLI already uses a required
+   subcommand (`command: Commands` + `subcommand_required = true`), keep it. clap-mcp
+   checks for `--mcp` **before** clap's subcommand validation, so `myapp --mcp` works
+   while bare `myapp` still errors exactly as clap did before.
+
+| Invocation | Flat enum CLI (no struct subcommand) | Required struct subcommand | Optional struct subcommand (`Option<Commands>`) |
+|---|---|---|---|
+| Normal args (no MCP flag) | Unchanged | Unchanged | Unchanged |
+| Bare root (no subcommand) | N/A or app-defined | **Still clap error** | Parses; `main` handles `None` |
+| `--mcp` / `--mcp-http` | MCP server | MCP server | MCP server |
+
+**Do not migrate to `Option<Commands>` solely for MCP** — that changes bare-invocation
+behavior for CLIs that previously required a subcommand. Use
+**struct_subcommand_required** in [examples/README.md](examples/README.md) as the
+typical struct-root migration reference; **struct_subcommand** demonstrates optional
+subcommands only.
+
 ### Imperative (existing clap CLI)
 
 If you already have a `clap::Command`-based CLI, you can add MCP support in one
@@ -138,14 +169,12 @@ fn main() {
 When your CLI has a **struct root** with `#[command(subcommand)]` and an enum of
 commands, derive `ClapMcp` on **both** the root struct and the subcommand enum.
 Put `#[clap_mcp_output_from = "run"]` and execution config (`#[clap_mcp(...)]`)
-on the **subcommand** enum. In `main`, parse the root then call your run logic
-on the subcommand (e.g. `run(cli.command)` or `match cli.command { ... }`).
+on the **subcommand** enum. In `main`, parse the root then dispatch on the
+subcommand.
 
-You can use either `subcommand_required = false` with `command:
-Option<Commands>` (so `myapp` with no subcommand is valid) or keep
-**`subcommand_required = true`**; in both cases **`myapp --mcp`** is valid and
-starts the MCP server (clap-mcp checks for `--mcp` before calling clap, so a
-required subcommand is not demanded when only `--mcp` is passed).
+**Recommended migration (required subcommand, zero CLI regression):** keep
+`command: Commands` and `subcommand_required = true`. Only add
+`parse_or_serve_mcp()`.
 
 ```rust
 use clap::{Parser, Subcommand};
@@ -153,37 +182,40 @@ use clap_mcp::ClapMcp;
 
 #[derive(Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
-#[command(subcommand_required = false)]
+#[command(subcommand_required = true)]
 struct Cli {
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Commands,
 }
 
 #[derive(Subcommand, ClapMcp)]
 #[clap_mcp_output_from = "run"]
 enum Commands {
-    Greet { #[arg(long)] name: Option<String> },
-    Add { #[arg(long)] a: i32, #[arg(long)] b: i32 },
+    Explain { version: String },
 }
 
 fn run(cmd: Commands) -> String {
     match cmd {
-        Commands::Greet { name } => format!("Hello, {}!", name.as_deref().unwrap_or("world")),
-        Commands::Add { a, b } => format!("{}", a + b),
+        Commands::Explain { version } => format!("explain {version}"),
     }
 }
 
 fn main() {
     let cli = Cli::parse_or_serve_mcp();
-    match cli.command {
-        None => println!("No subcommand"),
-        Some(cmd) => println!("{}", run(cmd)),
-    }
+    println!("{}", run(cli.command));
 }
 ```
 
-See [Dual derive (root + subcommand)](#dual-derive-root--subcommand) below and
-the **struct_subcommand** example in [examples/README.md](examples/README.md).
+Bare `myapp` still fails with clap's missing-subcommand error; `myapp explain 1.0`
+and `myapp --mcp` both work.
+
+**Optional subcommand (only if your CLI already used this):** use
+`subcommand_required = false` with `command: Option<Commands>` and handle `None` in
+`main`. Do not adopt this pattern only for MCP — see **struct_subcommand** in
+[examples/README.md](examples/README.md).
+
+See [Dual derive (root + subcommand)](#dual-derive-root--subcommand) and
+**struct_subcommand_required** in [examples/README.md](examples/README.md).
 
 ## Feature flags
 
@@ -491,18 +523,18 @@ required."`
 
 ### Dual derive (root + subcommand)
 
-When you use a **struct root** with `#[command(subcommand)]` (e.g. `command:
-Option<Commands>`), derive `ClapMcp` on **both** the root struct and the
-subcommand enum. Put `#[clap_mcp_output_from = "run"]` and execution config
-(`#[clap_mcp(...)]`) on the **subcommand** enum only. The root's derive provides
-schema metadata and delegates tool execution to the subcommand's executor. In
-`main`, parse the root with `Root::parse_or_serve_mcp()` (via
-[`ParseOrServeMcp`]) then run with `run(cli.command)` or `match cli.command {
-... }`. You can keep **`subcommand_required = true`** if you want; `myapp --mcp`
-alone is valid and starts the MCP server (clap-mcp handles `--mcp` before clap's
-subcommand check). See
-[Struct root with subcommand](#struct-root-with-subcommand) and the
-**struct_subcommand** example in [examples/README.md](examples/README.md).
+When you use a **struct root** with `#[command(subcommand)]`, derive `ClapMcp` on
+**both** the root struct and the subcommand enum. Put `#[clap_mcp_output_from =
+"run"]` and execution config (`#[clap_mcp(...)]`) on the **subcommand** enum only.
+The root's derive provides schema metadata and delegates tool execution to the
+subcommand's executor. In `main`, parse with `Root::parse_or_serve_mcp()` then
+dispatch (`run(cli.command)` when the subcommand field is required, or `match
+cli.command` when it is `Option<Commands>`).
+
+Keep **`subcommand_required = true`** and a required `Commands` field when that
+is your CLI today — `myapp --mcp` works without switching to `Option`. See
+[CLI compatibility](#cli-compatibility) and **struct_subcommand_required** in
+[examples/README.md](examples/README.md).
 
 **MCP tool list:** The tool list includes the root command and all subcommands.
 If your CLI has `subcommand_required = true`, the root command still appears as

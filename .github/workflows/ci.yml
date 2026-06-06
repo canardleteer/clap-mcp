@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           cargo build -p clap-mcp-examples --all-features
-          for bin in subcommands subcommands_http structured tracing_bridge log_bridge async_sleep async_sleep_shared async_embedder_serve struct_subcommand optional_commands_and_args result_output subprocess_exit_handling panic_catch_opt_in client task_tools_dedicated task_tools_shared task_augmented_client task_serial_probe_dedicated task_serial_probe_shared task_parallel_probe_dedicated task_parallel_probe_shared task_panic_catch; do
+          for bin in subcommands subcommands_http structured tracing_bridge log_bridge async_sleep async_sleep_shared async_embedder_serve struct_subcommand struct_subcommand_required optional_commands_and_args result_output subprocess_exit_handling panic_catch_opt_in client task_tools_dedicated task_tools_shared task_augmented_client task_serial_probe_dedicated task_serial_probe_shared task_parallel_probe_dedicated task_parallel_probe_shared task_panic_catch; do
             cargo run -p clap-mcp-examples --all-features --bin "$bin" -- --help
           done
 

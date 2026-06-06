@@ -1,8 +1,9 @@
-//! Example CLI with struct root and **optional** subcommand (`Option<Commands>`).
+//! Struct root with a **required** subcommand — typical migration path (e.g. sem-tool).
 //!
-//! This demonstrates optional subcommands at the clap level only — not the typical
-//! MCP migration path. For required subcommands with zero CLI regression, see
-//! **struct_subcommand_required**.
+//! Normal CLI behavior is unchanged from pre-clap-mcp clap: bare invocation errors,
+//! subcommands work as before. Only `myapp --mcp` adds MCP server mode.
+//!
+//! See **struct_subcommand_required** in examples/README.md and README "CLI compatibility".
 
 use clap::{Parser, Subcommand};
 use clap_mcp::{ClapMcp, ClapMcpToolError, ClapMcpToolOutput, ParseOrServeMcp};
@@ -11,20 +12,16 @@ use serde::Serialize;
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
 #[command(
-    name = "struct-subcommand-example",
-    about = "Struct root with subcommand, optional subcommand support",
-    subcommand_required = false
+    name = "struct-subcommand-required-example",
+    about = "Struct root with required subcommand (zero CLI regression + --mcp)",
+    subcommand_required = true
 )]
 struct Cli {
     #[arg(long, global = true)]
     verbose: bool,
 
-    #[clap_mcp(skip)]
-    #[arg(long)]
-    out: Option<String>,
-
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Commands,
 }
 
 #[derive(Debug, Subcommand, ClapMcp)]
@@ -89,13 +86,11 @@ fn run(cmd: Commands) -> CommandsOutput {
 
 fn main() {
     let cli = Cli::parse_or_serve_mcp();
-
     match cli.command {
-        None => println!("No subcommand (try greet, add, or sub)"),
-        Some(Commands::Greet { name }) => {
+        Commands::Greet { name } => {
             println!("Hello, {}!", name.as_deref().unwrap_or("world"));
         }
-        Some(Commands::Add { a, b }) => println!("{a} + {b} = {}", a + b),
-        Some(Commands::Sub { a, b }) => println!("{a} - {b} = {}", a - b),
+        Commands::Add { a, b } => println!("{a} + {b} = {}", a + b),
+        Commands::Sub { a, b } => println!("{a} - {b} = {}", a - b),
     }
 }

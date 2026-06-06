@@ -110,6 +110,8 @@ enum Cli {
     Subcommands,
     /// Test the struct_subcommand example (struct root with optional subcommand)
     StructSubcommand,
+    /// Test the struct_subcommand_required example (recommended struct-root migration)
+    StructSubcommandRequired,
     /// Test the optional_commands_and_args example (skip, requires)
     OptionalCommandsAndArgs,
     /// Test the result_output example (Result<T, E>, error responses)
@@ -192,7 +194,10 @@ async fn run_client(example: &str, json: bool) -> Result<(), rmcp::RmcpError> {
         println!("  {}: {}", t.name, t.description.as_deref().unwrap_or(""));
     }
 
-    if example == "subcommands" || example == "struct_subcommand" {
+    if example == "subcommands"
+        || example == "struct_subcommand"
+        || example == "struct_subcommand_required"
+    {
         run_subcommands_tests(&client).await?;
     } else if example == "optional_commands_and_args" {
         run_optional_commands_tests(&client).await?;
@@ -350,6 +355,7 @@ async fn main() {
     let example = match args.command {
         Cli::Subcommands => "subcommands",
         Cli::StructSubcommand => "struct_subcommand",
+        Cli::StructSubcommandRequired => "struct_subcommand_required",
         Cli::OptionalCommandsAndArgs => "optional_commands_and_args",
         Cli::ResultOutput => "result_output",
         Cli::Structured => "structured",

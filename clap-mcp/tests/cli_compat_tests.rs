@@ -1,0 +1,69 @@
+//! CLI compatibility: non-MCP argv behaves like plain clap; MCP requires `--mcp`.
+
+mod common;
+
+use common::{example_binary_path, workspace_root};
+use std::process::Command;
+
+fn build_example(bin: &str) {
+    let status = Command::new("cargo")
+        .args(["build", "-p", "clap-mcp-examples", "--bin", bin])
+        .current_dir(workspace_root())
+        .status()
+        .expect("cargo build");
+    assert!(status.success(), "build {bin}");
+}
+
+fn run_example(bin: &str, args: &[&str]) -> std::process::Output {
+    build_example(bin);
+    Command::new(example_binary_path(bin))
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("run {bin} {args:?}: {e}"))
+}
+
+#[test]
+fn required_subcommand_bare_argv_fails_like_clap() {
+    let out = run_example("struct_subcommand_required", &[]);
+    assert!(
+        !out.status.success(),
+        "bare invocation must fail (required subcommand); stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn required_subcommand_normal_invocation_succeeds() {
+    let out = run_example("struct_subcommand_required", &["greet", "--name", "Rust"]);
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Hello, Rust!"), "got: {stdout}");
+}
+
+#[test]
+fn optional_subcommand_bare_argv_succeeds() {
+    let out = run_example("struct_subcommand", &[]);
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("No subcommand"), "got: {stdout}");
+}
+
+#[test]
+fn flat_enum_normal_invocation_unchanged() {
+    let out = run_example("subcommands", &["greet", "--name", "MCP"]);
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Hello, MCP!"), "got: {stdout}");
+}
