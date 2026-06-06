@@ -20,6 +20,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-${{ matrix.os }}-all-features
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -50,6 +55,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-conformance
 
       - name: Start MCP HTTP conformance server
         run: |
