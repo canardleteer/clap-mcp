@@ -90,7 +90,9 @@ cargo run -p clap-mcp-examples --bin client --features tracing -- async-embedder
 
 # Coverage (clap-mcp + macros; examples excluded)
 cargo install cargo-llvm-cov
-cargo llvm-cov test --workspace --all-features --summary-only
+cargo llvm-cov test -p clap-mcp -p clap-mcp-macros --all-features --summary-only
+cargo xtask code-coverage-html          # HTML report in target/llvm-cov/html
+cargo xtask code-coverage-html --open   # same, then open in browser
 ```
 
 CI runs the gate above on Ubuntu, Windows, and macOS.

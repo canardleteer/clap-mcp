@@ -1106,10 +1106,16 @@ cargo install cargo-llvm-cov
 cargo llvm-cov test --workspace --all-features --summary-only
 ```
 
-For an HTML report (opens in browser):
+For an HTML report:
 
 ```bash
-cargo llvm-cov test --workspace --all-features --html
+cargo xtask code-coverage-html
+```
+
+Add `--open` to launch the report in a browser when it finishes:
+
+```bash
+cargo xtask code-coverage-html --open
 ```
 
 Coverage focuses on the `clap-mcp` and `clap-mcp-macros` crates; the `examples`
