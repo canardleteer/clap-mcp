@@ -1,6 +1,7 @@
 # Execution safety configuration
 
-> Embedder guide for clap-mcp. See [README](../README.md) for getting started.
+> Guide for CLI authors adding clap-mcp. See [README](../README.md) to get started.
+> Integration patterns: [Usage patterns](usage.md).
 
 [← Documentation index](../README.md#documentation)
 
@@ -22,47 +23,71 @@ CLIs differ in how safely they can be invoked over MCP. Two flags control this:
 
 For shared in-process session state, see [Stateful MCP tools](stateful-tools.md).
 
+## CLI compatibility details
+
+These rules preserve normal CLI behavior when MCP is added. See also
+[README — CLI compatibility](../README.md#cli-compatibility).
+
+### Shell `--` vs MCP passthrough
+
+| Path | How passthrough works |
+| --- | --- |
+| **Direct CLI (shell)** | clap handles `--` natively; tokens after the first `--` are not parsed as flags. |
+| **MCP `tools/call`** | No `--` is inserted. Pass trailing tokens as a JSON **array** on a `Vec<String>` field (often with `#[arg(last = true, allow_hyphen_values = true)]`) or as an explicit `--long` list. |
+
+clap-mcp's pre-clap argv checks (MCP stdio, HTTP, export-skills) inspect only
+tokens **before** the first standalone `"--"`. So `myapp run -- --mcp` does not
+start MCP. `--mcp` is passthrough to a child.
+
+`build_tool_argv` rebuilds named JSON into argv for tool execution. For trailing
+multi-value positionals (`num_args(1..)` / cargo-style `last` vecs), it inserts
+`--` before the trailing tokens. For hyphen-prefixed tokens, prefer an explicit
+`#[arg(long)] args: Vec<String>` or `allow_hyphen_values = true` on the trailing
+field. Examples: **passthrough_args**, **vec_and_flags** in
+[examples/README.md](../examples/README.md).
+
+### Renaming clap-mcp builtin flags
+
+If your app already uses `--mcp` for something else, rename clap-mcp's stdio,
+HTTP, and export-skills flags via derive attributes or
+[`ClapMcpBuiltinFlags`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpBuiltinFlags.html):
+
+| Builtin | Default long | Derive attr | Stable clap arg id |
+| --- | --- | --- | --- |
+| stdio MCP | `--mcp` | `mcp_flag = "…"` | `CLAP_MCP_STDIO_FLAG_ID` |
+| HTTP MCP | `--mcp-http` | `mcp_http_flag = "…"` | `CLAP_MCP_HTTP_FLAG_ID` |
+| export skills | `--export-skills` | `export_skills_flag = "…"` | `CLAP_MCP_EXPORT_SKILLS_FLAG_ID` |
+
+Imperative helpers: `command_with_mcp_flag_with_flags(cmd, &flags)` (and
+export-skills / HTTP variants). Example: **custom_mcp_flags** in
+[examples/README.md](../examples/README.md).
+
+## Subprocess defaults (minimal derive)
+
+Default config: subprocess execution (`reinvocation_safe = false`), serialized
+tool calls (`parallel_safe = false`). No `#[clap_mcp(...)]` needed.
+
+Compilable example: [Usage — Derive (minimal)](usage.md#derive-minimal).
+
 ## Attribute-based config (recommended)
 
-Use `#[derive(ClapMcp)]` and `#[clap_mcp(...)]` on your CLI type:
+Use `#[derive(ClapMcp)]` and `#[clap_mcp(...)]` on your CLI type for in-process
+tool execution.
 
-```rust
-use clap::Parser;
-use clap_mcp::ClapMcp;
+Compilable example: [Usage — Derive with attributes](usage.md#derive-with-attributes-recommended).
 
-#[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe, parallel_safe = false)]
-#[clap_mcp_output_from = "run"]
-#[command(...)]
-enum Cli {
-    Add {
-        #[arg(long)]
-        a: i32,
-        #[arg(long)]
-        b: i32,
-    },
-    // ...
-}
+> [!NOTE]
+> With `reinvocation_safe`, tool calls run in-process. `parallel_safe` defaults
+> to `false` (serialized); set `parallel_safe = true` only when your `run`
+> logic is concurrency-safe.
 
-fn run(cmd: Cli) -> String {
-    match cmd {
-        Cli::Add { a, b } => (a + b).to_string(),
-        // ...
-    }
-}
-
-let cli = Cli::parse_or_serve_mcp();
-```
-
-## Schema metadata: skip and requires
+## Schema metadata (skip and requires)
 
 Use `#[clap_mcp(skip)]` to exclude subcommands or arguments from MCP exposure.
 Use `#[clap_mcp(requires)]` or `#[clap_mcp(requires = "arg_name")]` to make an
-optional
-argument required in the MCP tool schema (useful for positional args that may
-trigger
-stdin behavior when omitted). When the client omits a required arg, a clear
-error is returned.
+optional argument required in the MCP tool schema (useful for positional args
+that may trigger stdin behavior when omitted). When the client omits a required
+arg, clap-mcp returns a clear error.
 
 For **optional positional arguments** that might read from stdin when omitted,
 prefer an
@@ -76,7 +101,7 @@ rejected at **compile time** — use `#[arg(long)]` on each field or
 `#[clap_mcp(skip)]`. See the **stateful_counter** and **vec_and_flags** examples
 for safe patterns.
 
-**Argument-level** (on each field):
+**Argument-level** (on each field; excerpt):
 
 ```rust
 #[derive(Parser, ClapMcp)]
@@ -96,19 +121,16 @@ fn run(cmd: Cli) -> String {
 }
 ```
 
-**Variant-level** (one or more args; use a single name or comma-separated list —
-the MCP schema marks each as required):
+**Variant-level** (one or more args; excerpt):
 
 ```rust
 #[derive(Parser, ClapMcp)]
 #[clap_mcp_output_from = "run"]
 enum Cli {
-    // Single optional positional made required in MCP
     #[clap_mcp(requires = "versions")]
     Sort { versions: Option<String> },
 
-    // Multiple optional args
-    #[clap_mcp(requires = "path, input")]  // both become required in MCP
+    #[clap_mcp(requires = "path, input")]
     Process {
         #[arg(long)] path: Option<String>,
         #[arg(long)] input: Option<String>,
@@ -128,9 +150,13 @@ hidden from MCP; pair with `#[clap_mcp_output_from = "run"]` and a single `run`
 for the exposed variants.
 
 ```rust
+use clap::Parser;
+use clap_mcp::ClapMcp;
+
 #[derive(Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp(reinvocation_safe)]
 #[clap_mcp_output_from = "run"]
+#[command(name = "myapp")]
 enum Cli {
     Public,
     #[clap_mcp(skip)]
@@ -143,10 +169,15 @@ fn run(cmd: Cli) -> String {
         Cli::Internal => "hidden".to_string(),
     }
 }
+
+fn main() {
+    let cli = Cli::parse_or_serve_mcp();
+    println!("{}", run(cli));
+}
 ```
 
 You can also use `#[clap_mcp(skip)]` on **root struct fields** so options like
-output format are hidden from MCP (they remain available to the CLI):
+output format are hidden from MCP (they remain available to the CLI). Excerpt:
 
 ```rust
 #[derive(Parser, ClapMcp)]
@@ -162,7 +193,7 @@ struct Args {
 
 **Imperative:** Use `schema_from_command_with_metadata` and
 `get_matches_or_serve_mcp_with_config_and_metadata` with
-`ClapMcpSchemaMetadata`:
+`ClapMcpSchemaMetadata`. Excerpt:
 
 ```rust
 let mut metadata = ClapMcpSchemaMetadata::default();
@@ -175,25 +206,65 @@ When the client omits a required argument, the tool returns a clear error:
 `"Missing required argument(s): path. The MCP tool schema marks these as
 required."`
 
-## Dual derive (root + subcommand)
+## Dual derive — root and subcommand
 
-When you use a **struct root** with `#[command(subcommand)]`, derive `ClapMcp` on
-**both** the root struct and the subcommand enum. Put `#[clap_mcp_output_from =
-"run"]` and execution config (`#[clap_mcp(...)]`) on the **subcommand** enum only.
-The root's derive provides schema metadata and delegates tool execution to the
-subcommand's executor. In `main`, parse with `Root::parse_or_serve_mcp()` then
-dispatch (`run(cli.command)` when the subcommand field is required, or `match
-cli.command` when it is `Option<Commands>`).
+When your CLI has a **struct root** with `#[command(subcommand)]`, derive
+`ClapMcp` on **both** the root struct and the subcommand enum:
+
+* **`#[clap_mcp(...)]`** on the **root struct** — execution config for
+  `Root::parse_or_serve_mcp()` (`Root::clap_mcp_config()`)
+* **`#[clap_mcp_output_from = "run"]`** on the **subcommand enum** — tool bodies
+
+The root delegates MCP tool execution to the subcommand's `run`. Same `Add`
+tool as [Usage — Derive with attributes](usage.md#derive-with-attributes-recommended),
+with a required subcommand field:
+
+```rust
+use clap::{Parser, Subcommand};
+use clap_mcp::ClapMcp;
+
+#[derive(Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe)]
+#[command(name = "myapp", subcommand_required = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, ClapMcp)]
+#[clap_mcp_output_from = "run"]
+enum Commands {
+    Add {
+        #[arg(long)]
+        a: i32,
+        #[arg(long)]
+        b: i32,
+    },
+}
+
+fn run(cmd: Commands) -> String {
+    match cmd {
+        Commands::Add { a, b } => (a + b).to_string(),
+    }
+}
+
+fn main() {
+    let cli = Cli::parse_or_serve_mcp();
+    println!("{}", run(cli.command));
+}
+```
 
 Keep **`subcommand_required = true`** and a required `Commands` field when that
-is your CLI today — `myapp --mcp` works without switching to `Option`. See
-[CLI compatibility](../README.md#cli-compatibility) and **struct_subcommand_required** in
-[examples/README.md](../examples/README.md).
+is your CLI today — `myapp --mcp` works without switching to `Option`. Bare
+`myapp` still fails with clap's missing-subcommand error; `myapp add --a 1 --b 2`
+and `myapp --mcp` both work. See
+[CLI compatibility](../README.md#cli-compatibility) and
+**struct_subcommand_required** in [examples/README.md](../examples/README.md).
 
 **MCP tool list:** The tool list includes the root command and all subcommands.
 If your CLI has `subcommand_required = true`, the root command still appears as
 a tool but has no subcommand in the MCP invocation model and is rarely used by
-clients; the meaningful tools are the subcommands (e.g. explain, compare, sort).
+clients; the meaningful tools are the subcommands (e.g. `add`, `greet`).
 To exclude the root from the tool list when it has subcommands, set
 [`ClapMcpSchemaMetadata::skip_root_command_when_subcommands`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.skip_root_command_when_subcommands)
 to `true` via the derive with `#[clap_mcp(skip_root_when_subcommands)]` on the

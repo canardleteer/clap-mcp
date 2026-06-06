@@ -1,10 +1,10 @@
 # Logging and observability
 
-> Embedder guide for clap-mcp. See [README](../README.md) for getting started.
+> Guide for CLI authors adding clap-mcp. See [README](../README.md) to get started.
 
 [← Documentation index](../README.md#documentation)
 
-clap-mcp can forward application log messages to MCP clients as
+clap-mcp forwards application log messages to MCP clients as
 `notifications/message`. Two feature-gated paths are available depending on
 your logging ecosystem.
 
@@ -34,7 +34,7 @@ opts.log_rx = Some(log_rx);
 // Pass opts to parse_or_serve_mcp_with or ServeMcpBuilder::serve_options
 ```
 
-**Current limitations:**
+### Current limitations
 
 * Only the `message` field of each tracing event is forwarded. Other structured
   fields (e.g. `tracing::info!(count = 42, "done")` — `count` is dropped) are
@@ -61,13 +61,11 @@ opts.log_rx = Some(log_rx);
 // Pass opts to parse_or_serve_mcp_with or ServeMcpBuilder::serve_options
 ```
 
-**Trade-off:** The `log` crate supports exactly **one global logger**.
-Installing
-`ClapMcpLogBridge` replaces any existing logger (e.g. `env_logger`,
-`simplelog`). If you need to log to both disk and MCP simultaneously, you'll
-need a multiplexing wrapper — either a custom `Log` impl that fans out to
-multiple sinks, or a crate like
-[`multi_log`](https://crates.io/crates/multi_log).
+The `log` crate supports exactly one global logger. Installing `ClapMcpLogBridge`
+replaces any existing logger (e.g. `env_logger`, `simplelog`). If you need to
+log to both disk and MCP simultaneously, use a multiplexing wrapper (either a
+custom `Log` impl that fans out to multiple sinks, or a crate like
+[`multi_log`](https://crates.io/crates/multi_log)).
 
 ## Task-augmented tools and `meta.taskId`
 

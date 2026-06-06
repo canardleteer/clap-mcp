@@ -1,12 +1,12 @@
 # Exporting agent skills
 
-> Embedder guide for clap-mcp. See [README](../README.md) for getting started.
+> Guide for CLI authors adding clap-mcp. See [README](../README.md) to get started.
 
 [← Documentation index](../README.md#documentation)
 
-You can generate **[Agent Skills](https://agentskills.io/specification)**
-(SKILL.md) from the same tools, resources, and prompts that the MCP server
-exposes. This is useful for documenting your CLI for AI agents.
+You can generate [Agent Skills](https://agentskills.io/specification) (SKILL.md)
+from the same tools, resources, and prompts that the MCP server exposes. This
+is useful for documenting your CLI for AI agents.
 
 ## The `--export-skills` flag
 
@@ -16,13 +16,13 @@ or use
 [`command_with_mcp_and_export_skills_flags`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.command_with_mcp_and_export_skills_flags.html)
 to add both `--mcp` and `--export-skills`:
 
-* **`--export-skills`** — Generate skills into the default directory (see below)
-  and exit.
-* **`--export-skills=DIR`** — Generate skills into `DIR` (e.g.
+* `--export-skills` — Generate skills into the default directory (see below) and
+  exit.
+* `--export-skills=DIR` — Generate skills into `DIR` (e.g.
   `--export-skills=./out`) and exit.
 
-When both `--mcp` and `--export-skills` are present, **`--export-skills` wins**:
-the process exports and exits without starting the MCP server.
+When both `--mcp` and `--export-skills` are present, `--export-skills` wins.
+The process exports and exits without starting the MCP server.
 
 ## Default output directory
 

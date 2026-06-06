@@ -23,7 +23,7 @@ The canonical `release` list lives in [`xtask/src/examples_help.rs`](../xtask/sr
 
 Since **0.0.4-rc.1**, examples use the slim derive entrypoints and
 [`ServeMcpBuilder`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html)
-for imperative embedders:
+for imperative embedders. Start with [Usage patterns](../docs/usage.md).
 
 * **`ParseOrServeMcp::parse_or_serve_mcp()`** — default serve options; import
   `clap_mcp::ParseOrServeMcp`.

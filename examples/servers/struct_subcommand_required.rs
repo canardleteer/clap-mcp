@@ -10,7 +10,7 @@ use clap_mcp::{ClapMcp, ClapMcpToolError, ClapMcpToolOutput, ParseOrServeMcp};
 use serde::Serialize;
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp(reinvocation_safe)]
 #[command(
     name = "struct-subcommand-required-example",
     about = "Struct root with required subcommand (zero CLI regression + --mcp)",

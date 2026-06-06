@@ -10,10 +10,11 @@ conformance fixture (`clap-mcp-conformance-http`).
 
 **Local** (Rust + Docker; no host Node):
 
-```bash
+```shell
 cargo xtask conformance
-# or: ./scripts/run-conformance.sh
 ```
+
+Or run `./scripts/run-conformance.sh`.
 
 Builds `clap-mcp-conformance-http`, starts it on an ephemeral port, runs
 `@modelcontextprotocol/conformance` from the pinned Docker image
@@ -40,7 +41,7 @@ server). CI passes `--expected-failures` so:
 
 Refresh after a verbose run:
 
-```bash
+```shell
 cargo xtask conformance --verbose
 ```
 
@@ -78,7 +79,7 @@ only. We do not implement the full reference tool catalog or rich media shapes
 
 ### Permanent — SCAFFOLDING (elicitation)
 
-Elicitation is scaffolding (`confirm-echo` spike only), not a shipped embedder
+Elicitation is scaffolding (`confirm-echo` spike only), not a shipped public
 API. Covered by in-process integration tests, not harness shrink.
 
 * `tools-call-elicitation`, `elicitation-sep1034-defaults`,
