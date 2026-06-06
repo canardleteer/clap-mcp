@@ -28,6 +28,9 @@ own self-generated mess.
   should provide a way to express it naturally via MCP.
 * Provide a way to express structured logging information (if available) as part
   of the response if requested.
+* Avoid being opinionated if we don't have to be, accept being as little
+  opinionated as possible if the alternative is complicating the primary public
+  API.
 
 Overall, the more you design your CLI around a service pattern, the more
 naturally this crate will behave as an MCP server, and modern CLIs often do
@@ -52,22 +55,25 @@ For derive usage, `use clap_mcp::ClapMcp` so you can write `#[derive(ClapMcp)]`.
 
 ## CLI compatibility
 
-Adding clap-mcp should not change how your CLI runs unless you explicitly opt into MCP.
+Adding clap-mcp should not change how your CLI runs unless you explicitly opt
+into MCP.
 
 1. **MCP is flag-opt-in only.** A server starts only when the user passes **`--mcp`**
    (stdio) or **`--mcp-http`** ([`http`](docs/http.md) feature). Normal invocations
    never accidentally enter MCP mode.
 
-2. **Non-MCP behavior is unchanged.** Any argv **without** an MCP flag must parse and
-   run the same as before you added clap-mcp: same errors, same success paths, same
-   subcommand rules. Swap `Cli::parse()` for [`ParseOrServeMcp::parse_or_serve_mcp`]
-   (or [`get_matches_or_serve_mcp`] imperatively) — **do not** change subcommand types
-   or `subcommand_required` unless you already planned to.
+2. **Non-MCP behavior is unchanged.** Any argv **without** an MCP flag must
+   parse and run the same as before you added clap-mcp: same errors, same
+   success paths, same subcommand rules. Swap `Cli::parse()` for
+   [`ParseOrServeMcp::parse_or_serve_mcp`] (or [`get_matches_or_serve_mcp`]
+   imperatively) — **do not** change subcommand types or `subcommand_required`
+   unless you already planned to.
 
-3. **`--mcp` does not require `Option<Commands>`.** If your CLI already uses a required
-   subcommand (`command: Commands` + `subcommand_required = true`), keep it. clap-mcp
-   checks for `--mcp` **before** clap's subcommand validation, so `myapp --mcp` works
-   while bare `myapp` still errors exactly as clap did before.
+3. **`--mcp` does not require `Option<Commands>`.** If your CLI already uses a
+   required subcommand (`command: Commands` + `subcommand_required = true`),
+   keep it. clap-mcp checks for `--mcp` **before** clap's subcommand validation,
+   so `myapp --mcp` works while bare `myapp` still errors exactly as clap did
+   before.
 
 | Invocation | Flat enum CLI (no struct subcommand) | Required struct subcommand | Optional struct subcommand (`Option<Commands>`) |
 |---|---|---|---|
@@ -88,13 +94,23 @@ subcommands only.
 | **Direct CLI (shell)** | clap handles `--` natively; tokens after the first `--` are not parsed as flags. |
 | **MCP `tools/call`** | No `--` is inserted. Pass trailing tokens as a JSON **array** on a `Vec<String>` field (often with `#[arg(last = true, allow_hyphen_values = true)]`) or as an explicit `--long` list. |
 
-clap-mcp's pre-clap argv checks (MCP stdio, HTTP, export-skills) inspect only tokens **before** the first standalone `"--"`. So `myapp run -- --mcp` does **not** start MCP — `--mcp` is passthrough to a child. Subcommand names in that prefix are honored the same way.
+clap-mcp's pre-clap argv checks (MCP stdio, HTTP, export-skills) inspect only
+tokens **before** the first standalone `"--"`. So `myapp run -- --mcp` does
+**not** start MCP — `--mcp` is passthrough to a child. Subcommand names in that
+prefix are honored the same way.
 
-`build_tool_argv` rebuilds named JSON into argv for tool execution. For trailing multi-value positionals (`num_args(1..)` / cargo-style `last` vecs), it inserts `--` before the trailing tokens so clap parses them as values. For hyphen-prefixed tokens, prefer an explicit `#[arg(long)] args: Vec<String>` or `allow_hyphen_values = true` on the trailing field. See **passthrough_args** and **vec_and_flags** in [examples/README.md](examples/README.md).
+`build_tool_argv` rebuilds named JSON into argv for tool execution. For trailing
+multi-value positionals (`num_args(1..)` / cargo-style `last` vecs), it inserts
+`--` before the trailing tokens so clap parses them as values. For
+hyphen-prefixed tokens, prefer an explicit `#[arg(long)] args: Vec<String>` or
+`allow_hyphen_values = true` on the trailing field. See **passthrough_args** and
+**vec_and_flags** in [examples/README.md](examples/README.md).
 
 ### Renaming clap-mcp builtin flags
 
-If your app already uses `--mcp` for something else, rename clap-mcp's stdio, HTTP, and export-skills flags via derive attributes or [`ClapMcpBuiltinFlags`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpBuiltinFlags.html):
+If your app already uses `--mcp` for something else, rename clap-mcp's stdio,
+HTTP, and export-skills flags via derive attributes or
+[`ClapMcpBuiltinFlags`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpBuiltinFlags.html):
 
 | Builtin | Default long | Derive attr | Stable clap arg id |
 |---|---|---|---|
@@ -102,9 +118,12 @@ If your app already uses `--mcp` for something else, rename clap-mcp's stdio, HT
 | HTTP MCP | `--mcp-http` | `mcp_http_flag = "…"` | `CLAP_MCP_HTTP_FLAG_ID` |
 | export skills | `--export-skills` | `export_skills_flag = "…"` | `CLAP_MCP_EXPORT_SKILLS_FLAG_ID` |
 
-clap matches by **stable id** internally; argv uses the configured **long** name. Existing apps keep the defaults with no code changes. See **custom_mcp_flags** in [examples/README.md](examples/README.md).
+clap matches by **stable id** internally; argv uses the configured **long**
+name. Existing apps keep the defaults with no code changes. See
+**custom_mcp_flags** in [examples/README.md](examples/README.md).
 
-Imperative helpers: `command_with_mcp_flag_with_flags(cmd, &flags)` (and export-skills / HTTP variants). Default wrappers unchanged.
+Imperative helpers: `command_with_mcp_flag_with_flags(cmd, &flags)` (and
+export-skills / HTTP variants). Default wrappers unchanged.
 
 ### Imperative (existing clap CLI)
 
@@ -235,9 +254,9 @@ Bare `myapp` still fails with clap's missing-subcommand error; `myapp explain 1.
 and `myapp --mcp` both work.
 
 **Optional subcommand (only if your CLI already used this):** use
-`subcommand_required = false` with `command: Option<Commands>` and handle `None` in
-`main`. Do not adopt this pattern only for MCP — see **struct_subcommand** in
-[examples/README.md](examples/README.md).
+`subcommand_required = false` with `command: Option<Commands>` and handle `None`
+in `main`. Do not adopt this pattern only for MCP — see **struct_subcommand**
+in [examples/README.md](examples/README.md).
 
 See [Dual derive (root + subcommand)](#dual-derive-root--subcommand) and
 **struct_subcommand_required** in [examples/README.md](examples/README.md).
@@ -641,9 +660,10 @@ Tools include `meta.clapMcp` with these hints for clients.
 
 ### Async embedders
 
-When your application already uses `#[tokio::main]`, use [`ServeMcpBuilder`] to run
-MCP on the **caller's tokio runtime**. Use [`ServeMcpBuilder::serve_blocking`]
-from a synchronous `fn main()` (it creates an internal runtime).
+When your application already uses `#[tokio::main]`, use [`ServeMcpBuilder`]
+to run MCP on the **caller's tokio runtime**. Use
+[`ServeMcpBuilder::serve_blocking`] from a synchronous `fn main()` (it creates
+an internal runtime).
 
 | Entry | Who owns the runtime | Multi-thread when |
 |-------|----------------------|-------------------|
