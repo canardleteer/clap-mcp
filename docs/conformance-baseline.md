@@ -1,7 +1,7 @@
 # MCP conformance baseline (clap-mcp)
 
-Tracks runs of the official MCP conformance harness against the Streamable HTTP
-example server (`subcommands_http`).
+Tracks runs of the official MCP conformance harness against the maintainer HTTP
+conformance fixture (`clap-mcp-conformance-http`).
 
 ## Harness
 
@@ -12,7 +12,7 @@ cargo xtask conformance
 # or: ./scripts/run-conformance.sh
 ```
 
-Builds `subcommands_http`, starts it on an ephemeral port, runs
+Builds `clap-mcp-conformance-http`, starts it on an ephemeral port, runs
 `@modelcontextprotocol/conformance` from the pinned Docker image
 ([`docker/conformance/VERSION`](../docker/conformance/VERSION)).
 
@@ -20,6 +20,10 @@ Builds `subcommands_http`, starts it on an ephemeral port, runs
 [`modelcontextprotocol/conformance`](https://github.com/modelcontextprotocol/conformance)
 Action at the same version pin; `cargo xtask conformance-server` starts the
 fixture.
+
+The conformance binary is **maintainer-only** (not listed in
+[`examples/README.md`](../examples/README.md)). User-facing HTTP demos remain
+[`subcommands_http`](../examples/servers/subcommands_http.rs).
 
 ## Baseline file
 
@@ -37,22 +41,52 @@ Refresh after a verbose run:
 cargo xtask conformance --verbose
 ```
 
-Add new scenario names under `server:` with a one-line rationale below.
+Add new scenario names under `server:` with a one-line rationale in the sections
+below.
 
-## Current expected gaps (2026-06-05, conformance 0.1.11)
+## Schedule
 
-Fixture exposes clap subcommands (`greet`, `add`, `sub`) and `clap://schema` —
-not reference-server tools (`test_simple_text`, rich prompts/resources,
-elicitation SEP cases, progress, sampling, etc.). Scenarios covered by the yml:
+[`.github/workflows/conformance.yml`](../.github/workflows/conformance.yml) runs
+on **weekly cron** (skips when the repo and harness fingerprint are unchanged
+since the last successful run) and on **workflow_dispatch** (always runs). Use
+**Run workflow** for on-demand validation.
 
-* Reference-tool calls (text/image/audio/mixed/progress/error/logging/sampling/elicitation)
-* Elicitation SEP cases (server does not advertise elicitation on this fixture)
-* Rich resource/prompt shapes beyond clap defaults
-* `logging-set-level` (logging not enabled on conformance fixture)
-* Resource subscribe/unsubscribe (not implemented)
+## Baseline categories (conformance 0.1.11)
 
-**Passing without baseline:** initialize, ping, completion, tools-list,
-resources-list, prompts-list, SSE streams, DNS rebinding (loopback).
+### Permanent — reference / not our product
+
+Reference-server tool names and rich media shapes (image/audio/mixed content,
+progress, sampling). clap-mcp is a CLI bridge: tools are clap subcommands;
+results are text or JSON only.
+
+* `tools-call-simple-text`, `tools-call-image`, `tools-call-audio`,
+  `tools-call-embedded-resource`, `tools-call-mixed-content`,
+  `tools-call-with-progress`, `tools-call-sampling`
+* `resources-read-binary`, `resources-templates-read`,
+  `prompts-get-embedded-resource`, `prompts-get-with-image`
+
+### Permanent — SCAFFOLDING (elicitation)
+
+Elicitation is scaffolding (`confirm-echo` spike only), not a shipped embedder
+API. Covered by in-process integration tests, not harness shrink.
+
+* `tools-call-elicitation`, `elicitation-sep1034-defaults`,
+  `elicitation-sep1330-enums`
+
+### Permanent — not implemented
+
+* `resources-subscribe`, `resources-unsubscribe`
+
+### Passing with the conformance fixture (not baselined)
+
+After the `clap-mcp-conformance-http` fixture and `logging/setLevel` handler:
+
+* Lifecycle/utilities: `server-initialize`, `logging-set-level`, `ping`,
+  `completion-complete`
+* Lists: `tools-list`, `resources-list`, `prompts-list`
+* Shipped capabilities: `tools-call-with-logging`, `tools-call-error`,
+  `resources-read-text`, `prompts-get-simple`, `prompts-get-with-args`
+* Transport: `server-sse-multiple-streams`, `dns-rebinding-protection`
 
 ## Remote CI debugging
 

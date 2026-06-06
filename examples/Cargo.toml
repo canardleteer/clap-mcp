@@ -183,6 +183,11 @@ path = "servers/subcommands_http.rs"
 required-features = ["http"]
 
 [[bin]]
+name = "clap-mcp-conformance-http"
+path = "servers/clap_mcp_conformance_http.rs"
+required-features = ["http", "tracing"]
+
+[[bin]]
 name = "task_tools_http"
 path = "servers/task_tools_http.rs"
 required-features = ["http", "tracing"]

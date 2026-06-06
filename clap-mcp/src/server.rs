@@ -15,7 +15,7 @@ use rmcp::{
         ListToolsResult, LoggingLevel, LoggingMessageNotification, LoggingMessageNotificationParam,
         Meta, PaginatedRequestParams, PromptMessage, PromptMessageRole, RawResource,
         ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents,
-        ServerCapabilities, Task, TaskStatus, Tool,
+        ServerCapabilities, SetLevelRequestParams, Task, TaskStatus, Tool,
     },
     service::{RequestContext, RoleServer},
     task_manager::{
@@ -167,9 +167,7 @@ pub(crate) struct ClapMcpServer {
 
 impl ClapMcpServer {
     fn capture_peer(&self, context: &RequestContext<RoleServer>) {
-        if let Ok(mut guard) = self.log_peer.lock()
-            && guard.is_none()
-        {
+        if let Ok(mut guard) = self.log_peer.lock() {
             *guard = Some(context.peer.clone());
         }
     }
@@ -213,6 +211,21 @@ impl ServerHandler for ClapMcpServer {
             info = info.with_instructions(LOG_INTERPRETATION_INSTRUCTIONS);
         }
         info
+    }
+
+    fn set_level(
+        &self,
+        _request: SetLevelRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send + '_ {
+        self.capture_peer(&context);
+        if self.inner.logging_enabled {
+            std::future::ready(Ok(()))
+        } else {
+            std::future::ready(Err(McpError::method_not_found::<
+                rmcp::model::SetLevelRequestMethod,
+            >()))
+        }
     }
 
     fn list_resources(
