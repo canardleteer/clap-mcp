@@ -1,5 +1,9 @@
 # Streamable HTTP embedder guide
 
+> Embedder guide for clap-mcp. See [README](../README.md) for getting started.
+
+[← Documentation index](../README.md#documentation)
+
 clap-mcp can serve MCP over **Streamable HTTP** (optional `http` feature)
 instead of stdio. This document is for authors embedding clap-mcp in another
 CLI or service binary.
@@ -22,7 +26,8 @@ when they conflict with your CLI.
 
 Precedence (first match wins):
 
-1. `--mcp-http=HOST:PORT` or `--mcp-http HOST:PORT` (or your configured HTTP long name)
+1. `--mcp-http=HOST:PORT` or `--mcp-http HOST:PORT` (or your configured HTTP
+   long name)
 2. **`--mcp-http` alone** → environment (see below)
 3. `CLAP_MCP_HTTP_LISTEN=HOST:PORT`
    ([`MCP_HTTP_LISTEN_ENV`](https://docs.rs/clap-mcp/latest/clap_mcp/constant.MCP_HTTP_LISTEN_ENV.html))
@@ -69,8 +74,7 @@ mycli --mcp-http "127.0.0.1:${APP_PORT}"
 For servers that build schema JSON without the derive path, use
 [`ServeMcpBuilder`] from `#[tokio::main]` or [`ServeMcpBuilder::serve_blocking`]
 from sync `main`. Lower-level [`serve_mcp`] / [`serve_mcp_blocking`] free
-functions delegate to the builder. See also the **Async embedders** section in
-[README.md](../README.md).
+functions delegate to the builder. See also [Async embedders](execution-safety.md#async-embedders).
 
 **Async (`#[tokio::main]`):**
 

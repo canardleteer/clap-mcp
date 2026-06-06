@@ -1,5 +1,10 @@
 # rmcp migration notes (rust-mcp-sdk 0.9 → rmcp 1.7)
 
+> API migration reference for embedders upgrading clap-mcp versions. See
+> [README](../README.md) for getting started.
+
+[← Documentation index](../README.md#documentation)
+
 Workstream **W0** reference for the clap-mcp port. Handler rewrites are
 **W1–W2**; this document captures dependency pinning and API mapping only.
 

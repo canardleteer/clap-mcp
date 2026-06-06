@@ -1,13 +1,47 @@
-# OAuth client (optional)
+# OAuth client helpers (scaffolding)
 
-clap-mcp turns **local** CLIs into MCP servers (stdio or loopback HTTP). That
-path has no OAuth story — there is nothing to authorize on the server side, and
-clap-mcp does not ship an authorization server.
+> Embedder guide for clap-mcp. See [README](../README.md) for getting started.
 
-The optional **`http-oauth`** feature is only for **clients**: CLIs or tools
-that call a **remote** MCP server over HTTP when that server requires OAuth
-(discovery, PKCE, token refresh via rmcp). Enable it when your binary acts as an
-MCP client, not when it is serving local tools.
+[← Documentation index](../README.md#documentation)
+
+The **`http-oauth`** Cargo feature is **scaffolding** — API and behavior may
+change; not a release parity target. See the Feature Flags table in
+[README](../README.md#feature-flags).
+
+## Why this may not ship
+
+We have not found a **legitimate embedder use case** for this feature in a
+clap-mcp-shaped CLI. In practice, **agents** are the main callers of MCP — and
+for agent-side or agent-to-agent integration we would reach for **ACP** or
+**A2A**, not a Rust CLI binary wired as an OAuth MCP HTTP client. What exists
+today is mostly an rmcp re-export spike. **We may drop `http-oauth`** in a
+future release if no concrete need emerges; do not build production flows on it
+without pinning and an exit plan.
+
+clap-mcp turns **local** CLIs into MCP servers (stdio or loopback HTTP). Serving
+MCP does not require OAuth — clap-mcp does not ship an authorization server and
+does not OAuth-protect inbound access to your MCP server.
+
+## When to enable `http-oauth`
+
+Enable the feature when this binary is an **MCP client** calling a **remote
+HTTP MCP server** that requires OAuth (discovery, PKCE, token refresh via rmcp).
+That is what the re-exports target: `AuthClient` and
+`StreamableHttpClientTransport` for MCP-over-HTTP client connections.
+
+Do **not** enable `http-oauth` merely because your CLI also serves local tools
+with `--mcp` — serving and client OAuth are separate concerns in the same binary.
+
+## What `http-oauth` is not
+
+| Goal | Use `http-oauth`? |
+| --- | --- |
+| MCP client → remote MCP server (OAuth) | Yes (scaffolding) |
+| MCP server tools call an **external** OAuth-gated API (GitHub, your REST service, …) | **No** — handle tokens in your `run` / tool logic with a general OAuth or HTTP client crate (`oauth2`, `reqwest`, …). This feature wires rmcp's MCP client transport, not arbitrary APIs. |
+| Require OAuth before clients may call **your** MCP server | **No** — not implemented; see [http.md](http.md) for loopback hardening only. |
+
+Serving MCP and calling external OAuth-gated APIs in tool code is a normal
+pattern; you do not need `http-oauth` for the latter.
 
 ```toml
 clap-mcp = { version = "0.0.4-rc.1", features = ["derive", "http-oauth"] }
