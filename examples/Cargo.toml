@@ -56,6 +56,10 @@ name = "struct_subcommand"
 path = "servers/struct_subcommand.rs"
 
 [[bin]]
+name = "struct_subcommand_required"
+path = "servers/struct_subcommand_required.rs"
+
+[[bin]]
 name = "optional_commands_and_args"
 path = "servers/optional_commands_and_args.rs"
 

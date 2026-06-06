@@ -565,8 +565,9 @@ fn subcommand_field_type_from_enum(data: &syn::DataEnum) -> Option<Type> {
 ///   if true, panics in tool code are caught and returned as MCP errors instead of crashing the
 ///   server. Default is false. See [`ClapMcpConfig::catch_in_process_panics`].
 /// - `allow_mcp_without_subcommand` / `allow_mcp_without_subcommand = true|false` — When true
-///   (default), `myapp --mcp` starts the MCP server even when the root has `subcommand_required = true`.
-///   See [`ClapMcpConfig::allow_mcp_without_subcommand`].
+///   (default), `myapp --mcp` starts MCP even when the root has `subcommand_required = true`
+///   (argv is checked before clap). Does **not** change non-MCP CLI behavior; do not switch to
+///   `Option<Commands>` solely for MCP. See [`ClapMcpConfig::allow_mcp_without_subcommand`].
 /// - `task_augmented_tools` / `task_augmented_tools = true|false` — When true, advertise MCP task
 ///   support and handle task-augmented `tools/call` (in-process only). Requires
 ///   `reinvocation_safe`; combining with `reinvocation_safe = false` is a **compile error**.

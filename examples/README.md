@@ -37,7 +37,7 @@ public `ClapMcpServer` / `build_clap_mcp_server`. See
   `tools/call` (requires `--features tracing`; use with `task_tools_dedicated`
   or `task_tools_shared`)
 * **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand,
-  optional_commands_and_args, result_output, structured, tracing_bridge,
+  **struct_subcommand_required**, optional_commands_and_args, result_output, structured, tracing_bridge,
   log_bridge, async_sleep, async_sleep_shared, **async_embedder_serve**,
   **task_tools_dedicated**,
   **task_tools_shared**, **subprocess_exit_handling**, **panic_catch_opt_in**,
@@ -81,8 +81,11 @@ cargo run -p clap-mcp-examples --bin client -- subcommands
 # Test structured
 cargo run -p clap-mcp-examples --bin client -- structured
 
-# Test struct_subcommand
+# Test struct_subcommand (optional subcommand demo)
 cargo run -p clap-mcp-examples --bin client -- struct-subcommand
+
+# Test struct_subcommand_required (recommended struct-root migration)
+cargo run -p clap-mcp-examples --bin client -- struct-subcommand-required
 
 # Test optional_commands_and_args
 cargo run -p clap-mcp-examples --bin client -- optional-commands-and-args
@@ -163,13 +166,32 @@ cargo run -p clap-mcp-examples --bin subcommands -- sub 10 5
 cargo run -p clap-mcp-examples --bin subcommands -- --mcp
 ```
 
+### struct_subcommand_required
+
+Struct root with **required** subcommand (`command: Commands`,
+`subcommand_required = true`) — the typical migration path when your CLI already
+required a subcommand before clap-mcp. Bare invocation still fails with clap's
+missing-subcommand error; normal subcommands and `myapp --mcp` work unchanged.
+
+```bash
+# Bare invocation fails (same as pre-clap-mcp clap)
+cargo run -p clap-mcp-examples --bin struct_subcommand_required
+# exit code != 0
+
+# Normal CLI usage
+cargo run -p clap-mcp-examples --bin struct_subcommand_required -- greet --name Rust
+cargo run -p clap-mcp-examples --bin struct_subcommand_required -- add --a 2 --b 3
+
+# MCP server mode
+cargo run -p clap-mcp-examples --bin struct_subcommand_required -- --mcp
+```
+
 ### struct_subcommand
 
-Struct root with `#[command(subcommand)]`, optional subcommand
-(`Option<Commands>`), and `#[clap_mcp(...)]` on the struct. Output is defined
-via `#[clap_mcp_output_from = "run"]` and a single `run` function on the
-subcommand enum. Also demonstrates **root-level `#[clap_mcp(skip)]`**: the
-`--out` option is available to the CLI but hidden from MCP tool schemas.
+Struct root with **optional** subcommand (`Option<Commands>`,
+`subcommand_required = false`) — demonstrates optional subcommands at the clap
+level only; **not** the recommended MCP migration path. See
+**struct_subcommand_required** above for zero-regression migration.
 
 ```bash
 # Normal CLI usage (no subcommand)
@@ -388,7 +410,8 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | Example            | Path                            | Demonstrates                                                       |
 | ------------------ | ------------------------------- | ------------------------------------------------------------------ |
 | **subcommands**    | `servers/subcommands.rs`        | Text output, structured output, subprocess                         |
-| **struct_subcommand** | `servers/struct_subcommand.rs` | Struct root, `#[command(subcommand)]`, optional subcommand         |
+| **struct_subcommand_required** | `servers/struct_subcommand_required.rs` | Required subcommand struct root (recommended migration) |
+| **struct_subcommand** | `servers/struct_subcommand.rs` | Optional subcommand struct root (clap demo only)         |
 | **optional_commands_and_args** | `servers/optional_commands_and_args.rs` | `#[clap_mcp(skip)]`, `#[clap_mcp(requires)]` (arg and variant-level) |
 | **result_output**  | `servers/result_output.rs`      | `#[clap_mcp_output_from]` with `Result<T, E>`, `IntoClapMcpToolError` for structured errors |
 | **structured**     | `servers/structured.rs`         | Structured output via `#[clap_mcp_output_from]` and `AsStructured<T>` |

@@ -607,10 +607,13 @@ pub struct ClapMcpConfig {
     /// For reliability, restart the MCP server after a caught panic when using in-process execution.
     pub catch_in_process_panics: bool,
 
-    /// When true (default), `myapp --mcp` starts the MCP server even when the root has
-    /// `subcommand_required = true`, by checking argv before calling clap. Set to false to
-    /// require a subcommand (and thus `Option<Commands>` + `subcommand_required = false`) for
-    /// `--mcp` to parse.
+    /// When true (default), `myapp --mcp` (or `--mcp-http`) may start the MCP server without a
+    /// subcommand on the argv, by inspecting argv **before** clap runs. This preserves CLIs that
+    /// use `subcommand_required = true` — you do not need `Option<Commands>` for MCP.
+    ///
+    /// When false, `--mcp` alone goes through normal clap parsing; use `subcommand_required =
+    /// false` (typically with `Option<Commands>`) if clap must accept `--mcp` without a subcommand
+    /// token.
     pub allow_mcp_without_subcommand: bool,
 }
 

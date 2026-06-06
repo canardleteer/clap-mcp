@@ -57,7 +57,7 @@ mycli --mcp-http "127.0.0.1:${APP_PORT}"
 |-------|----------|
 | Route | `/mcp` |
 | Mutual exclusion | `--mcp` and `--mcp-http` cannot be combined |
-| Before subcommand | When `allow_mcp_without_subcommand` is true (default), MCP flags work without a subcommand — same as stdio |
+| Before subcommand | When `allow_mcp_without_subcommand` is true (default), `--mcp` / `--mcp-http` work without a subcommand token — same argv pre-check as stdio; non-MCP invocations unchanged |
 | DNS rebinding | Loopback-oriented `allowed_hosts` are applied; public binds (`0.0.0.0`) need reverse-proxy hardening |
 | Tokio runtime | When `reinvocation_safe` and (`share_runtime` or `parallel_safe`), embedders need a multi-thread runtime for [`ServeMcpBuilder::serve`] or clap-mcp creates one for [`ServeMcpBuilder::serve_blocking`] |
 
