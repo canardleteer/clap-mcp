@@ -573,10 +573,11 @@ fn subcommand_field_type_from_enum(data: &syn::DataEnum) -> Option<Type> {
 ///
 /// ## Struct root with subcommand
 ///
-/// When your CLI has a **struct root** with `#[command(subcommand)]` (e.g. `command: Option<Commands>`),
-/// derive `ClapMcp` on **both** the root struct and the subcommand enum. Put
-/// `#[clap_mcp_output_from = "run"]` and execution config (`#[clap_mcp(...)]`) on the **subcommand**
-/// enum; the root's derive provides schema metadata and delegates tool execution to the subcommand.
+/// When your CLI has a **struct root** with `#[command(subcommand)]`, derive
+/// `ClapMcp` on **both** the root struct and the subcommand enum. Put
+/// `#[clap_mcp(...)]` on the **root struct** (the type that implements
+/// `parse_or_serve_mcp()`); put `#[clap_mcp_output_from = "run"]` on the
+/// **subcommand enum**. The root delegates tool execution to the subcommand.
 ///
 /// # Attributes
 ///

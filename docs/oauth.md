@@ -1,26 +1,25 @@
 # OAuth client helpers (scaffolding)
 
-> Embedder guide for clap-mcp. See [README](../README.md) for getting started.
+> Guide for CLI authors adding clap-mcp. See [README](../README.md) to get started.
 
 [← Documentation index](../README.md#documentation)
 
-The **`http-oauth`** Cargo feature is **scaffolding** — API and behavior may
-change; not a release parity target. See the Feature Flags table in
+The `http-oauth` Cargo feature is scaffolding. API and behavior may change; it
+is not a release parity target. See the Feature Flags table in
 [README](../README.md#feature-flags).
 
 ## Why this may not ship
 
-We have not found a **legitimate embedder use case** for this feature in a
-clap-mcp-shaped CLI. In practice, **agents** are the main callers of MCP — and
-for agent-side or agent-to-agent integration we would reach for **ACP** or
-**A2A**, not a Rust CLI binary wired as an OAuth MCP HTTP client. What exists
-today is mostly an rmcp re-export spike. **We may drop `http-oauth`** in a
-future release if no concrete need emerges; do not build production flows on it
-without pinning and an exit plan.
+We have not found a concrete use case for this feature in a clap-mcp-shaped CLI.
+In practice, agents are the main callers of MCP. For agent-side or
+agent-to-agent integration we would reach for ACP or A2A, not a Rust CLI binary
+wired as an OAuth MCP HTTP client. What exists today is mostly an rmcp
+re-export spike. We may drop `http-oauth` in a future release if no concrete need
+emerges. Do not build production flows on it without pinning and an exit plan.
 
-clap-mcp turns **local** CLIs into MCP servers (stdio or loopback HTTP). Serving
-MCP does not require OAuth — clap-mcp does not ship an authorization server and
-does not OAuth-protect inbound access to your MCP server.
+clap-mcp turns local CLIs into MCP servers (stdio or loopback HTTP). Serving MCP
+does not require OAuth. clap-mcp does not ship an authorization server and does
+not OAuth-protect inbound access to your MCP server.
 
 ## When to enable `http-oauth`
 

@@ -1,18 +1,18 @@
 # Migration notes (0.0.3-rc.1 → 0.0.4-rc.1)
 
-> Upgrade reference for embedders moving from clap-mcp `0.0.3-rc.1` to
-> `0.0.4-rc.1`. See [README](../README.md) for getting started.
+> Upgrade reference for CLI authors moving from clap-mcp `0.0.3-rc.1` to
+> `0.0.4-rc.1`. See [README](../README.md) to get started.
 
 [← Documentation index](../README.md#documentation)
 
 `0.0.4-rc.1` is a **breaking** release. It replaces the workspace dependency on
 **rust-mcp-sdk 0.9** with official **[rmcp 1.7](https://github.com/modelcontextprotocol/rust-sdk)**,
-slims the public embedder API, and adds MCP task-augmented `tools/call`, concurrent
+slims the public API, and adds MCP task-augmented `tools/call`, concurrent
 execution options, and stateful in-process tools.
 
 ## Breaking API changes (0.0.4-rc.1)
 
-Public embedder surface after `0.0.4-rc.1`:
+Public API surface after `0.0.4-rc.1`:
 
 * **Derive entry:** `ParseOrServeMcp::parse_or_serve_mcp()` /
   `parse_or_serve_mcp_with(ClapMcpRunOptions { .. })`
@@ -44,7 +44,7 @@ Also removed: `parse_or_serve_mcp_with_config*` (use
 `ClapMcpConfig::task_augmented_tools`, public `tool_task_eligible`, public
 `ClapMcpServer` / `build_clap_mcp_server`.
 
-## Workspace dependency: rmcp 1.7
+## Workspace dependency (rmcp 1.7)
 
 ```toml
 rmcp = { version = "1.7", default-features = false, features = [

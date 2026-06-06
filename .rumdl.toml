@@ -20,11 +20,11 @@ line-length = 80
 # extend-disable = ["MD041"]
 
 # List of file/directory patterns to include for linting (if provided, only these will be linted)
-# include = [
-#    "docs/*.md",
-#    "src/**/*.md",
-#    "README.md"
-# ]
+include = [
+    "README.md",
+    "AGENTS.md",
+    "docs/*.md",
+]
 
 # List of file/directory patterns to exclude from linting
 exclude = [
@@ -39,6 +39,7 @@ exclude = [
     # Specific files or patterns
     "CHANGELOG.md",
     "LICENSE.md",
+    "examples/README.md",
 ]
 
 # Respect .gitignore files when scanning directories (default: true)

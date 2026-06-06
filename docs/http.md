@@ -1,12 +1,11 @@
-# Streamable HTTP embedder guide
+# Streamable HTTP
 
-> Embedder guide for clap-mcp. See [README](../README.md) for getting started.
+> Guide for CLI authors adding clap-mcp. See [README](../README.md) to get started.
 
 [← Documentation index](../README.md#documentation)
 
-clap-mcp can serve MCP over **Streamable HTTP** (optional `http` feature)
-instead of stdio. This document is for authors embedding clap-mcp in another
-CLI or service binary.
+With the optional `http` feature, clap-mcp serves MCP over Streamable HTTP
+instead of stdio.
 
 ## Enable the feature
 
@@ -28,18 +27,18 @@ Precedence (first match wins):
 
 1. `--mcp-http=HOST:PORT` or `--mcp-http HOST:PORT` (or your configured HTTP
    long name)
-2. **`--mcp-http` alone** → environment (see below)
+2. `--mcp-http` alone, then environment (see below)
 3. `CLAP_MCP_HTTP_LISTEN=HOST:PORT`
    ([`MCP_HTTP_LISTEN_ENV`](https://docs.rs/clap-mcp/latest/clap_mcp/constant.MCP_HTTP_LISTEN_ENV.html))
 4. `CLAP_MCP_HTTP_BIND` + `CLAP_MCP_HTTP_PORT` together when
    `CLAP_MCP_HTTP_LISTEN` is unset
 
-There is **no silent default port**. If HTTP mode is requested without a
-resolvable address, the process exits with an error listing the options above.
+There is no silent default port. If HTTP mode is requested without a resolvable
+address, the process exits with an error listing the options above.
 
 ### Examples
 
-```bash
+```shell
 export CLAP_MCP_HTTP_LISTEN=127.0.0.1:8080
 mycli --mcp-http
 
@@ -52,22 +51,22 @@ mycli --mcp-http 0.0.0.0:9000
 
 ### Coexistence with host CLI env vars
 
-clap-mcp only reads **`CLAP_MCP_*`** variables. If your application already
-uses `APP_PORT` or similar, read those in `main` and pass an explicit address:
+clap-mcp only reads `CLAP_MCP_*` variables. If your application already uses
+`APP_PORT` or similar, read those in `main` and pass an explicit address:
 
-```bash
+```shell
 mycli --mcp-http "127.0.0.1:${APP_PORT}"
 ```
 
 ## Server behavior
 
 | Topic | Behavior |
-|-------|----------|
+| --- | --- |
 | Route | `/mcp` |
 | Mutual exclusion | `--mcp` and `--mcp-http` cannot be combined |
-| Before subcommand | When `allow_mcp_without_subcommand` is true (default), `--mcp` / `--mcp-http` work without a subcommand token — same argv pre-check as stdio; non-MCP invocations unchanged |
+| Before subcommand | When `allow_mcp_without_subcommand` is true (default), `--mcp` / `--mcp-http` work without a subcommand token (same argv pre-check as stdio; non-MCP invocations unchanged) |
 | DNS rebinding | Loopback-oriented `allowed_hosts` are applied; public binds (`0.0.0.0`) need reverse-proxy hardening |
-| Tokio runtime | When `reinvocation_safe` and (`share_runtime` or `parallel_safe`), embedders need a multi-thread runtime for [`ServeMcpBuilder::serve`] or clap-mcp creates one for [`ServeMcpBuilder::serve_blocking`] |
+| Tokio runtime | When `reinvocation_safe` and (`share_runtime` or `parallel_safe`), you need a multi-thread runtime for [`ServeMcpBuilder::serve`] or clap-mcp creates one for [`ServeMcpBuilder::serve_blocking`] |
 
 ## Low-level embed API
 
@@ -76,7 +75,7 @@ For servers that build schema JSON without the derive path, use
 from sync `main`. Lower-level [`serve_mcp`] / [`serve_mcp_blocking`] free
 functions delegate to the builder. See also [Async embedders](execution-safety.md#async-embedders).
 
-**Async (`#[tokio::main]`):**
+### Async (`#[tokio::main]`)
 
 ```rust
 use clap_mcp::{ServeMcpBuilder, McpListen, ClapMcpServeOptions};
@@ -96,24 +95,29 @@ async fn main() -> Result<(), clap_mcp::ClapMcpError> {
 }
 ```
 
-**Blocking (sync `main`):**
+### Blocking (sync `main`)
+
+Excerpt. Place inside `fn main() -> Result<(), clap_mcp::ClapMcpError>`:
 
 ```rust
 use clap_mcp::{ServeMcpBuilder, McpListen, ClapMcpServeOptions};
 
-ServeMcpBuilder::for_cli::<Cli>(McpListen::Http("127.0.0.1:8080".parse()?))
-    .serve_options(ClapMcpServeOptions::default())
-    .serve_blocking()?;
+fn main() -> Result<(), clap_mcp::ClapMcpError> {
+    ServeMcpBuilder::for_cli::<Cli>(McpListen::Http("127.0.0.1:8080".parse()?))
+        .serve_options(ClapMcpServeOptions::default())
+        .serve_blocking()?;
+    Ok(())
+}
 ```
 
 ## OAuth (server vs client)
 
-HTTP **server** auth is out of scope for clap-mcp — use a reverse proxy or
-middleware. OAuth **client** helpers for calling remote MCP servers live under
-the `http-oauth` feature; see [oauth.md](oauth.md).
+HTTP server auth is out of scope for clap-mcp. Use a reverse proxy or
+middleware. OAuth client helpers for calling remote MCP servers live under the
+`http-oauth` feature; see [oauth.md](oauth.md).
 
 ## Conformance
 
-Maintainers: `cargo xtask conformance` runs the official MCP conformance
+Maintainers run `cargo xtask conformance` to execute the official MCP conformance
 harness against the `subcommands_http` example. See
 [conformance-baseline.md](conformance-baseline.md).

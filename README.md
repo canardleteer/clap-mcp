@@ -11,15 +11,15 @@ This is still a draft, and we're exposing a rapidly evolving specification (MCP)
 through a relatively stable one (`clap`). That mismatch in velocity will err
 towards instability of the public API surface.
 
-> **In general, you should just be able to adapt any `clap` CLI binary, to use
+> **In general, you should be able to adapt any `clap` CLI binary to use
 > `clap-mcp` with natural API semantics.**
 
-* **[Derive with attributes (recommended)](#derive-with-attributes-recommended)** —
+* **[Derive with attributes (recommended)](docs/usage.md#derive-with-attributes-recommended)** —
   `#[clap_mcp(...)]` for execution safety and in-process tools
-* **[Derive (minimal)](#derive-minimal)** — `#[derive(ClapMcp)]` on a `Parser`
-  enum with `parse_or_serve_mcp`
-* **[Imperative (existing clap CLI)](#imperative-existing-clap-cli)** — add MCP to
-  a hand-built `clap::Command` with `get_matches_or_serve_mcp`
+* **[Derive (minimal)](docs/usage.md#derive-minimal)** — `#[derive(ClapMcp)]` on a
+  `Parser` enum with `parse_or_serve_mcp`
+* **[Imperative (existing clap CLI)](docs/usage.md#imperative-existing-clap-cli)** —
+  add MCP to a hand-built `clap::Command` with `get_matches_or_serve_mcp`
 
 Runnable server binaries and feature demos:
 [examples/servers](examples/servers).
@@ -30,7 +30,7 @@ Compared to a Command Line Interface, I'm not a huge fan of the
 [Model Context Protocol](https://modelcontextprotocol.io/docs/getting-started/intro),
 but my feelings don't represent real world usage patterns. I feel MCP would do better
 with gRPC and Protobuf as it's "transport." All that being said, I'm not bitter
-about it, so I'm just letting a model do the development work and deal with it's
+about it, so I'm letting a model do the development work and deal with its
 own self-generated mess.
 
 **The intent is generally:**
@@ -69,11 +69,16 @@ clap-mcp = "0.0.4-rc.1"
 * `#[derive(ClapMcp)]` — subcommands exposed as MCP tools with shared `run`
   output
 * Execution modes: subprocess (default) or in-process (`reinvocation_safe`);
-  see [execution-safety](docs/execution-safety.md)
+  for async tool bodies, separate runtime per call (default) or shared MCP
+  async runtime (`share_runtime`); see
+  [execution-safety](docs/execution-safety.md#async-tools-and-share_runtime)
+* Opt-in in-process panic catching (`catch_in_process_panics` on
+  `#[clap_mcp(...)]`); panics become MCP errors instead of crashing the server;
+  see [Crash and panic behavior](docs/execution-safety.md#crash-and-panic-behavior)
+* Logging forwarded to MCP clients as `notifications/message` (`tracing` /
+  `log` features); see [logging](docs/logging.md)
 * Structured tool output and optional JSON `outputSchema`; see
   [tool-output](docs/tool-output.md)
-* Logging forwarded to MCP clients (`tracing` / `log` features); see
-  [logging](docs/logging.md)
 * Custom MCP resources and prompts; see [custom-content](docs/custom-content.md)
 * Agent Skills export (`--export-skills`); see
   [export-skills](docs/export-skills.md)
@@ -87,7 +92,7 @@ Cargo features and their maturity:
 
 | Maturity | Meaning |
 | --- | --- |
-| **Shipped** | Supported embedder surface; exercised in CI and examples. |
+| **Shipped** | Supported public API surface; exercised in CI and examples. |
 | **Scaffolding** | Exploratory spike — API and behavior may change; not a conformance or release parity target. |
 
 | Flag | Maturity | Enables |
@@ -107,15 +112,73 @@ Enable features in `Cargo.toml`:
 clap-mcp = { version = "0.0.4-rc.1", features = ["tracing"] }
 ```
 
+## When and when not to use `clap-mcp`
+
+**Use clap-mcp** when you already have (or are building) a **`clap` binary** that
+users or agents invoke as **discrete, one-shot, argv-shaped tools**, especially
+when each subcommand has predictable inputs and outputs.
+
+**Strong fits:**
+
+* **Plain CLI utilities** — search, format, inspect, convert — where you
+  understand concurrency and side effects. Stateless read-only tools map cleanly
+  to in-process execution; mutating or lock-heavy tools can stay on subprocess
+  defaults until you have measured behavior.
+* **CLI frontends for remote services** — a binary that parses args and calls
+  HTTP, gRPC, or another RPC backend. MCP belongs on the **CLI users run**
+  (`myctl get …`, `myctl apply …`); the service process itself may use `clap`,
+  a different framework, or no CLI at all. Agents get your existing subcommands
+  and flags; your CLI keeps doing the RPC/client work it already does.
+
+**Weaker fits (often still possible with care):**
+
+* **Interactive TUIs** (`lazygit`, `gitui`) — full-screen terminal apps assume a
+  human at the keyboard; MCP tool calls are non-interactive unless you expose
+  separate non-TUI subcommands.
+* **Long-running dev loops** (`bacon`, `trunk serve`, `cargo watch`) — MCP tools
+  are modeled as invocations with a result, not an always-on watcher or server
+  you leave running inside one tool call.
+* **Library-only crates** — clap-mcp attaches to a **binary**; wrap library APIs
+  in a CLI first, or MCP-ify an existing bin target.
+
+The table below is **illustrative** — suggested starting points for familiar
+Rust CLIs, not official guidance from those projects. Tune flags after you know
+your tool's locking, I/O, and global state. Details:
+[Execution safety](docs/execution-safety.md),
+[Usage patterns](docs/usage.md).
+
+| Rust CLI | Typical role | Suggested starting config | Why |
+| --- | --- | --- | --- |
+| [`ripgrep`](https://github.com/BurntSushi/ripgrep) (`rg`) | Stateless search | `reinvocation_safe`, `parallel_safe = true` | Read-only; no shared process state between calls |
+| [`fd`](https://github.com/sharkdp/fd) | Stateless find | `reinvocation_safe`, `parallel_safe = true` | Same pattern as `rg` |
+| [`bat`](https://github.com/sharkdp/bat) | Read/pretty-print files | `reinvocation_safe`, `parallel_safe = true` | Read-mostly; safe to overlap |
+| [`tokei`](https://github.com/XAMPPRocky/tokei) | Count lines / stats | `reinvocation_safe`, `parallel_safe = true` | Walks trees read-only |
+| [`xh`](https://github.com/ducaale/xh) | HTTP client (calls remote API) | `reinvocation_safe`, `parallel_safe = true` | Thin CLI over network; backend is separate |
+| gRPC/`tonic` admin CLI | RPC client (calls remote service) | `reinvocation_safe`, `parallel_safe = true` | Your user's case: MCP on the client binary |
+| [`cargo`](https://github.com/rust-lang/cargo) | Build / resolve / lock | Default (subprocess) or `reinvocation_safe`, `parallel_safe = false` | Registry and artifact locks; heavy side effects |
+| [`sqlx-cli`](https://github.com/launchbadge/sqlx) | DB migrate / prepare | Default (subprocess) | Schema mutations; prefer process isolation |
+| [`wasm-pack`](https://github.com/rustwasm/wasm-pack) | Build wasm via cargo | Default (subprocess) | Spawns nested toolchains |
+| [`hyperfine`](https://github.com/sharkdp/hyperfine) | Benchmark runner | Default (subprocess) | Spawns arbitrary shell commands per run |
+| In-process session tool (e.g. counter) | Shared MCP session state | `reinvocation_safe`, `stateful` | See [stateful-tools](docs/stateful-tools.md) |
+| Long-running subcommand (sleep, batch job) | Task-augmented `tools/call` | `reinvocation_safe`, `task_augmented_tools` | See [mcp-tasks](docs/mcp-tasks.md) |
+| [`lazygit`](https://github.com/jesseduffield/lazygit) | Full-screen TUI | **Poor fit** as-is | Needs dedicated non-TUI subcommands for MCP |
+| [`bacon`](https://github.com/Canop/bacon) | Test/file watcher | **Poor fit** | Long-lived loop, not a one-shot tool |
+| Backend service only (no user-facing bin) | gRPC/HTTP server | **Wrong layer** | Add a CLI (or MCP elsewhere); clap-mcp targets the invoke binary |
+
+**Default (no attributes)** is always valid: subprocess execution
+(`reinvocation_safe = false`) serializes calls and respawns your binary per tool
+invocation — the safest baseline when you are unsure.
+
 ## Documentation
 
 Every guide in [`docs/`](docs/) is listed below. See also
 [examples/README.md](examples/README.md) for runnable binaries.
 
-### Embedder guides
+### Guides for CLI authors
 
 | Guide | Topics |
 | --- | --- |
+| [Usage patterns](docs/usage.md) | Derive (minimal / with attributes), imperative CLI, struct root |
 | [Custom resources and prompts](docs/custom-content.md) | `ClapMcpServeOptions`, static/dynamic content |
 | [Exporting agent skills](docs/export-skills.md) | `--export-skills`, SKILL.md generation |
 | [Execution safety](docs/execution-safety.md) | `reinvocation_safe`, skip/requires, dual derive, async embedders |
@@ -137,7 +200,7 @@ Every guide in [`docs/`](docs/) is listed below. See also
 ## CLI compatibility
 
 For derive usage, `use clap_mcp::ClapMcp` so you can write `#[derive(ClapMcp)]`.
-The examples below are the fastest path to a working MCP-enabled CLI.
+Integration patterns: [Usage patterns](docs/usage.md).
 
 Adding clap-mcp should not change how your CLI runs unless you explicitly opt
 into MCP.
@@ -166,190 +229,19 @@ into MCP.
 | `--mcp` / `--mcp-http` | MCP server | MCP server | MCP server |
 
 **Do not migrate to `Option<Commands>` solely for MCP** — that changes bare-invocation
-behavior for CLIs that previously required a subcommand. Use
-**struct_subcommand_required** in [examples/README.md](examples/README.md) as the
-typical struct-root migration reference; **struct_subcommand** demonstrates optional
-subcommands only.
+behavior for CLIs that previously required a subcommand. See
+[Execution safety — dual derive](docs/execution-safety.md#dual-derive--root-and-subcommand)
+and **struct_subcommand_required** in [examples/README.md](examples/README.md).
 
-### Shell `--` vs MCP passthrough
-
-| Path | How passthrough works |
-|---|---|
-| **Direct CLI (shell)** | clap handles `--` natively; tokens after the first `--` are not parsed as flags. |
-| **MCP `tools/call`** | No `--` is inserted. Pass trailing tokens as a JSON **array** on a `Vec<String>` field (often with `#[arg(last = true, allow_hyphen_values = true)]`) or as an explicit `--long` list. |
-
-clap-mcp's pre-clap argv checks (MCP stdio, HTTP, export-skills) inspect only
-tokens **before** the first standalone `"--"`. So `myapp run -- --mcp` does
-**not** start MCP — `--mcp` is passthrough to a child. Subcommand names in that
-prefix are honored the same way.
-
-`build_tool_argv` rebuilds named JSON into argv for tool execution. For trailing
-multi-value positionals (`num_args(1..)` / cargo-style `last` vecs), it inserts
-`--` before the trailing tokens so clap parses them as values. For
-hyphen-prefixed tokens, prefer an explicit `#[arg(long)] args: Vec<String>` or
-`allow_hyphen_values = true` on the trailing field. See **passthrough_args** and
-**vec_and_flags** in [examples/README.md](examples/README.md).
-
-### Renaming clap-mcp builtin flags
-
-If your app already uses `--mcp` for something else, rename clap-mcp's stdio,
-HTTP, and export-skills flags via derive attributes or
-[`ClapMcpBuiltinFlags`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpBuiltinFlags.html):
-
-| Builtin | Default long | Derive attr | Stable clap arg id |
-|---|---|---|---|
-| stdio MCP | `--mcp` | `mcp_flag = "…"` | `CLAP_MCP_STDIO_FLAG_ID` |
-| HTTP MCP | `--mcp-http` | `mcp_http_flag = "…"` | `CLAP_MCP_HTTP_FLAG_ID` |
-| export skills | `--export-skills` | `export_skills_flag = "…"` | `CLAP_MCP_EXPORT_SKILLS_FLAG_ID` |
-
-clap matches by **stable id** internally; argv uses the configured **long**
-name. Existing apps keep the defaults with no code changes. See
-**custom_mcp_flags** in [examples/README.md](examples/README.md).
-
-Imperative helpers: `command_with_mcp_flag_with_flags(cmd, &flags)` (and
-export-skills / HTTP variants). Default wrappers unchanged.
-
-### Imperative (existing clap CLI)
-
-If you already have a `clap::Command`-based CLI, you can add MCP support in one
-line. When `--mcp` is not passed, your CLI works exactly as before:
-
-```rust
-use clap::Command;
-
-fn main() {
-    let cmd = Command::new("myapp")
-        .subcommand(Command::new("hello").about("Say hello"));
-
-    let matches = clap_mcp::get_matches_or_serve_mcp(cmd);
-    // If we reach here, --mcp was not passed — normal CLI execution continues.
-}
-```
-
-### Derive (minimal)
-
-With `#[derive(ClapMcp)]`, each subcommand is automatically exposed as an MCP
-tool. This uses default config (subprocess execution, serialized tool calls):
-
-```rust
-use clap::Parser;
-use clap_mcp::ClapMcp;
-
-#[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp_output_from = "run"]
-#[command(name = "myapp")]
-enum Cli {
-    /// Say hello.
-    Greet {
-        #[arg(long)]
-        name: Option<String>,
-    },
-}
-
-fn run(cmd: Cli) -> String {
-    match cmd {
-        Cli::Greet { name } => format!("Hello, {}!", name.as_deref().unwrap_or("world")),
-    }
-}
-
-fn main() {
-    let cli = Cli::parse_or_serve_mcp();
-    println!("{}", run(cli));
-}
-```
-
-### Derive with attributes (recommended)
-
-Use `#[clap_mcp(...)]` to declare execution safety (see
-[Execution safety](docs/execution-safety.md)), and
-`ParseOrServeMcp::parse_or_serve_mcp` to pick up that config automatically:
-
-```rust
-use clap::Parser;
-use clap_mcp::ClapMcp;
-
-#[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe, parallel_safe = false)]
-#[clap_mcp_output_from = "run"]
-#[command(name = "myapp")]
-enum Cli {
-    Add {
-        #[arg(long)]
-        a: i32,
-        #[arg(long)]
-        b: i32,
-    },
-}
-
-fn run(cmd: Cli) -> String {
-    match cmd {
-        Cli::Add { a, b } => (a + b).to_string(),
-    }
-}
-
-fn main() {
-    let cli = Cli::parse_or_serve_mcp();
-    println!("{}", run(cli));
-}
-```
-
-### Struct root with subcommand
-
-When your CLI has a **struct root** with `#[command(subcommand)]` and an enum of
-commands, derive `ClapMcp` on **both** the root struct and the subcommand enum.
-Put `#[clap_mcp_output_from = "run"]` and execution config (`#[clap_mcp(...)]`)
-on the **subcommand** enum. In `main`, parse the root then dispatch on the
-subcommand.
-
-**Recommended migration (required subcommand, zero CLI regression):** keep
-`command: Commands` and `subcommand_required = true`. Only add
-`parse_or_serve_mcp()`.
-
-```rust
-use clap::{Parser, Subcommand};
-use clap_mcp::ClapMcp;
-
-#[derive(Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe, parallel_safe = false)]
-#[command(subcommand_required = true)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand, ClapMcp)]
-#[clap_mcp_output_from = "run"]
-enum Commands {
-    Explain { version: String },
-}
-
-fn run(cmd: Commands) -> String {
-    match cmd {
-        Commands::Explain { version } => format!("explain {version}"),
-    }
-}
-
-fn main() {
-    let cli = Cli::parse_or_serve_mcp();
-    println!("{}", run(cli.command));
-}
-```
-
-Bare `myapp` still fails with clap's missing-subcommand error; `myapp explain 1.0`
-and `myapp --mcp` both work.
-
-**Optional subcommand (only if your CLI already used this):** use
-`subcommand_required = false` with `command: Option<Commands>` and handle `None`
-in `main`. Do not adopt this pattern only for MCP — see **struct_subcommand**
-in [examples/README.md](examples/README.md).
-
-See [Dual derive (root + subcommand)](docs/execution-safety.md#dual-derive-root-subcommand) and
-**struct_subcommand_required** in [examples/README.md](examples/README.md).
+Passthrough (`--`), renaming builtin MCP flags, struct-root derive, and the
+three integration patterns (derive / imperative): [Usage patterns](docs/usage.md)
+and [Execution safety — CLI compatibility details](docs/execution-safety.md#cli-compatibility-details).
 
 ## Development
 
 Contributors should follow these conventions. AI agents should also read
-[AGENTS.md](AGENTS.md) for design priorities and doc touchpoints.
+[AGENTS.md](AGENTS.md) for design priorities, documentation style, and doc
+touchpoints.
 
 * Format code with `cargo fmt`. CI runs `cargo fmt --all -- --check`.
 * Run `cargo clippy --all-targets --all-features -- -D warnings` before
@@ -362,7 +254,7 @@ MCP task support matrix (including limitations) is in
 
 Run all tests (including feature-gated logging tests):
 
-```bash
+```shell
 cargo test --all-features
 ```
 
@@ -371,20 +263,20 @@ cargo test --all-features
 Coverage is measured with
 [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov). Install and run:
 
-```bash
+```shell
 cargo install cargo-llvm-cov
 cargo llvm-cov test --workspace --all-features --summary-only
 ```
 
 For an HTML report:
 
-```bash
+```shell
 cargo xtask code-coverage-html
 ```
 
 Add `--open` to launch the report in a browser when it finishes:
 
-```bash
+```shell
 cargo xtask code-coverage-html --open
 ```
 
