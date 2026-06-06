@@ -11,7 +11,7 @@ mod async_sleep_common;
 
 use async_sleep_common::run_sleep_demo;
 use clap::{CommandFactory, FromArgMatches, Parser};
-use clap_mcp::{AsStructured, ClapMcp, ClapMcpConfigProvider, CLAP_MCP_STDIO_FLAG_ID};
+use clap_mcp::{AsStructured, CLAP_MCP_STDIO_FLAG_ID, ClapMcp, ClapMcpConfigProvider};
 
 #[cfg(feature = "tracing")]
 use clap_mcp::{McpListen, ServeMcpBuilder, command_with_mcp_flag};
