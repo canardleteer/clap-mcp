@@ -1,5 +1,6 @@
 mod code_coverage;
 mod conformance;
+mod examples_help;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -19,6 +20,8 @@ enum Command {
     ConformanceServer(conformance::ConformanceServerArgs),
     /// Run tests with LLVM coverage and emit an HTML report (clap-mcp + macros only).
     CodeCoverageHtml(code_coverage::CodeCoverageHtmlArgs),
+    /// List or smoke-test example binaries (`--help` after build).
+    ExamplesHelp(examples_help::ExamplesHelpArgs),
 }
 
 fn main() -> Result<()> {
@@ -27,5 +30,6 @@ fn main() -> Result<()> {
         Command::Conformance(args) => conformance::run_conformance(args),
         Command::ConformanceServer(args) => conformance::run_conformance_server(args),
         Command::CodeCoverageHtml(args) => code_coverage::run_code_coverage_html(args),
+        Command::ExamplesHelp(args) => examples_help::run_examples_help(args),
     }
 }

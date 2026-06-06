@@ -5,6 +5,20 @@ This directory contains example CLIs that demonstrate clap-mcp capabilities.
 Run all commands from the **workspace root** (the parent of this `examples/`
 directory). The examples depend on `clap-mcp` via a path dependency.
 
+## Release validation smoke
+
+CI and release prep run each release-validation example with `--help` via:
+
+```bash
+cargo xtask examples-help              # build + --help (release profile)
+cargo xtask examples-help --list       # print bin names (one per line)
+cargo xtask examples-help --profile http   # HTTP examples only
+cargo xtask examples-help --profile all    # every [[bin]] in Cargo.toml
+```
+
+The canonical `release` list lives in [`xtask/src/examples_help.rs`](../xtask/src/examples_help.rs)
+(`RELEASE_VALIDATION_BINS`). Add new release-critical examples there when you add a `[[bin]]`.
+
 ## 0.0.4 API (derive path)
 
 Since **0.0.4-rc.1**, examples use the slim derive entrypoints and

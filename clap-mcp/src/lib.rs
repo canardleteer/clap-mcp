@@ -2744,20 +2744,22 @@ where
 mod tests {
     use super::*;
     use crate::server::{
-        build_execution_command, call_tool_result_from_output, call_tool_result_from_panic,
+        ClapMcpServer, build_clap_mcp_server, build_execution_command,
+        call_tool_result_from_output, call_tool_result_from_panic,
         call_tool_result_from_tool_error, command_launch_failure_result, get_prompt_result,
         list_prompts_result, list_resources_result, placeholder_tool_result, read_resource_result,
         schema_parse_failure_result, subprocess_stderr_log_params, validate_tool_argument_names,
     };
     use async_trait::async_trait;
-    use clap::{ArgAction, CommandFactory};
+    use clap::{Arg, ArgAction, Command, CommandFactory};
+    use rmcp::ServerHandler;
     use rmcp::model::{
         Content, GetPromptRequestParams, PromptMessage, PromptMessageContent, PromptMessageRole,
-        RawContent, ReadResourceRequestParams, ResourceContents,
+        RawContent, ReadResourceRequestParams, ResourceContents, Tool,
     };
     use serde_json::json;
     use std::error::Error;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     fn content_text(content: &Content) -> &str {
         match &content.raw {
@@ -3460,6 +3462,126 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "http")]
+    #[test]
+    fn test_http_flag_helpers_cover_command_and_argv_shapes() {
+        use clap::Command;
+
+        let cmd = command_with_mcp_http_flag(Command::new("app"));
+        assert!(
+            cmd.get_arguments()
+                .any(|a| a.get_long() == Some(MCP_HTTP_FLAG_LONG))
+        );
+
+        let flags = ClapMcpBuiltinFlags::default();
+        assert_eq!(
+            argv_mcp_http_listen_from_args(
+                &["--mcp-http".to_string(), "127.0.0.1:4242".to_string()],
+                &flags
+            ),
+            Some("127.0.0.1:4242".to_string())
+        );
+        assert_eq!(
+            argv_mcp_http_listen_from_args(&["--mcp-http=10.0.0.1:9".to_string()], &flags),
+            Some("10.0.0.1:9".to_string())
+        );
+
+        let mut cmd = Command::new("app");
+        cmd = cmd.arg(
+            clap::Arg::new(CLAP_MCP_HTTP_FLAG_ID)
+                .long(MCP_HTTP_FLAG_LONG)
+                .global(true),
+        );
+        let unchanged = command_with_mcp_http_flag_with_flags(cmd, &flags);
+        assert_eq!(unchanged.get_arguments().count(), 1);
+
+        let matches = Command::new("app")
+            .arg(
+                clap::Arg::new(CLAP_MCP_HTTP_FLAG_ID)
+                    .long(MCP_HTTP_FLAG_LONG)
+                    .value_name("ADDR")
+                    .global(true),
+            )
+            .get_matches_from(["app", "--mcp-http", "127.0.0.1:1"]);
+        assert!(matches_http_flag(&matches, &flags));
+        assert!(is_builtin_arg(CLAP_MCP_HTTP_FLAG_ID));
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn test_parse_mcp_http_listen_reports_invalid_addresses() {
+        let err = parse_mcp_http_listen("not-an-address").expect_err("invalid listen");
+        assert!(
+            matches!(err, ClapMcpError::InvalidConfig(message) if message.contains("invalid MCP HTTP listen"))
+        );
+        assert!(
+            mcp_http_listen_error_message(&ClapMcpBuiltinFlags::default())
+                .contains(MCP_HTTP_LISTEN_ENV)
+        );
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn test_resolve_mcp_http_listen_from_args_covers_success_and_errors() {
+        let flags = ClapMcpBuiltinFlags::default();
+        assert_eq!(
+            resolve_mcp_http_listen_from_args(
+                &["--mcp-http".to_string(), "127.0.0.1:4242".to_string()],
+                &flags
+            )
+            .expect("listen should parse")
+            .map(|addr| addr.to_string()),
+            Some("127.0.0.1:4242".to_string())
+        );
+        assert!(
+            resolve_mcp_http_listen_from_args(&["--help".to_string()], &flags)
+                .expect("no http flag")
+                .is_none()
+        );
+        let missing = resolve_mcp_http_listen_from_args(&["--mcp-http".to_string()], &flags)
+            .expect_err("missing host:port should error");
+        assert!(
+            matches!(missing, ClapMcpError::InvalidConfig(message) if message.contains(MCP_HTTP_LISTEN_ENV))
+        );
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn test_argv_requests_mcp_http_without_subcommand_from_args() {
+        let cmd = Command::new("app").subcommand(Command::new("run"));
+        let flags = ClapMcpBuiltinFlags::default();
+        assert!(argv_requests_mcp_http_without_subcommand_from_args(
+            &["--mcp-http".to_string(), "127.0.0.1:1".to_string()],
+            &cmd,
+            &flags
+        ));
+        assert!(!argv_requests_mcp_http_without_subcommand_from_args(
+            &[
+                "run".to_string(),
+                "--mcp-http".to_string(),
+                "127.0.0.1:1".to_string()
+            ],
+            &cmd,
+            &flags
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_serve_mcp_fails_fast_on_invalid_schema_json() {
+        let err = serve_mcp(
+            McpListen::Stdio,
+            "not-json".to_string(),
+            None,
+            ClapMcpConfig::default(),
+            None,
+            ClapMcpServeOptions::default(),
+            &ClapMcpSchemaMetadata::default(),
+        )
+        .await
+        .expect_err("invalid schema should fail");
+        assert!(matches!(err, ClapMcpError::SchemaJson(_)));
+    }
+
     #[test]
     fn test_ambiguous_positional_scalars_build_swapped_argv() {
         use clap::{FromArgMatches, Parser, Subcommand};
@@ -3927,5 +4049,201 @@ mod tests {
                 .message
                 .contains("Missing required argument(s): value")
         );
+    }
+
+    fn build_test_server(
+        config: ClapMcpConfig,
+        metadata: ClapMcpSchemaMetadata,
+        serve_options: ClapMcpServeOptions,
+        handler: Option<InProcessToolHandler>,
+        executable_path: Option<std::path::PathBuf>,
+    ) -> ClapMcpServer {
+        let schema = nested_schema();
+        let schema_json = serde_json::to_string(&schema).expect("schema json");
+        let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+        build_clap_mcp_server(
+            schema_json,
+            tools,
+            executable_path,
+            handler,
+            schema.root.name.clone(),
+            &config,
+            &serve_options,
+            &metadata,
+        )
+        .expect("server should build")
+    }
+
+    #[test]
+    fn test_build_clap_mcp_server_rejects_task_augmented_without_reinvocation_safe() {
+        let config = ClapMcpConfig {
+            reinvocation_safe: false,
+            ..Default::default()
+        };
+        let metadata = ClapMcpSchemaMetadata {
+            task_augmented_tools: true,
+            ..Default::default()
+        };
+        let schema = nested_schema();
+        let schema_json = serde_json::to_string(&schema).expect("schema json");
+        let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+        assert!(matches!(
+            build_clap_mcp_server(
+                schema_json,
+                tools,
+                None,
+                Some(Arc::new(|_, _| Ok(ClapMcpToolOutput::Text("ok".into())))),
+                schema.root.name,
+                &config,
+                &ClapMcpServeOptions::default(),
+                &metadata,
+            ),
+            Err(ClapMcpError::InvalidConfig(_))
+        ));
+    }
+
+    #[test]
+    fn test_build_clap_mcp_server_rejects_task_augmented_without_in_process_handler() {
+        let config = ClapMcpConfig {
+            reinvocation_safe: true,
+            ..Default::default()
+        };
+        let metadata = ClapMcpSchemaMetadata {
+            task_augmented_tools: true,
+            ..Default::default()
+        };
+        let schema = nested_schema();
+        let schema_json = serde_json::to_string(&schema).expect("schema json");
+        let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+        assert!(matches!(
+            build_clap_mcp_server(
+                schema_json,
+                tools,
+                None,
+                None,
+                schema.root.name,
+                &config,
+                &ClapMcpServeOptions::default(),
+                &metadata,
+            ),
+            Err(ClapMcpError::InvalidConfig(_))
+        ));
+    }
+
+    #[test]
+    fn test_build_clap_mcp_server_accepts_parallel_and_serial_configs() {
+        let handler: InProcessToolHandler =
+            Arc::new(|_, _| Ok(ClapMcpToolOutput::Text("ok".into())));
+        for parallel_safe in [true, false] {
+            let config = ClapMcpConfig {
+                reinvocation_safe: true,
+                parallel_safe,
+                ..Default::default()
+            };
+            build_test_server(
+                config,
+                ClapMcpSchemaMetadata::default(),
+                ClapMcpServeOptions::default(),
+                Some(handler.clone()),
+                None,
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_info_capability_matrix_and_instructions() {
+        let handler: InProcessToolHandler =
+            Arc::new(|_, _| Ok(ClapMcpToolOutput::Text("ok".into())));
+        let config = ClapMcpConfig {
+            reinvocation_safe: true,
+            parallel_safe: true,
+            ..Default::default()
+        };
+
+        let (tx, rx) = logging::log_channel(4);
+        drop(tx);
+        let with_logging = build_test_server(
+            config.clone(),
+            ClapMcpSchemaMetadata::default(),
+            ClapMcpServeOptions {
+                log_rx: Some(rx),
+                ..Default::default()
+            },
+            Some(handler.clone()),
+            None,
+        );
+        let info = with_logging.get_info();
+        assert!(info.capabilities.logging.is_some());
+        assert!(info.capabilities.tasks.is_none());
+        assert_eq!(
+            info.instructions.as_deref(),
+            Some(LOG_INTERPRETATION_INSTRUCTIONS)
+        );
+
+        let with_tasks = build_test_server(
+            config.clone(),
+            ClapMcpSchemaMetadata {
+                task_augmented_tools: true,
+                ..Default::default()
+            },
+            ClapMcpServeOptions::default(),
+            Some(handler.clone()),
+            None,
+        );
+        let info = with_tasks.get_info();
+        assert!(info.capabilities.logging.is_none());
+        assert!(info.capabilities.tasks.is_some());
+        assert!(info.instructions.is_none());
+
+        let with_both = build_test_server(
+            config,
+            ClapMcpSchemaMetadata {
+                task_augmented_tools: true,
+                ..Default::default()
+            },
+            ClapMcpServeOptions {
+                log_rx: Some(logging::log_channel(4).1),
+                ..Default::default()
+            },
+            Some(handler),
+            None,
+        );
+        let info = with_both.get_info();
+        assert!(info.capabilities.logging.is_some());
+        assert!(info.capabilities.tasks.is_some());
+        assert_eq!(
+            info.instructions.as_deref(),
+            Some(LOG_INTERPRETATION_INSTRUCTIONS)
+        );
+    }
+
+    #[test]
+    fn test_build_execution_command_root_tool_skips_extra_segment() {
+        let schema =
+            schema_from_command(&Command::new("sample").arg(Arg::new("value").long("value")));
+        let args = serde_json::Map::from_iter([("value".to_string(), json!("ok"))]);
+        let command = build_execution_command(
+            std::path::Path::new("/tmp/example"),
+            &schema,
+            "sample",
+            "sample",
+            &args,
+        );
+        let actual_args: Vec<_> = command.get_args().collect();
+        assert_eq!(
+            actual_args,
+            vec![std::ffi::OsStr::new("--value"), std::ffi::OsStr::new("ok"),]
+        );
+    }
+
+    #[test]
+    fn test_validate_tool_argument_names_allows_extra_when_no_properties() {
+        let tool = Tool::new(
+            "freeform",
+            "no schema properties",
+            Arc::new(serde_json::Map::new()),
+        );
+        let args = serde_json::Map::from_iter([("anything".to_string(), json!(1))]);
+        assert!(validate_tool_argument_names(&tool, "freeform", &args).is_ok());
     }
 }

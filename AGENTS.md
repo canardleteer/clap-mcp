@@ -73,8 +73,10 @@ Contributors and agents should be able to reproduce CI locally:
   examples and tests; no warnings allowed)
 * **Audit:** CI uses [rustsec/audit-check](https://github.com/rustsec/audit-check)
   (`rustsec/audit-check@v2.0.0` on Ubuntu); locally `cargo audit` is equivalent
-* **Examples:** `cargo build -p clap-mcp-examples --all-features` and run each
-  example binary with `--help` (see the bin list in `ci.yml`)
+* **Examples:** `cargo xtask examples-help` (builds `clap-mcp-examples` with
+  `--all-features`, runs `--help` on each release-validation binary; use
+  `cargo xtask examples-help --list` to print the list, `--profile http` or
+  `--profile all` for other smoke sets)
 * **Rustdoc:** `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p clap-mcp --all-features`
 
 Also when adding or changing public API:
