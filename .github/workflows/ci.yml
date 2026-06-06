@@ -42,3 +42,28 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --no-deps -p clap-mcp --all-features
+
+  conformance:
+    name: MCP conformance (ubuntu)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Start MCP HTTP conformance server
+        run: |
+          mkdir -p target
+          cargo xtask conformance-server --log-file target/conformance-server.log &
+          timeout 60 bash -c 'until test -f target/conformance-port; do sleep 0.25; done'
+          set -a && source target/conformance-port && set +a
+          echo "CONFORMANCE_PORT=$CONFORMANCE_PORT" >> "$GITHUB_ENV"
+
+      - name: Run MCP conformance (official Action)
+        uses: modelcontextprotocol/conformance@v0.1.11
+        with:
+          mode: server
+          url: http://127.0.0.1:${{ env.CONFORMANCE_PORT }}/mcp
+          suite: active
+          expected-failures: ./conformance-baseline.yml
+          verbose: true

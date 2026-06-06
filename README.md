@@ -263,15 +263,22 @@ See [Dual derive (root + subcommand)](#dual-derive-root--subcommand) and
 
 ## Feature flags
 
-| Flag | Enables |
+Cargo features and their maturity:
+
+| Maturity | Meaning |
 | --- | --- |
-| `derive` (default) | `#[derive(ClapMcp)]` proc-macro and `ParseOrServeMcp` |
-| `tracing` | `ClapMcpTracingLayer` — a `tracing_subscriber::Layer` that forwards tracing events to MCP clients via `notifications/message`. |
-| `log` | `ClapMcpLogBridge` — a `log::Log` implementation that forwards `log` crate messages to MCP clients. |
-| `output-schema` | `schemars`-based JSON schema generation for structured tool output. Enables [`output_schema_for_type`], [`output_schema_one_of!`], and `#[clap_mcp_output_type]` / `#[clap_mcp_output_one_of]` to set each tool's `output_schema` for MCP clients. |
-| `http` | Streamable HTTP MCP server (`--mcp-http`); see [docs/http.md](docs/http.md). |
-| `http-oauth` | OAuth client helpers for calling remote MCP servers; see [docs/oauth.md](docs/oauth.md). |
-| `elicitation` | Server-side elicitation during tool execution (experimental). |
+| **Shipped** | Supported embedder surface; exercised in CI and examples. |
+| **Scaffolding** | Exploratory spike — API and behavior may change; not a conformance or release parity target. |
+
+| Flag | Maturity | Enables |
+| --- | --- | --- |
+| `derive` (default) | Shipped | `#[derive(ClapMcp)]` proc-macro and `ParseOrServeMcp` |
+| `tracing` | Shipped | `ClapMcpTracingLayer` — a `tracing_subscriber::Layer` that forwards tracing events to MCP clients via `notifications/message`. |
+| `log` | Shipped | `ClapMcpLogBridge` — a `log::Log` implementation that forwards `log` crate messages to MCP clients. |
+| `output-schema` | Shipped | `schemars`-based JSON schema generation for structured tool output. Enables [`output_schema_for_type`], [`output_schema_one_of!`], and `#[clap_mcp_output_type]` / `#[clap_mcp_output_one_of]` to set each tool's `output_schema` for MCP clients. |
+| `http` | Shipped | Streamable HTTP MCP server (`--mcp-http`); see [docs/http.md](docs/http.md). |
+| `http-oauth` | Scaffolding | OAuth client helpers for calling remote MCP servers; see [docs/oauth.md](docs/oauth.md). |
+| `elicitation` | Scaffolding | Server-side elicitation during tool execution (`confirm-echo` intercept only). |
 
 Enable features in `Cargo.toml`:
 

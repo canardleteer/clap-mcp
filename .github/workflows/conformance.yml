@@ -12,7 +12,72 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Gate scheduled runs
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Manual run: always execute conformance."
+            exit 0
+          fi
+
+          FINGERPRINT=$(
+            {
+              sha256sum .github/workflows/conformance.yml
+              sha256sum docker/conformance/VERSION
+              sha256sum docker/conformance/Dockerfile
+              sha256sum conformance-baseline.yml
+              sha256sum xtask/src/conformance.rs
+            } | sha256sum | awk '{print $1}'
+          )
+          echo "fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
+
+          CACHE_KEY="conformance-gate-${{ github.repository }}-${{ github.ref_name }}"
+          if [ -d "$RUNNER_TEMP/conformance-gate" ]; then
+            rm -rf "$RUNNER_TEMP/conformance-gate"
+          fi
+          mkdir -p "$RUNNER_TEMP/conformance-gate"
+
+          echo "Looking up last successful conformance run..."
+          LAST_SHA=$(gh run list \
+            --workflow=conformance.yml \
+            --branch="${{ github.ref_name }}" \
+            --status=success \
+            --limit=1 \
+            --json headSha \
+            --jq '.[0].headSha // empty')
+
+          LAST_FP=""
+          CACHE_HIT=false
+          if gh cache list --key "$CACHE_KEY" --limit 1 --json id --jq '.[0].id' 2>/dev/null | grep -q .; then
+            if gh cache restore --key "$CACHE_KEY" "$RUNNER_TEMP/conformance-gate" 2>/dev/null; then
+              CACHE_HIT=true
+              if [ -f "$RUNNER_TEMP/conformance-gate/state.env" ]; then
+                # shellcheck disable=SC1091
+                source "$RUNNER_TEMP/conformance-gate/state.env"
+              fi
+            fi
+          fi
+
+          REASON=""
+          if [ -z "$LAST_SHA" ] || [ "$LAST_SHA" != "${{ github.sha }}" ]; then
+            REASON="repo changed since last successful run (last=${LAST_SHA:-none}, head=${{ github.sha }})"
+          elif [ "$CACHE_HIT" != true ] || [ "$LAST_FP" != "$FINGERPRINT" ]; then
+            REASON="harness fingerprint changed (stored=${LAST_FP:-none}, current=$FINGERPRINT)"
+          fi
+
+          if [ -n "$REASON" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Scheduled run will execute: $REASON"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping scheduled conformance: no commits since last success and harness unchanged."
+          fi
+
       - name: Start MCP HTTP conformance server
+        if: steps.gate.outputs.run == 'true'
         run: |
           mkdir -p target
           cargo xtask conformance-server --log-file target/conformance-server.log &
@@ -21,6 +86,7 @@ jobs:
           echo "CONFORMANCE_PORT=$CONFORMANCE_PORT" >> "$GITHUB_ENV"
 
       - name: Run MCP conformance (official Action)
+        if: steps.gate.outputs.run == 'true'
         id: conformance
         uses: modelcontextprotocol/conformance@v0.1.11
         with:
@@ -30,8 +96,22 @@ jobs:
           expected-failures: ./conformance-baseline.yml
           verbose: true
 
+      - name: Persist conformance gate state
+        if: success() && steps.gate.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/conformance-gate"
+          {
+            echo "LAST_SHA=${{ github.sha }}"
+            echo "LAST_FP=${{ steps.gate.outputs.fingerprint }}"
+          } > "$RUNNER_TEMP/conformance-gate/state.env"
+          CACHE_KEY="conformance-gate-${{ github.repository }}-${{ github.ref_name }}"
+          gh cache delete "$CACHE_KEY" -y 2>/dev/null || true
+          gh cache save "$CACHE_KEY" "$RUNNER_TEMP/conformance-gate"
+
       - name: Upload conformance debug bundle
-        if: always()
+        if: always() && steps.gate.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: conformance-debug-${{ github.run_id }}

@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-const CONFORMANCE_BIN: &str = "subcommands_http";
+const CONFORMANCE_BIN: &str = "clap-mcp-conformance-http";
 const DOCKER_IMAGE: &str = "clap-mcp-conformance:local";
 const INITIALIZE_BODY: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0"}}}"#;
 
@@ -174,7 +174,7 @@ fn ensure_conformance_image(rebuild: bool) -> Result<()> {
 }
 
 fn build_server(root: &Path) -> Result<()> {
-    eprintln!("Building {CONFORMANCE_BIN} (http feature)...");
+    eprintln!("Building {CONFORMANCE_BIN} (http + tracing features)...");
     let status = Command::new("cargo")
         .args([
             "build",
@@ -183,11 +183,11 @@ fn build_server(root: &Path) -> Result<()> {
             "--bin",
             CONFORMANCE_BIN,
             "--features",
-            "http",
+            "http,tracing",
         ])
         .current_dir(root)
         .status()
-        .context("cargo build subcommands_http")?;
+        .context("cargo build clap-mcp-conformance-http")?;
     if status.success() {
         Ok(())
     } else {
