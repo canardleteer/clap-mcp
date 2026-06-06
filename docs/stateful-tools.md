@@ -1,0 +1,53 @@
+# Stateful MCP tools (shared session state)
+
+> Embedder guide for clap-mcp. See [README](../README.md) for getting started.
+
+[← Documentation index](../README.md#documentation)
+
+When `reinvocation_safe` is true, in-process tool calls can share session state
+for the MCP server lifetime. The server stores state in an [`Arc`] internally; your
+`run` function receives **`&Self::State`** on each call (not `&Arc<…>`).
+
+Setup (see also [`ClapMcpToolExecutorWithState`] rustdoc):
+
+* **Leaf subcommand enum:** `#[clap_mcp_output_from_with_state = "run"]` plus
+  `#[clap_mcp_state_type = "Type"]` where `Type` matches the second parameter of
+  `run` (e.g. `run(cmd, state: &Mutex<CounterState>)` →
+  `#[clap_mcp_state_type = "Mutex<CounterState>"]`).
+* **Struct root / intermediate enums:** `#[clap_mcp(stateful)]` — `State` is
+  inferred from the subcommand field; do not repeat `state_type`.
+
+```rust
+use clap_mcp::{ClapMcp, ParseOrServeMcpWithState};
+use std::sync::{Arc, Mutex};
+
+#[derive(Default)]
+struct CounterState { count: u64 }
+
+#[derive(Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe = true, stateful)]
+struct App {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand, ClapMcp)]
+#[clap_mcp(reinvocation_safe = true)]
+#[clap_mcp_output_from_with_state = "run"]
+#[clap_mcp_state_type = "Mutex<CounterState>"]
+enum Command { Increment, Read }
+
+fn run(cmd: Command, state: &Mutex<CounterState>) -> String { /* ... */ }
+
+fn main() {
+    let state = Arc::new(Mutex::new(CounterState::default()));
+    let app = App::parse_or_serve_mcp_with_state(state.clone());
+    // normal CLI path when --mcp was not passed
+}
+```
+
+Entrypoints: [`ParseOrServeMcpWithState::parse_or_serve_mcp_with_state`],
+[`parse_or_serve_mcp_with_state`], and
+[`ServeMcpBuilder::for_cli_with_state`]. Requires `reinvocation_safe`. Example:
+[stateful_counter](../examples/servers/stateful_counter.rs) (ported from
+[PR #11](https://github.com/canardleteer/clap-mcp/pull/11) by Eddy Stefes / fneddy).

@@ -1,6 +1,6 @@
-//! OAuth **client** configuration helpers for calling remote MCP servers.
-//!
-//! clap-mcp does not embed an authorization server. See [docs/oauth.md](https://github.com/canardleteer/clap-mcp/blob/main/docs/oauth.md).
+//! OAuth **client** configuration helpers for calling remote MCP servers over
+//! HTTP (MCP client transport). Not for general outbound API OAuth in tool
+//! code or for protecting inbound MCP server access. See [docs/oauth.md].
 
 use rmcp::transport::auth::OAuthClientConfig;
 use std::env;

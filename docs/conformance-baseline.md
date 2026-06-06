@@ -1,5 +1,8 @@
 # MCP conformance baseline (clap-mcp)
 
+> Maintainer guide — MCP conformance harness and expected failures. See
+> [README](../README.md#documentation).
+
 Tracks runs of the official MCP conformance harness against the maintainer HTTP
 conformance fixture (`clap-mcp-conformance-http`).
 
@@ -53,15 +56,23 @@ since the last successful run) and on **workflow_dispatch** (always runs). Use
 
 ## Baseline categories (conformance 0.1.11)
 
-### Permanent — reference / not our product
+### Permanent — reference harness tools (not our product)
 
-Reference-server tool names and rich media shapes (image/audio/mixed content,
-progress, sampling). clap-mcp is a CLI bridge: tools are clap subcommands;
-results are text or JSON only.
+The conformance harness uses **fixed scenario IDs** (e.g.
+`tools-call-simple-text`) that call **reference tool names** from the MCP
+“everything server” contract (e.g. `test_simple_text`, `test_tool_with_image`).
+Those names describe the harness fixture, not generic clap-mcp capabilities — our
+maintainer fixture only implements tools that exercise **shipped** behavior
+(e.g. `test_tool_with_logging`, `test_error_handling`).
 
-* `tools-call-simple-text`, `tools-call-image`, `tools-call-audio`,
-  `tools-call-embedded-resource`, `tools-call-mixed-content`,
-  `tools-call-with-progress`, `tools-call-sampling`
+clap-mcp is a CLI bridge: tools are clap subcommands; results are text or JSON
+only. We do not implement the full reference tool catalog or rich media shapes
+(image/audio/mixed content, progress, sampling).
+
+* `tools-call-simple-text` → `test_simple_text`; `tools-call-image` → image tool;
+  `tools-call-audio`, `tools-call-embedded-resource`, `tools-call-mixed-content`,
+  `tools-call-with-progress`, `tools-call-sampling` — reference media/progress
+  tools
 * `resources-read-binary`, `resources-templates-read`,
   `prompts-get-embedded-resource`, `prompts-get-with-image`
 

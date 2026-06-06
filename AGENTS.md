@@ -43,7 +43,7 @@ Early-stage warning: the crate is pre-stable API (`0.0.4-rc.1`). See
 | `clap-mcp/` | Main library (`lib.rs`, `serve.rs`, `server.rs`, `http.rs`, …) |
 | `clap-mcp/macros/` | `#[derive(ClapMcp)]` proc-macro |
 | `examples/` | Runnable server/client examples; see [examples/README.md](examples/README.md) |
-| `docs/` | HTTP, OAuth, conformance, migration notes |
+| `docs/` | Embedder guides and maintainer notes; see [Documentation layout](#documentation-layout) |
 | `xtask/` | Maintainer tasks (e.g. MCP conformance harness) |
 
 ## Development workflow
@@ -107,15 +107,61 @@ CI runs the gate above on Ubuntu, Windows, and macOS.
   stdio MCP; prefer extending existing helpers in `clap-mcp/tests/common/`.
 * UI tests (`trybuild`) guard macro diagnostics in `clap-mcp/tests/ui/`.
 
+## Documentation layout
+
+**Documentation is part of the API.** Stale or missing docs are a defect, not a
+follow-up. Do not land public API, feature flag, or embedder behavior changes
+without updating the README Documentation index and every affected guide. If you
+add `docs/new-topic.md`, you must add it to [README `#documentation`](README.md#documentation)
+in the same change. If you move or rename sections, grep the repo for broken
+links. **Agents: treating docs as optional is incorrect — fix them before
+claiming the task is complete.**
+
+### What lives where
+
+| Location | Role |
+| --- | --- |
+| [README.md](README.md) | Overview: Usage, Design, **Crate Features**, **Documentation** index (links to all `docs/*.md`), CLI compatibility tutorial, Development |
+| [`docs/*.md`](docs/) | Deep embedder guides and maintainer notes — one topic per file; link back to README `#documentation` |
+| [examples/README.md](examples/README.md) | Runnable examples index; link to relevant `docs/` guides, do not duplicate them |
+| [AGENTS.md](AGENTS.md) | Agent/contributor conventions including this layout |
+
+### `docs/` inventory
+
+Every file below must appear in the README Documentation table.
+
+| File | Audience | Purpose |
+| --- | --- | --- |
+| [docs/custom-content.md](docs/custom-content.md) | Embedders | Custom MCP resources and prompts |
+| [docs/export-skills.md](docs/export-skills.md) | Embedders | `--export-skills`, Agent Skills generation |
+| [docs/execution-safety.md](docs/execution-safety.md) | Embedders | `reinvocation_safe`, skip/requires, dual derive, async embedders |
+| [docs/mcp-tasks.md](docs/mcp-tasks.md) | Embedders | Task-augmented `tools/call`, examples, support matrix |
+| [docs/stateful-tools.md](docs/stateful-tools.md) | Embedders | Shared session state, `parse_or_serve_mcp_with_state` |
+| [docs/security.md](docs/security.md) | Embedders | Schema validation, subprocess trust model |
+| [docs/tool-output.md](docs/tool-output.md) | Embedders | `run` return types, structured output, `output-schema` |
+| [docs/logging.md](docs/logging.md) | Embedders | `tracing` / `log` bridges, MCP notifications |
+| [docs/http.md](docs/http.md) | Embedders | Streamable HTTP listen (`--mcp-http`) |
+| [docs/oauth.md](docs/oauth.md) | Embedders | OAuth client helpers (scaffolding) |
+| [docs/rmcp-migration-notes.md](docs/rmcp-migration-notes.md) | Embedders / maintainers | API migration table, breaking renames |
+| [docs/conformance-baseline.md](docs/conformance-baseline.md) | Maintainers | MCP conformance harness, baseline YAML |
+
 ## Documentation touchpoints
 
-When changing public embedder or derive APIs, update as appropriate:
+When changing **public embedder or derive API**, update **all that apply** in the
+same change:
 
-* [README.md](README.md) — user-facing overview and async embedder section
-* [AGENTS.md](AGENTS.md) — this file; keep design priorities in sync with README
-* [examples/README.md](examples/README.md) — how to run examples
-* [docs/http.md](docs/http.md) — Streamable HTTP listen
-* [docs/rmcp-migration-notes.md](docs/rmcp-migration-notes.md) — API migration table
+* Relevant guide in `docs/` (or add a new file **and** a README Documentation row)
+* [README.md](README.md) — Crate Features bullets, Feature Flags table, CLI
+  compatibility examples, Documentation index
+* [examples/README.md](examples/README.md) — if examples or flags change
+* [docs/rmcp-migration-notes.md](docs/rmcp-migration-notes.md) — breaking renames
+  or API slimming
+* [AGENTS.md](AGENTS.md) — if layout or agent rules change
+
+Common mappings: HTTP listen → `docs/http.md`; logging bridges → `docs/logging.md`;
+execution flags → `docs/execution-safety.md`; MCP tasks → `docs/mcp-tasks.md`;
+stateful derive → `docs/stateful-tools.md`; tool output / schemas →
+`docs/tool-output.md`.
 
 ## Git
 

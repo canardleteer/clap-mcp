@@ -67,7 +67,7 @@ Two patterns for async MCP servers with `share_runtime = true`:
 | **async_sleep_shared** | Derive path: `parse_or_serve_mcp_with` from sync `main` |
 | **async_embedder_serve** | Imperative path: `ServeMcpBuilder::for_cli` + `.serve().await` from `#[tokio::main]` |
 
-See [README Async embedders](../README.md#async-embedders) for runtime selection details.
+See [Async embedders](../docs/execution-safety.md#async-embedders) for runtime selection details.
 
 ## Crash / panic behavior
 
@@ -362,7 +362,9 @@ cargo run -p clap-mcp-examples --bin async_sleep_shared -- --mcp
 ### task_tools_dedicated / task_tools_shared
 
 MCP **task-augmented** `tools/call` with `#[clap_mcp(task_augmented_tools)]` and
-`#[clap_mcp(task)]` on the async sleep subcommand. **task_tools_dedicated** uses
+`#[clap_mcp(task)]` on the async sleep subcommand. See
+[MCP tasks support](../docs/mcp-tasks.md) for the support matrix and derive
+pattern. **task_tools_dedicated** uses
 `share_runtime = false` (dedicated async runtime per call);
 **task_tools_shared** uses `share_runtime = true`. Requires `--features
 tracing`.
@@ -445,7 +447,7 @@ cargo run -p clap-mcp-examples --bin task_parallel_probe_dedicated --features tr
 CLI with `log` crate integration. Uses `ClapMcpLogBridge` — a `log::Log`
 implementation that forwards `log::info!`, `log::debug!`, etc. to MCP clients.
 Note that the `log` crate supports only one global logger; see the
-[main README](../README.md#log-feature) for guidance on multiplexing to disk
+[Logging guide](../docs/logging.md#log-feature) for guidance on multiplexing to disk
 and MCP.
 
 ```bash
