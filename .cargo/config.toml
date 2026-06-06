@@ -1,2 +1,6 @@
 [alias]
 xtask = "run --manifest-path xtask/Cargo.toml --"
+
+# CI runners (especially Windows) occasionally hit crates.io curl resets.
+[net]
+retry = 5
