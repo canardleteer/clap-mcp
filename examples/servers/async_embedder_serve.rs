@@ -11,7 +11,7 @@ mod async_sleep_common;
 
 use async_sleep_common::run_sleep_demo;
 use clap::{CommandFactory, FromArgMatches, Parser};
-use clap_mcp::{AsStructured, ClapMcp, ClapMcpConfigProvider};
+use clap_mcp::{AsStructured, ClapMcp, ClapMcpConfigProvider, CLAP_MCP_STDIO_FLAG_ID};
 
 #[cfg(feature = "tracing")]
 use clap_mcp::{McpListen, ServeMcpBuilder, command_with_mcp_flag};
@@ -64,7 +64,7 @@ async fn main() -> Result<(), clap_mcp::ClapMcpError> {
     let cmd = command_with_mcp_flag(Cli::command());
     let matches = cmd.get_matches();
 
-    if matches.get_flag("mcp") {
+    if matches.get_flag(CLAP_MCP_STDIO_FLAG_ID) {
         ServeMcpBuilder::for_cli::<Cli>(McpListen::Stdio)
             .serve_options(serve_options)
             .serve()

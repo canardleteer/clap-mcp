@@ -81,6 +81,31 @@ behavior for CLIs that previously required a subcommand. Use
 typical struct-root migration reference; **struct_subcommand** demonstrates optional
 subcommands only.
 
+### Shell `--` vs MCP passthrough
+
+| Path | How passthrough works |
+|---|---|
+| **Direct CLI (shell)** | clap handles `--` natively; tokens after the first `--` are not parsed as flags. |
+| **MCP `tools/call`** | No `--` is inserted. Pass trailing tokens as a JSON **array** on a `Vec<String>` field (often with `#[arg(last = true, allow_hyphen_values = true)]`) or as an explicit `--long` list. |
+
+clap-mcp's pre-clap argv checks (MCP stdio, HTTP, export-skills) inspect only tokens **before** the first standalone `"--"`. So `myapp run -- --mcp` does **not** start MCP — `--mcp` is passthrough to a child. Subcommand names in that prefix are honored the same way.
+
+`build_tool_argv` rebuilds named JSON into argv for tool execution. For trailing multi-value positionals (`num_args(1..)` / cargo-style `last` vecs), it inserts `--` before the trailing tokens so clap parses them as values. For hyphen-prefixed tokens, prefer an explicit `#[arg(long)] args: Vec<String>` or `allow_hyphen_values = true` on the trailing field. See **passthrough_args** and **vec_and_flags** in [examples/README.md](examples/README.md).
+
+### Renaming clap-mcp builtin flags
+
+If your app already uses `--mcp` for something else, rename clap-mcp's stdio, HTTP, and export-skills flags via derive attributes or [`ClapMcpBuiltinFlags`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpBuiltinFlags.html):
+
+| Builtin | Default long | Derive attr | Stable clap arg id |
+|---|---|---|---|
+| stdio MCP | `--mcp` | `mcp_flag = "…"` | `CLAP_MCP_STDIO_FLAG_ID` |
+| HTTP MCP | `--mcp-http` | `mcp_http_flag = "…"` | `CLAP_MCP_HTTP_FLAG_ID` |
+| export skills | `--export-skills` | `export_skills_flag = "…"` | `CLAP_MCP_EXPORT_SKILLS_FLAG_ID` |
+
+clap matches by **stable id** internally; argv uses the configured **long** name. Existing apps keep the defaults with no code changes. See **custom_mcp_flags** in [examples/README.md](examples/README.md).
+
+Imperative helpers: `command_with_mcp_flag_with_flags(cmd, &flags)` (and export-skills / HTTP variants). Default wrappers unchanged.
+
 ### Imperative (existing clap CLI)
 
 If you already have a `clap::Command`-based CLI, you can add MCP support in one

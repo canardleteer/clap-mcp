@@ -114,6 +114,12 @@ enum Cli {
     StructSubcommandRequired,
     /// Test the optional_commands_and_args example (skip, requires)
     OptionalCommandsAndArgs,
+    /// Test passthrough / trailing-arg patterns (in-process)
+    PassthroughArgs,
+    /// Test passthrough patterns (subprocess reinvocation)
+    PassthroughArgsSubprocess,
+    /// Test renamed clap-mcp stdio flag (--modelcontextprotocol)
+    CustomMcpFlags,
     /// Test the result_output example (Result<T, E>, error responses)
     ResultOutput,
     /// Test the structured output example
@@ -143,6 +149,11 @@ fn server_args(example: &str) -> Vec<String> {
         "log_bridge" => Some("log"),
         _ => None,
     };
+    let mcp_flag = if example == "custom_mcp_flags" {
+        "--modelcontextprotocol"
+    } else {
+        "--mcp"
+    };
     let mut args = vec![
         "run".into(),
         "-p".into(),
@@ -155,7 +166,7 @@ fn server_args(example: &str) -> Vec<String> {
         args.push(f.into());
     }
     args.push("--".into());
-    args.push("--mcp".into());
+    args.push(mcp_flag.into());
     args
 }
 
@@ -201,6 +212,10 @@ async fn run_client(example: &str, json: bool) -> Result<(), rmcp::RmcpError> {
         run_subcommands_tests(&client).await?;
     } else if example == "optional_commands_and_args" {
         run_optional_commands_tests(&client).await?;
+    } else if example == "passthrough_args" || example == "passthrough_args_subprocess" {
+        run_passthrough_tests(&client).await?;
+    } else if example == "custom_mcp_flags" {
+        run_custom_mcp_flags_tests(&client).await?;
     } else if example == "structured" {
         run_structured_tests(&client).await?;
     } else if example == "async_sleep"
@@ -293,6 +308,40 @@ async fn run_optional_commands_tests(
     Ok(())
 }
 
+async fn run_passthrough_tests(
+    client: &rmcp::service::RunningService<RoleClient, ExampleClientHandler>,
+) -> Result<(), rmcp::ServiceError> {
+    let mut exec_args = serde_json::Map::new();
+    exec_args.insert("dry_run".into(), serde_json::json!(true));
+    exec_args.insert("command".into(), serde_json::json!(["-v", "hello"]));
+    let exec = client
+        .call_tool(CallToolRequestParams::new("exec").with_arguments(exec_args))
+        .await?;
+    println!("\nCall 'exec' with trailing command=[\"-v\", \"hello\"]:");
+    println!("  {}", tool_text(&exec));
+
+    let mut forward_args = serde_json::Map::new();
+    forward_args.insert("args".into(), serde_json::json!(["foo", "bar"]));
+    let forward = client
+        .call_tool(CallToolRequestParams::new("forward").with_arguments(forward_args))
+        .await?;
+    println!("\nCall 'forward' with args:");
+    println!("  {}", tool_text(&forward));
+
+    Ok(())
+}
+
+async fn run_custom_mcp_flags_tests(
+    client: &rmcp::service::RunningService<RoleClient, ExampleClientHandler>,
+) -> Result<(), rmcp::ServiceError> {
+    let tools = client.list_tools(None).await?.tools;
+    println!("\nTools (stdio via --modelcontextprotocol):");
+    for t in &tools {
+        println!("  {}: {}", t.name, t.description.as_deref().unwrap_or(""));
+    }
+    Ok(())
+}
+
 async fn run_async_sleep_tests(
     client: &rmcp::service::RunningService<RoleClient, ExampleClientHandler>,
 ) -> Result<(), rmcp::ServiceError> {
@@ -357,6 +406,9 @@ async fn main() {
         Cli::StructSubcommand => "struct_subcommand",
         Cli::StructSubcommandRequired => "struct_subcommand_required",
         Cli::OptionalCommandsAndArgs => "optional_commands_and_args",
+        Cli::PassthroughArgs => "passthrough_args",
+        Cli::PassthroughArgsSubprocess => "passthrough_args_subprocess",
+        Cli::CustomMcpFlags => "custom_mcp_flags",
         Cli::ResultOutput => "result_output",
         Cli::Structured => "structured",
         #[cfg(feature = "tracing")]

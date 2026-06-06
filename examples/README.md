@@ -41,7 +41,8 @@ public `ClapMcpServer` / `build_clap_mcp_server`. See
   log_bridge, async_sleep, async_sleep_shared, **async_embedder_serve**,
   **task_tools_dedicated**,
   **task_tools_shared**, **subprocess_exit_handling**, **panic_catch_opt_in**,
-  **custom_resources_prompts**, **vec_and_flags**, **stateful_counter**)
+  **custom_resources_prompts**, **vec_and_flags**, **passthrough_args**,
+  **passthrough_args_subprocess**, **custom_mcp_flags**, **stateful_counter**)
 
 ## Async embedders
 
@@ -145,6 +146,42 @@ cargo run -p clap-mcp-examples --bin vec_and_flags -- run --files a --files b --
 
 # MCP server mode (inspect tool schema: files and versions = array, dry_run = boolean, verbose = integer)
 cargo run -p clap-mcp-examples --bin vec_and_flags -- --mcp
+```
+
+### passthrough_args / passthrough_args_subprocess
+
+Demonstrates **trailing passthrough** for shell and MCP:
+
+| Pattern | clap | MCP |
+|---|---|---|
+| `exec` | `#[arg(last = true, allow_hyphen_values = true)] command: Vec<String>` | Pass `command` as JSON array (hyphen tokens OK) |
+| `forward` | `#[arg(long)] args: Vec<String>` | Pass `args` as JSON array |
+| `run` | `#[clap_mcp(skip)]` on internal-only field | `internal` hidden from tool schema |
+
+**passthrough_args** uses in-process execution (`reinvocation_safe = true`);
+**passthrough_args_subprocess** uses subprocess reinvocation. Cross-link:
+**vec_and_flags** for list/flag schema shapes.
+
+```bash
+# Shell: cargo-style trailing args after --
+cargo run -p clap-mcp-examples --bin passthrough_args -- exec --dry-run -- echo hello
+
+# Shell: --mcp after -- is passthrough, not MCP server startup
+cargo run -p clap-mcp-examples --bin passthrough_args -- exec -- --mcp
+
+# MCP server
+cargo run -p clap-mcp-examples --bin passthrough_args -- --mcp
+```
+
+### custom_mcp_flags
+
+When your CLI already has `--mcp` for an unrelated purpose, rename clap-mcp's
+stdio flag (e.g. `--modelcontextprotocol`) via `#[clap_mcp(mcp_flag = "modelcontextprotocol")]`.
+User `--mcp` runs normal CLI; `--modelcontextprotocol` starts the MCP server.
+
+```bash
+cargo run -p clap-mcp-examples --bin custom_mcp_flags -- --mcp
+cargo run -p clap-mcp-examples --bin custom_mcp_flags -- --modelcontextprotocol
 ```
 
 ## Running Server Examples Directly
@@ -413,6 +450,10 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **struct_subcommand_required** | `servers/struct_subcommand_required.rs` | Required subcommand struct root (recommended migration) |
 | **struct_subcommand** | `servers/struct_subcommand.rs` | Optional subcommand struct root (clap demo only)         |
 | **optional_commands_and_args** | `servers/optional_commands_and_args.rs` | `#[clap_mcp(skip)]`, `#[clap_mcp(requires)]` (arg and variant-level) |
+| **passthrough_args** | `servers/passthrough_args.rs` | Trailing `Vec` passthrough (in-process); see `passthrough_common.rs` |
+| **passthrough_args_subprocess** | `servers/passthrough_args_subprocess.rs` | Same patterns, subprocess reinvocation |
+| **custom_mcp_flags** | `servers/custom_mcp_flags.rs` | Renamed stdio flag when `--mcp` is already taken |
+| **vec_and_flags** | `servers/vec_and_flags.rs` | Vec/list and flag/count args in MCP schema |
 | **result_output**  | `servers/result_output.rs`      | `#[clap_mcp_output_from]` with `Result<T, E>`, `IntoClapMcpToolError` for structured errors |
 | **structured**     | `servers/structured.rs`         | Structured output via `#[clap_mcp_output_from]` and `AsStructured<T>` |
 | **tracing_bridge** | `servers/tracing_bridge.rs`  | Tracing integration, MCP log forwarding, prompts   |
