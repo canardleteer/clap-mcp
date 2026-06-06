@@ -16,6 +16,8 @@ priorities below.
 * Work well enough with guardrails for the common case (~95%).
 * Express structured CLI outcomes naturally via MCP when available.
 * Support structured logging in MCP responses when the CLI provides it.
+* Stay minimally opinionated when the alternative is complicating the primary
+  public API.
 * Favor service-shaped CLIs without excluding simpler ones.
 
 **Additional priorities for this codebase:**
