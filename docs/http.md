@@ -13,13 +13,16 @@ clap-mcp = { version = "0.0.4-rc.1", features = ["derive", "http"] }
 Derive `ClapMcp` on your CLI type and call
 [`ParseOrServeMcp::parse_or_serve_mcp`] or
 [`parse_or_serve_mcp_with`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.parse_or_serve_mcp_with.html).
-clap-mcp adds global flags `--mcp` (stdio) and `--mcp-http` (HTTP).
+clap-mcp adds global flags `--mcp` (stdio) and `--mcp-http` (HTTP) by default.
+Rename them with `#[clap_mcp(mcp_flag = "…", mcp_http_flag = "…")]` or
+[`ClapMcpBuiltinFlags`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpBuiltinFlags.html)
+when they conflict with your CLI.
 
 ## Listen address resolution
 
 Precedence (first match wins):
 
-1. `--mcp-http=HOST:PORT` or `--mcp-http HOST:PORT`
+1. `--mcp-http=HOST:PORT` or `--mcp-http HOST:PORT` (or your configured HTTP long name)
 2. **`--mcp-http` alone** → environment (see below)
 3. `CLAP_MCP_HTTP_LISTEN=HOST:PORT`
    ([`MCP_HTTP_LISTEN_ENV`](https://docs.rs/clap-mcp/latest/clap_mcp/constant.MCP_HTTP_LISTEN_ENV.html))

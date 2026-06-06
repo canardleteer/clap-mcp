@@ -60,6 +60,18 @@ name = "struct_subcommand_required"
 path = "servers/struct_subcommand_required.rs"
 
 [[bin]]
+name = "passthrough_args"
+path = "servers/passthrough_args.rs"
+
+[[bin]]
+name = "passthrough_args_subprocess"
+path = "servers/passthrough_args_subprocess.rs"
+
+[[bin]]
+name = "custom_mcp_flags"
+path = "servers/custom_mcp_flags.rs"
+
+[[bin]]
 name = "optional_commands_and_args"
 path = "servers/optional_commands_and_args.rs"
 

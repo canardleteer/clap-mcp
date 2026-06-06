@@ -50,6 +50,15 @@ pub async fn launch_example_with_args(
     extra_args: &[&str],
     features: Option<&str>,
 ) -> Result<ExampleClient, rmcp::RmcpError> {
+    launch_example_with_stdio_flag(bin, extra_args, features, "--mcp").await
+}
+
+pub async fn launch_example_with_stdio_flag(
+    bin: &str,
+    extra_args: &[&str],
+    features: Option<&str>,
+    stdio_flag: &str,
+) -> Result<ExampleClient, rmcp::RmcpError> {
     {
         let _guard = BUILD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut cmd = std::process::Command::new("cargo");
@@ -69,7 +78,7 @@ pub async fn launch_example_with_args(
             for arg in extra_args {
                 cmd.arg(arg);
             }
-            cmd.arg("--mcp");
+            cmd.arg(stdio_flag);
         }),
     )
     .map_err(rmcp::RmcpError::transport_creation::<TokioChildProcess>)?;

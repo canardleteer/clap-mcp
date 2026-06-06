@@ -233,6 +233,40 @@ struct TestRootSkipWhenSubcommands {
     command: Option<TestStructOptionalCommands>,
 }
 
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(
+    reinvocation_safe,
+    parallel_safe = false,
+    mcp_flag = "modelcontextprotocol"
+)]
+#[clap_mcp_output_from = "run_custom_mcp_flag"]
+#[command(name = "test-cli-custom-mcp-flag")]
+enum TestCliCustomMcpFlag {
+    Ping,
+}
+
+fn run_custom_mcp_flag(cmd: TestCliCustomMcpFlag) -> String {
+    match cmd {
+        TestCliCustomMcpFlag::Ping => "pong".to_string(),
+    }
+}
+
+#[test]
+fn test_custom_mcp_flag_derive_sets_builtin_flags() {
+    let config = TestCliCustomMcpFlag::clap_mcp_config();
+    assert_eq!(config.builtin_flags.stdio_long, "modelcontextprotocol");
+    assert_eq!(
+        config.builtin_flags.export_skills_long,
+        clap_mcp::EXPORT_SKILLS_FLAG_LONG
+    );
+}
+
+#[test]
+fn test_default_derive_builtin_flags_unchanged() {
+    let config = TestCliDefaults::clap_mcp_config();
+    assert_eq!(config.builtin_flags.stdio_long, clap_mcp::MCP_FLAG_LONG);
+}
+
 #[test]
 fn test_config_default() {
     let config = ClapMcpConfig::default();

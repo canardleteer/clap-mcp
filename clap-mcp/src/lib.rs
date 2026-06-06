@@ -96,6 +96,19 @@ macro_rules! clap_mcp_main {
 /// Long flag that triggers MCP server mode. Add to your CLI via [`command_with_mcp_flag`].
 pub const MCP_FLAG_LONG: &str = "mcp";
 
+/// Stable clap arg id for the stdio MCP flag (internal; [`ClapMcpBuiltinFlags::stdio_long`] is user-facing).
+pub const CLAP_MCP_STDIO_FLAG_ID: &str = "clap_mcp_stdio";
+
+/// Stable clap arg id for the HTTP MCP flag (`http` feature).
+#[cfg(feature = "http")]
+pub const CLAP_MCP_HTTP_FLAG_ID: &str = "clap_mcp_http";
+
+/// Stable clap arg id for the export-skills flag.
+pub const CLAP_MCP_EXPORT_SKILLS_FLAG_ID: &str = "clap_mcp_export_skills";
+
+/// Legacy arg id used before stable ids; still recognized in [`matches_stdio_flag`].
+pub(crate) const CLAP_MCP_STDIO_FLAG_ID_LEGACY: &str = "mcp";
+
 /// Long flag for Streamable HTTP MCP server (`http` feature).
 #[cfg(feature = "http")]
 pub const MCP_HTTP_FLAG_LONG: &str = "mcp-http";
@@ -114,6 +127,54 @@ pub const MCP_HTTP_PORT_ENV: &str = "CLAP_MCP_HTTP_PORT";
 
 /// Long flag that triggers [Agent Skills](https://agentskills.io/specification) export (generates SKILL.md). Add via [`command_with_export_skills_flag`].
 pub const EXPORT_SKILLS_FLAG_LONG: &str = "export-skills";
+
+/// User-facing long names for clap-mcp builtin global flags (stdio, HTTP, export-skills).
+///
+/// Override via `#[clap_mcp(mcp_flag = "...")]` on the derive or [`ClapMcpConfig::builtin_flags`]
+/// when your CLI already uses `--mcp` for something else. Values must be `'static` str literals
+/// (clap stores long names with static lifetime).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClapMcpBuiltinFlags {
+    /// Long name for stdio MCP (default [`MCP_FLAG_LONG`]).
+    pub stdio_long: &'static str,
+    /// Long name for HTTP MCP (default [`MCP_HTTP_FLAG_LONG`], `http` feature).
+    #[cfg(feature = "http")]
+    pub http_long: &'static str,
+    /// Long name for export-skills (default [`EXPORT_SKILLS_FLAG_LONG`]).
+    pub export_skills_long: &'static str,
+}
+
+impl Default for ClapMcpBuiltinFlags {
+    fn default() -> Self {
+        Self {
+            stdio_long: MCP_FLAG_LONG,
+            #[cfg(feature = "http")]
+            http_long: MCP_HTTP_FLAG_LONG,
+            export_skills_long: EXPORT_SKILLS_FLAG_LONG,
+        }
+    }
+}
+
+impl ClapMcpBuiltinFlags {
+    /// Override the stdio MCP flag long name (without `--`).
+    pub const fn with_stdio_long(mut self, long: &'static str) -> Self {
+        self.stdio_long = long;
+        self
+    }
+
+    /// Override the export-skills flag long name (without `--`).
+    pub const fn with_export_skills_long(mut self, long: &'static str) -> Self {
+        self.export_skills_long = long;
+        self
+    }
+
+    /// Override the HTTP MCP flag long name (`http` feature).
+    #[cfg(feature = "http")]
+    pub const fn with_http_long(mut self, long: &'static str) -> Self {
+        self.http_long = long;
+        self
+    }
+}
 
 /// URI for the clap schema resource exposed by the MCP server.
 pub const MCP_RESOURCE_URI_SCHEMA: &str = "clap://schema";
@@ -615,6 +676,9 @@ pub struct ClapMcpConfig {
     /// false` (typically with `Option<Commands>`) if clap must accept `--mcp` without a subcommand
     /// token.
     pub allow_mcp_without_subcommand: bool,
+
+    /// Long names for clap-mcp builtin global flags (`--mcp`, `--mcp-http`, `--export-skills`).
+    pub builtin_flags: ClapMcpBuiltinFlags,
 }
 
 impl Default for ClapMcpConfig {
@@ -625,6 +689,7 @@ impl Default for ClapMcpConfig {
             share_runtime: false,
             catch_in_process_panics: false,
             allow_mcp_without_subcommand: true,
+            builtin_flags: ClapMcpBuiltinFlags::default(),
         }
     }
 }
@@ -876,12 +941,69 @@ impl ClapCommand {
     }
 }
 
-/// Arg IDs that are omitted from MCP tool arguments (built-in / default options).
+/// Arg prefix before the first standalone `--` (clap end-of-options). Passthrough tokens after `--` are excluded.
+pub(crate) fn argv_before_end_of_opts(args: &[String]) -> &[String] {
+    match args.iter().position(|a| a == "--") {
+        Some(i) => &args[..i],
+        None => args,
+    }
+}
+
+fn argv_has_long_flag(prefix: &[String], long: &str) -> bool {
+    let flag = format!("--{long}");
+    let flag_eq_prefix = format!("--{long}=");
+    prefix
+        .iter()
+        .any(|a| a.as_str() == flag || a.starts_with(&flag_eq_prefix))
+}
+
+fn command_has_arg_id_or_long(cmd: &Command, id: &str, long: &str) -> bool {
+    cmd.get_arguments().any(|a| {
+        a.get_id() == id
+            || a.get_id() == CLAP_MCP_STDIO_FLAG_ID_LEGACY && long == MCP_FLAG_LONG
+            || a.get_long().is_some_and(|l| l == long)
+    })
+}
+
+pub(crate) fn matches_stdio_flag(matches: &clap::ArgMatches, _flags: &ClapMcpBuiltinFlags) -> bool {
+    matches.get_flag(CLAP_MCP_STDIO_FLAG_ID)
+}
+
+#[cfg(feature = "http")]
+pub(crate) fn matches_http_flag(matches: &clap::ArgMatches, flags: &ClapMcpBuiltinFlags) -> bool {
+    matches.contains_id(CLAP_MCP_HTTP_FLAG_ID)
+        || (flags.http_long == MCP_HTTP_FLAG_LONG && matches.contains_id(MCP_HTTP_FLAG_LONG))
+}
+
+/// Arg IDs omitted from MCP tool arguments (built-in / clap-mcp global flags).
 pub(crate) fn is_builtin_arg(id: &str) -> bool {
+    is_clap_mcp_builtin_arg_id(id)
+}
+
+pub(crate) fn is_clap_mcp_builtin_arg_id(id: &str) -> bool {
     matches!(
         id,
-        "help" | "version" | MCP_FLAG_LONG | EXPORT_SKILLS_FLAG_LONG
-    )
+        "help"
+            | "version"
+            | CLAP_MCP_STDIO_FLAG_ID
+            | CLAP_MCP_EXPORT_SKILLS_FLAG_ID
+            | EXPORT_SKILLS_FLAG_LONG
+    ) || {
+        #[cfg(feature = "http")]
+        {
+            id == CLAP_MCP_HTTP_FLAG_ID || id == MCP_HTTP_FLAG_LONG
+        }
+        #[cfg(not(feature = "http"))]
+        {
+            let _ = id;
+            false
+        }
+    }
+}
+
+fn is_omitted_schema_clap_arg(arg: &clap::Arg) -> bool {
+    let id = arg.get_id().as_str();
+    is_clap_mcp_builtin_arg_id(id)
 }
 
 /// Builds MCP tools from a clap schema with execution config and metadata.
@@ -1120,17 +1242,19 @@ fn mcp_action_description_hint(arg: &ClapArg) -> Option<String> {
 /// let cmd = command_with_mcp_flag(cmd);
 /// assert!(cmd.get_arguments().any(|a| a.get_long() == Some("mcp")));
 /// ```
-pub fn command_with_mcp_flag(mut cmd: Command) -> Command {
-    let already = cmd
-        .get_arguments()
-        .any(|a| a.get_long().is_some_and(|l| l == MCP_FLAG_LONG));
-    if already {
+pub fn command_with_mcp_flag(cmd: Command) -> Command {
+    command_with_mcp_flag_with_flags(cmd, &ClapMcpBuiltinFlags::default())
+}
+
+/// Like [`command_with_mcp_flag`] but uses `flags.stdio_long` for the user-facing long name.
+pub fn command_with_mcp_flag_with_flags(mut cmd: Command, flags: &ClapMcpBuiltinFlags) -> Command {
+    if command_has_arg_id_or_long(&cmd, CLAP_MCP_STDIO_FLAG_ID, flags.stdio_long) {
         return cmd;
     }
 
     cmd = cmd.arg(
-        Arg::new(MCP_FLAG_LONG)
-            .long(MCP_FLAG_LONG)
+        Arg::new(CLAP_MCP_STDIO_FLAG_ID)
+            .long(flags.stdio_long)
             .help("Run an MCP server over stdio that exposes this CLI's clap schema")
             .action(ArgAction::SetTrue)
             .global(true),
@@ -1153,17 +1277,26 @@ pub fn command_with_mcp_flag(mut cmd: Command) -> Command {
 /// let cmd = Command::new("myapp");
 /// let cmd = command_with_export_skills_flag(cmd);
 /// ```
-pub fn command_with_export_skills_flag(mut cmd: Command) -> Command {
-    let already = cmd
-        .get_arguments()
-        .any(|a| a.get_long().is_some_and(|l| l == EXPORT_SKILLS_FLAG_LONG));
-    if already {
+pub fn command_with_export_skills_flag(cmd: Command) -> Command {
+    command_with_export_skills_flag_with_flags(cmd, &ClapMcpBuiltinFlags::default())
+}
+
+/// Like [`command_with_export_skills_flag`] but uses `flags.export_skills_long`.
+pub fn command_with_export_skills_flag_with_flags(
+    mut cmd: Command,
+    flags: &ClapMcpBuiltinFlags,
+) -> Command {
+    if command_has_arg_id_or_long(
+        &cmd,
+        CLAP_MCP_EXPORT_SKILLS_FLAG_ID,
+        flags.export_skills_long,
+    ) {
         return cmd;
     }
 
     cmd = cmd.arg(
-        Arg::new(EXPORT_SKILLS_FLAG_LONG)
-            .long(EXPORT_SKILLS_FLAG_LONG)
+        Arg::new(CLAP_MCP_EXPORT_SKILLS_FLAG_ID)
+            .long(flags.export_skills_long)
             .value_name("DIR")
             .help("Generate Agent Skills (SKILL.md) from tools, resources, and prompts, then exit")
             .action(ArgAction::Set)
@@ -1176,26 +1309,40 @@ pub fn command_with_export_skills_flag(mut cmd: Command) -> Command {
 
 /// Adds both `--mcp` and `--export-skills` flags to the command.
 /// Use this so schema extraction omits both; check for export-skills before mcp in the parse flow.
-pub fn command_with_mcp_and_export_skills_flags(mut cmd: Command) -> Command {
-    cmd = command_with_mcp_flag(cmd);
+pub fn command_with_mcp_and_export_skills_flags(cmd: Command) -> Command {
+    command_with_mcp_and_export_skills_flags_with_flags(cmd, &ClapMcpBuiltinFlags::default())
+}
+
+/// Like [`command_with_mcp_and_export_skills_flags`] with custom builtin long names.
+pub fn command_with_mcp_and_export_skills_flags_with_flags(
+    mut cmd: Command,
+    flags: &ClapMcpBuiltinFlags,
+) -> Command {
+    cmd = command_with_mcp_flag_with_flags(cmd, flags);
     #[cfg(feature = "http")]
     {
-        cmd = command_with_mcp_http_flag(cmd);
+        cmd = command_with_mcp_http_flag_with_flags(cmd, flags);
     }
-    command_with_export_skills_flag(cmd)
+    command_with_export_skills_flag_with_flags(cmd, flags)
 }
+
 #[cfg(feature = "http")]
-fn command_with_mcp_http_flag(mut cmd: Command) -> Command {
-    let already = cmd
-        .get_arguments()
-        .any(|a| a.get_long().is_some_and(|l| l == MCP_HTTP_FLAG_LONG));
-    if already {
+pub fn command_with_mcp_http_flag(cmd: Command) -> Command {
+    command_with_mcp_http_flag_with_flags(cmd, &ClapMcpBuiltinFlags::default())
+}
+
+#[cfg(feature = "http")]
+pub fn command_with_mcp_http_flag_with_flags(
+    mut cmd: Command,
+    flags: &ClapMcpBuiltinFlags,
+) -> Command {
+    if command_has_arg_id_or_long(&cmd, CLAP_MCP_HTTP_FLAG_ID, flags.http_long) {
         return cmd;
     }
 
     cmd = cmd.arg(
-        Arg::new(MCP_HTTP_FLAG_LONG)
-            .long(MCP_HTTP_FLAG_LONG)
+        Arg::new(CLAP_MCP_HTTP_FLAG_ID)
+            .long(flags.http_long)
             .value_name("ADDR")
             .help("Run an MCP server over Streamable HTTP at ADDR (e.g. 127.0.0.1:8080)")
             .global(true),
@@ -1222,15 +1369,21 @@ pub(crate) fn mcp_http_listen_from_env() -> Option<String> {
 }
 
 #[cfg(feature = "http")]
-pub(crate) fn argv_mcp_http_listen_from_args(args: &[String]) -> Option<String> {
-    for (i, arg) in args.iter().enumerate() {
-        if arg == "--mcp-http" {
-            if let Some(val) = args.get(i + 1).filter(|s| !s.starts_with('-')) {
+pub(crate) fn argv_mcp_http_listen_from_args(
+    args: &[String],
+    flags: &ClapMcpBuiltinFlags,
+) -> Option<String> {
+    let prefix = argv_before_end_of_opts(args);
+    let http_flag = format!("--{}", flags.http_long);
+    let http_prefix = format!("--{}=", flags.http_long);
+    for (i, arg) in prefix.iter().enumerate() {
+        if arg == &http_flag {
+            if let Some(val) = prefix.get(i + 1).filter(|s| !s.starts_with('-')) {
                 return Some(val.clone());
             }
             return mcp_http_listen_from_env();
         }
-        if let Some(addr) = arg.strip_prefix("--mcp-http=") {
+        if let Some(addr) = arg.strip_prefix(&http_prefix) {
             if addr.is_empty() {
                 return mcp_http_listen_from_env();
             }
@@ -1250,25 +1403,32 @@ fn parse_mcp_http_listen(raw: &str) -> Result<std::net::SocketAddr, ClapMcpError
 }
 
 #[cfg(feature = "http")]
-fn mcp_http_listen_error_message() -> String {
+fn mcp_http_listen_error_message(flags: &ClapMcpBuiltinFlags) -> String {
     format!(
-        "`--mcp-http` requires HOST:PORT, or set {MCP_HTTP_LISTEN_ENV}, or {MCP_HTTP_BIND_ENV} + {MCP_HTTP_PORT_ENV}"
+        "`--{}` requires HOST:PORT, or set {MCP_HTTP_LISTEN_ENV}, or {MCP_HTTP_BIND_ENV} + {MCP_HTTP_PORT_ENV}",
+        flags.http_long
     )
 }
 
 #[cfg(feature = "http")]
 fn resolve_mcp_http_listen_from_args(
     args: &[String],
+    flags: &ClapMcpBuiltinFlags,
 ) -> Result<Option<std::net::SocketAddr>, ClapMcpError> {
-    let wants_http = args
+    let prefix = argv_before_end_of_opts(args);
+    let http_flag = format!("--{}", flags.http_long);
+    let http_prefix = format!("--{}=", flags.http_long);
+    let wants_http = prefix
         .iter()
-        .any(|a| a == "--mcp-http" || a.starts_with("--mcp-http="));
+        .any(|a| a == &http_flag || a.starts_with(&http_prefix));
     if !wants_http {
         return Ok(None);
     }
-    match argv_mcp_http_listen_from_args(args) {
+    match argv_mcp_http_listen_from_args(args, flags) {
         Some(raw) if !raw.is_empty() => parse_mcp_http_listen(&raw).map(Some),
-        _ => Err(ClapMcpError::InvalidConfig(mcp_http_listen_error_message())),
+        _ => Err(ClapMcpError::InvalidConfig(mcp_http_listen_error_message(
+            flags,
+        ))),
     }
 }
 
@@ -1403,57 +1563,67 @@ fn serve_prepared_mcp_blocking(
 pub(crate) fn argv_requests_mcp_http_without_subcommand_from_args(
     args: &[String],
     cmd: &Command,
+    flags: &ClapMcpBuiltinFlags,
 ) -> bool {
+    let prefix = argv_before_end_of_opts(args);
     let subcommand_names: std::collections::HashSet<String> = cmd
         .get_subcommands()
         .map(|s| s.get_name().to_string())
         .collect();
-    let has_http = argv_mcp_http_listen_from_args(args).is_some();
-    let has_subcommand = args.iter().any(|a| subcommand_names.contains(a.as_str()));
+    let http_flag = format!("--{}", flags.http_long);
+    let http_prefix = format!("--{}=", flags.http_long);
+    let has_http = prefix
+        .iter()
+        .any(|a| a == &http_flag || a.starts_with(&http_prefix));
+    let has_subcommand = prefix.iter().any(|a| subcommand_names.contains(a.as_str()));
     has_http && !has_subcommand
 }
 
-/// Returns true if argv contains `--mcp` and no token is a root-level subcommand name.
-/// Used to start MCP server before calling get_matches() when subcommand_required would otherwise fail.
-fn argv_requests_mcp_without_subcommand(cmd: &Command) -> bool {
+/// Returns true if argv contains the stdio MCP flag and no token before `--` is a subcommand name.
+fn argv_requests_mcp_without_subcommand(cmd: &Command, flags: &ClapMcpBuiltinFlags) -> bool {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    argv_requests_mcp_without_subcommand_from_args(&args, cmd)
+    argv_requests_mcp_without_subcommand_from_args(&args, cmd, flags)
 }
 
 /// Pure helper for argv_requests_mcp_without_subcommand; testable with arbitrary args.
 pub(crate) fn argv_requests_mcp_without_subcommand_from_args(
     args: &[String],
     cmd: &Command,
+    flags: &ClapMcpBuiltinFlags,
 ) -> bool {
+    let prefix = argv_before_end_of_opts(args);
     let subcommand_names: std::collections::HashSet<String> = cmd
         .get_subcommands()
         .map(|s| s.get_name().to_string())
         .collect();
-    let has_mcp = args.iter().any(|a| a == "--mcp");
-    let has_subcommand = args.iter().any(|a| subcommand_names.contains(a.as_str()));
+    let has_mcp = argv_has_long_flag(prefix, flags.stdio_long);
+    let has_subcommand = prefix.iter().any(|a| subcommand_names.contains(a.as_str()));
     has_mcp && !has_subcommand
 }
 
-/// Returns `Some(None)` if argv contains `--export-skills` with no value (use default dir),
-/// `Some(Some(path))` if `--export-skills=DIR` is present, and `None` if the flag is not present.
-fn argv_export_skills_dir() -> Option<Option<std::path::PathBuf>> {
+fn argv_export_skills_dir(flags: &ClapMcpBuiltinFlags) -> Option<Option<std::path::PathBuf>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    argv_export_skills_dir_from_args(&args)
+    argv_export_skills_dir_from_args(&args, flags)
 }
 
 /// Pure helper for argv_export_skills_dir; testable with arbitrary args.
 pub(crate) fn argv_export_skills_dir_from_args(
     args: &[String],
+    flags: &ClapMcpBuiltinFlags,
 ) -> Option<Option<std::path::PathBuf>> {
-    for (i, arg) in args.iter().enumerate() {
-        if arg == "--export-skills" {
+    let prefix = argv_before_end_of_opts(args);
+    let export_flag = format!("--{}", flags.export_skills_long);
+    let export_prefix = format!("--{}=", flags.export_skills_long);
+    for (i, arg) in prefix.iter().enumerate() {
+        if arg == &export_flag {
             return Some(
-                args.get(i + 1)
+                prefix
+                    .get(i + 1)
                     .filter(|s| !s.starts_with('-'))
                     .map(std::path::PathBuf::from),
             );
         }
-        if let Some(dir) = arg.strip_prefix("--export-skills=") {
+        if let Some(dir) = arg.strip_prefix(&export_prefix) {
             return Some(Some(std::path::PathBuf::from(dir)));
         }
     }
@@ -1503,17 +1673,7 @@ fn command_to_schema_with_metadata(
 ) -> ClapCommand {
     let mut args: Vec<ClapArg> = cmd
         .get_arguments()
-        .filter(|a| {
-            let long = a.get_long();
-            if long == Some(MCP_FLAG_LONG) || long == Some(EXPORT_SKILLS_FLAG_LONG) {
-                return false;
-            }
-            #[cfg(feature = "http")]
-            if long == Some(MCP_HTTP_FLAG_LONG) {
-                return false;
-            }
-            true
-        })
+        .filter(|a| !is_omitted_schema_clap_arg(a))
         .map(arg_to_schema)
         .collect();
 
@@ -1598,9 +1758,10 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
     metadata: &ClapMcpSchemaMetadata,
 ) -> clap::ArgMatches {
     let schema = schema_from_command_with_metadata(&cmd, metadata);
-    let cmd = command_with_mcp_and_export_skills_flags(cmd);
+    let flags = config.builtin_flags;
+    let cmd = command_with_mcp_and_export_skills_flags_with_flags(cmd, &flags);
 
-    if let Some(maybe_dir) = argv_export_skills_dir() {
+    if let Some(maybe_dir) = argv_export_skills_dir(&flags) {
         let tools = tools_from_schema_with_metadata(&schema, &config, metadata);
         let output_dir = maybe_dir.unwrap_or_else(|| PathBuf::from(".agents").join("skills"));
         let app_name = schema.root.name.as_str();
@@ -1621,11 +1782,11 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
     }
 
     if config.allow_mcp_without_subcommand
-        && (argv_requests_mcp_without_subcommand(&cmd) || {
+        && (argv_requests_mcp_without_subcommand(&cmd, &flags) || {
             #[cfg(feature = "http")]
             {
                 let args: Vec<String> = std::env::args().skip(1).collect();
-                argv_requests_mcp_http_without_subcommand_from_args(&args, &cmd)
+                argv_requests_mcp_http_without_subcommand_from_args(&args, &cmd, &flags)
             }
             #[cfg(not(feature = "http"))]
             {
@@ -1643,7 +1804,7 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
         #[cfg(feature = "http")]
         let http_listen = {
             let args: Vec<String> = std::env::args().skip(1).collect();
-            resolve_mcp_http_listen_from_args(&args).unwrap_or_else(|e| {
+            resolve_mcp_http_listen_from_args(&args, &flags).unwrap_or_else(|e| {
                 eprintln!("{e}");
                 std::process::exit(2);
             })
@@ -1667,21 +1828,38 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
     }
 
     let matches = cmd.get_matches();
-    let mcp_requested = matches.get_flag(MCP_FLAG_LONG);
+    let mcp_requested = matches_stdio_flag(&matches, &flags);
     #[cfg(feature = "http")]
-    let http_listen = matches
-        .get_one::<String>(MCP_HTTP_FLAG_LONG)
-        .map(|s| parse_mcp_http_listen(s))
-        .transpose()
-        .unwrap_or_else(|e| {
-            eprintln!("{e}");
-            std::process::exit(2);
-        });
+    let http_listen = if matches_http_flag(&matches, &flags) {
+        matches
+            .get_one::<String>(CLAP_MCP_HTTP_FLAG_ID)
+            .or_else(|| {
+                if flags.http_long == MCP_HTTP_FLAG_LONG {
+                    matches.get_one::<String>(MCP_HTTP_FLAG_LONG)
+                } else {
+                    None
+                }
+            })
+            .map(|s| parse_mcp_http_listen(s))
+            .transpose()
+            .unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(2);
+            })
+    } else {
+        None
+    };
     #[cfg(not(feature = "http"))]
     let http_listen: Option<std::net::SocketAddr> = None;
 
     if mcp_requested && http_listen.is_some() {
-        eprintln!("--mcp and --mcp-http are mutually exclusive");
+        #[cfg(feature = "http")]
+        eprintln!(
+            "--{} and --{} are mutually exclusive",
+            flags.stdio_long, flags.http_long
+        );
+        #[cfg(not(feature = "http"))]
+        eprintln!("stdio and HTTP MCP flags are mutually exclusive");
         std::process::exit(2);
     }
 
@@ -1885,9 +2063,11 @@ fn exit_on_mcp_serve_error(result: Result<(), ClapMcpError>) -> ! {
 }
 
 #[cfg(feature = "http")]
-fn resolve_http_listen_from_env_or_exit() -> Option<std::net::SocketAddr> {
+fn resolve_http_listen_from_env_or_exit(
+    flags: &ClapMcpBuiltinFlags,
+) -> Option<std::net::SocketAddr> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    resolve_mcp_http_listen_from_args(&args).unwrap_or_else(|e| {
+    resolve_mcp_http_listen_from_args(&args, flags).unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(2);
     })
@@ -1904,10 +2084,11 @@ where
         config,
         serve: serve_options,
     } = options;
+    let flags = config.builtin_flags;
     let mut cmd = T::command();
-    cmd = command_with_mcp_and_export_skills_flags(cmd);
+    cmd = command_with_mcp_and_export_skills_flags_with_flags(cmd, &flags);
 
-    if let Some(maybe_dir) = argv_export_skills_dir() {
+    if let Some(maybe_dir) = argv_export_skills_dir(&flags) {
         let base_cmd = T::command();
         let metadata = T::clap_mcp_schema_metadata();
         let schema = schema_from_command_with_metadata(&base_cmd, &metadata);
@@ -1930,11 +2111,11 @@ where
     }
 
     if config.allow_mcp_without_subcommand
-        && (argv_requests_mcp_without_subcommand(&cmd) || {
+        && (argv_requests_mcp_without_subcommand(&cmd, &flags) || {
             #[cfg(feature = "http")]
             {
                 let args: Vec<String> = std::env::args().skip(1).collect();
-                argv_requests_mcp_http_without_subcommand_from_args(&args, &cmd)
+                argv_requests_mcp_http_without_subcommand_from_args(&args, &cmd, &flags)
             }
             #[cfg(not(feature = "http"))]
             {
@@ -1943,7 +2124,7 @@ where
         })
     {
         #[cfg(feature = "http")]
-        let http_listen = resolve_http_listen_from_env_or_exit();
+        let http_listen = resolve_http_listen_from_env_or_exit(&flags);
         #[cfg(not(feature = "http"))]
         let http_listen: Option<std::net::SocketAddr> = None;
         let prepared = prepare(&config, &serve_options);
@@ -1956,24 +2137,41 @@ where
     }
 
     let matches = cmd.get_matches();
-    let mcp_requested = matches.get_flag(MCP_FLAG_LONG);
+    let mcp_requested = matches_stdio_flag(&matches, &flags);
     #[cfg(feature = "http")]
-    let http_listen = match matches
-        .get_one::<String>(MCP_HTTP_FLAG_LONG)
-        .map(|s| parse_mcp_http_listen(s))
-        .transpose()
-    {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(2);
+    let http_listen = if matches_http_flag(&matches, &flags) {
+        match matches
+            .get_one::<String>(CLAP_MCP_HTTP_FLAG_ID)
+            .or_else(|| {
+                if flags.http_long == MCP_HTTP_FLAG_LONG {
+                    matches.get_one::<String>(MCP_HTTP_FLAG_LONG)
+                } else {
+                    None
+                }
+            })
+            .map(|s| parse_mcp_http_listen(s))
+            .transpose()
+        {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
         }
+    } else {
+        None
     };
     #[cfg(not(feature = "http"))]
     let http_listen: Option<std::net::SocketAddr> = None;
 
     if mcp_requested && http_listen.is_some() {
-        eprintln!("--mcp and --mcp-http are mutually exclusive");
+        #[cfg(feature = "http")]
+        eprintln!(
+            "--{} and --{} are mutually exclusive",
+            flags.stdio_long, flags.http_long
+        );
+        #[cfg(not(feature = "http"))]
+        eprintln!("stdio and HTTP MCP flags are mutually exclusive");
         std::process::exit(2);
     }
 
@@ -2185,9 +2383,17 @@ pub(crate) fn build_tool_argv(
         .filter(|a| !is_builtin_arg(a.id.as_str()))
         .collect();
 
-    let mut positionals: Vec<&ClapArg> =
-        args.iter().filter(|a| a.long.is_none()).copied().collect();
+    let mut positionals: Vec<&ClapArg> = args
+        .iter()
+        .filter(|a| a.long.is_none() && !a.num_args.as_deref().is_some_and(|n| n.contains("..")))
+        .copied()
+        .collect();
     positionals.sort_by_key(|a| a.index.unwrap_or(0));
+    let trailing_positionals: Vec<&ClapArg> = args
+        .iter()
+        .filter(|a| a.long.is_none() && a.num_args.as_deref().is_some_and(|n| n.contains("..")))
+        .copied()
+        .collect();
     let optionals: Vec<&ClapArg> = args.iter().filter(|a| a.long.is_some()).copied().collect();
 
     let mut out = Vec::new();
@@ -2251,6 +2457,19 @@ pub(crate) fn build_tool_argv(
                 }
             }
         }
+    }
+
+    let mut trailing_values = Vec::new();
+    for arg in &trailing_positionals {
+        if let Some(v) = arguments.get(&arg.id)
+            && let Some(strings) = value_to_strings(v)
+        {
+            trailing_values.extend(strings);
+        }
+    }
+    if !trailing_values.is_empty() {
+        out.push("--".to_string());
+        out.extend(trailing_values);
     }
 
     out
@@ -2907,6 +3126,109 @@ mod tests {
         );
     }
 
+    fn passthrough_exec_command(allow_hyphen_values: bool) -> Command {
+        let mut trailing = Arg::new("command").last(true).num_args(1..);
+        if allow_hyphen_values {
+            trailing = trailing.allow_hyphen_values(true);
+        }
+        Command::new("passthrough-args").subcommand(
+            Command::new("exec")
+                .arg(
+                    Arg::new("dry_run")
+                        .long("dry-run")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(trailing),
+        )
+    }
+
+    #[test]
+    fn test_build_tool_argv_trailing_vec_with_hyphen_tokens() {
+        let schema = schema_from_command(&passthrough_exec_command(true));
+        let arguments = serde_json::Map::from_iter([
+            ("dry_run".to_string(), json!(false)),
+            ("command".to_string(), json!(["-v", "--mcp", "hello"])),
+        ]);
+        let argv = build_tool_argv(&schema, "exec", arguments);
+        assert_eq!(argv, vec!["--", "-v", "--mcp", "hello"]);
+    }
+
+    #[test]
+    fn test_build_argv_round_trip_with_hyphen_trailing_vec() {
+        let cmd = passthrough_exec_command(true);
+        let schema = schema_from_command(&cmd);
+        let arguments = serde_json::Map::from_iter([
+            ("dry_run".to_string(), json!(true)),
+            ("command".to_string(), json!(["-v", "hello"])),
+        ]);
+        let argv = build_argv_for_clap(&schema, "exec", arguments);
+        let matches = cmd
+            .try_get_matches_from(argv)
+            .expect("trailing vec with -- separator should parse hyphen tokens");
+        let sub = matches.subcommand().expect("exec subcommand");
+        assert!(sub.1.get_flag("dry_run"));
+        assert_eq!(
+            sub.1
+                .get_many::<String>("command")
+                .into_iter()
+                .flatten()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+            vec!["-v", "hello"]
+        );
+    }
+
+    #[test]
+    fn test_build_argv_round_trip_with_trailing_vec() {
+        let cmd = passthrough_exec_command(true);
+        let schema = schema_from_command(&cmd);
+        let arguments = serde_json::Map::from_iter([
+            ("dry_run".to_string(), json!(true)),
+            ("command".to_string(), json!(["echo", "hello"])),
+        ]);
+        let argv = build_argv_for_clap(&schema, "exec", arguments);
+        assert_eq!(
+            argv,
+            vec![
+                "cli".to_string(),
+                "exec".to_string(),
+                "--dry-run".to_string(),
+                "--".to_string(),
+                "echo".to_string(),
+                "hello".to_string(),
+            ]
+        );
+        let matches = cmd
+            .try_get_matches_from(argv)
+            .expect("trailing vec after flags should parse");
+        let sub = matches.subcommand().expect("exec subcommand");
+        assert_eq!(sub.0, "exec");
+        assert!(sub.1.get_flag("dry_run"));
+        assert_eq!(
+            sub.1
+                .get_many::<String>("command")
+                .into_iter()
+                .flatten()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+            vec!["echo", "hello"]
+        );
+    }
+
+    #[test]
+    fn test_build_argv_hyphen_trailing_fails_without_end_of_opts() {
+        let cmd = passthrough_exec_command(false);
+        let err = cmd
+            .try_get_matches_from(["cli", "exec", "-v", "hello"])
+            .expect_err("trailing hyphen tokens without -- should fail clap parse");
+        assert!(
+            err.to_string().contains("unexpected argument")
+                || err.to_string().contains("unknown argument")
+                || err.to_string().contains("found argument"),
+            "unexpected error: {err}"
+        );
+    }
+
     #[test]
     fn test_value_to_string_and_value_to_strings_cover_scalar_and_array_inputs() {
         assert_eq!(value_to_string(&json!("hello")), Some("hello".to_string()));
@@ -2968,52 +3290,130 @@ mod tests {
 
     #[test]
     fn test_argv_export_skills_dir_from_args() {
-        assert!(argv_export_skills_dir_from_args(&[]).is_none());
-        assert!(argv_export_skills_dir_from_args(&["--other".to_string()]).is_none());
+        let flags = ClapMcpBuiltinFlags::default();
+        assert!(argv_export_skills_dir_from_args(&[], &flags).is_none());
+        assert!(argv_export_skills_dir_from_args(&["--other".to_string()], &flags).is_none());
         assert_eq!(
-            argv_export_skills_dir_from_args(&["--export-skills".to_string()]),
+            argv_export_skills_dir_from_args(&["--export-skills".to_string()], &flags),
             Some(None)
         );
         assert_eq!(
-            argv_export_skills_dir_from_args(&["--export-skills".to_string(), "/path".to_string()]),
-            Some(Some(std::path::PathBuf::from("/path")))
+            argv_export_skills_dir_from_args(
+                &["--export-skills".to_string(), "out".to_string()],
+                &flags
+            ),
+            Some(Some(std::path::PathBuf::from("out")))
         );
         assert_eq!(
-            argv_export_skills_dir_from_args(&["--export-skills".to_string(), "--mcp".to_string()]),
+            argv_export_skills_dir_from_args(
+                &["--export-skills".to_string(), "--mcp".to_string()],
+                &flags
+            ),
             Some(None)
         );
         assert_eq!(
-            argv_export_skills_dir_from_args(&["--export-skills=/out".to_string()]),
-            Some(Some(std::path::PathBuf::from("/out")))
+            argv_export_skills_dir_from_args(&["--export-skills=out".to_string()], &flags),
+            Some(Some(std::path::PathBuf::from("out")))
+        );
+        assert!(
+            argv_export_skills_dir_from_args(
+                &[
+                    "run".to_string(),
+                    "--".to_string(),
+                    "--export-skills".to_string()
+                ],
+                &flags
+            )
+            .is_none(),
+            "export-skills after -- must not trigger"
+        );
+    }
+
+    #[test]
+    fn test_argv_before_end_of_opts() {
+        let args = vec!["run".to_string(), "--".to_string(), "--mcp".to_string()];
+        assert_eq!(
+            argv_before_end_of_opts(&args),
+            &["run".to_string()] as &[String]
         );
     }
 
     #[test]
     fn test_argv_requests_mcp_without_subcommand_from_args() {
         let cmd = Command::new("app").subcommand(Command::new("run"));
+        let flags = ClapMcpBuiltinFlags::default();
         assert!(argv_requests_mcp_without_subcommand_from_args(
             &["--mcp".to_string()],
-            &cmd
+            &cmd,
+            &flags
         ));
         assert!(!argv_requests_mcp_without_subcommand_from_args(
             &["--mcp".to_string(), "run".to_string()],
-            &cmd
+            &cmd,
+            &flags
         ));
         assert!(!argv_requests_mcp_without_subcommand_from_args(
             &["run".to_string()],
-            &cmd
+            &cmd,
+            &flags
         ));
-        assert!(!argv_requests_mcp_without_subcommand_from_args(&[], &cmd));
+        assert!(!argv_requests_mcp_without_subcommand_from_args(
+            &[],
+            &cmd,
+            &flags
+        ));
+        assert!(!argv_requests_mcp_without_subcommand_from_args(
+            &["run".to_string(), "--".to_string(), "--mcp".to_string()],
+            &cmd,
+            &flags
+        ));
+        assert!(!argv_requests_mcp_without_subcommand_from_args(
+            &["run".to_string(), "--mcp".to_string()],
+            &cmd,
+            &flags
+        ));
+        assert!(argv_requests_mcp_without_subcommand_from_args(
+            &["--mcp".to_string(), "--".to_string(), "--mcp".to_string()],
+            &cmd,
+            &flags
+        ));
+    }
+
+    #[test]
+    fn test_argv_requests_mcp_custom_stdio_long() {
+        let cmd = Command::new("app");
+        let flags = ClapMcpBuiltinFlags::default().with_stdio_long("modelcontextprotocol");
+        assert!(argv_requests_mcp_without_subcommand_from_args(
+            &["--modelcontextprotocol".to_string()],
+            &cmd,
+            &flags
+        ));
+        assert!(!argv_requests_mcp_without_subcommand_from_args(
+            &["--mcp".to_string()],
+            &cmd,
+            &flags
+        ));
+        assert!(!argv_requests_mcp_without_subcommand_from_args(
+            &[
+                "run".to_string(),
+                "--".to_string(),
+                "--modelcontextprotocol".to_string(),
+            ],
+            &cmd,
+            &flags
+        ));
     }
 
     #[test]
     fn test_is_builtin_arg() {
         assert!(is_builtin_arg("help"));
         assert!(is_builtin_arg("version"));
-        assert!(is_builtin_arg(MCP_FLAG_LONG));
+        assert!(is_builtin_arg(CLAP_MCP_STDIO_FLAG_ID));
+        assert!(!is_builtin_arg(CLAP_MCP_STDIO_FLAG_ID_LEGACY));
         assert!(is_builtin_arg(EXPORT_SKILLS_FLAG_LONG));
         assert!(!is_builtin_arg("input"));
         assert!(!is_builtin_arg("path"));
+        assert!(!is_builtin_arg("mcp"), "user mcp field must not be builtin");
     }
 
     #[test]
@@ -3034,11 +3434,12 @@ mod tests {
         let bind_key = MCP_HTTP_BIND_ENV;
         let port_key = MCP_HTTP_PORT_ENV;
 
+        let flags = ClapMcpBuiltinFlags::default();
         unsafe {
             std::env::set_var(listen_key, "127.0.0.1:9090");
         }
         assert_eq!(
-            argv_mcp_http_listen_from_args(&["--mcp-http".to_string()]),
+            argv_mcp_http_listen_from_args(&["--mcp-http".to_string()], &flags),
             Some("127.0.0.1:9090".to_string())
         );
         unsafe {
@@ -3050,7 +3451,7 @@ mod tests {
             std::env::set_var(port_key, "9091");
         }
         assert_eq!(
-            argv_mcp_http_listen_from_args(&["--mcp-http".to_string()]),
+            argv_mcp_http_listen_from_args(&["--mcp-http".to_string()], &flags),
             Some("127.0.0.1:9091".to_string())
         );
         unsafe {

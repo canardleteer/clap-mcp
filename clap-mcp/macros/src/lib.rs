@@ -19,7 +19,21 @@ type ClapMcpAttrs = (
     Option<bool>,
     Option<bool>,
     Option<bool>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
 );
+
+fn meta_string_value(meta: &syn::meta::ParseNestedMeta) -> syn::Result<String> {
+    let value: Expr = meta.value()?.parse()?;
+    match value {
+        Expr::Lit(lit) => match lit.lit {
+            Lit::Str(s) => Ok(s.value()),
+            other => Err(meta.error(format!("expected string literal, got `{other:?}`"))),
+        },
+        other => Err(meta.error(format!("expected string literal, got `{other:?}`"))),
+    }
+}
 
 /// Parses `#[clap_mcp(...)]` attributes.
 fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> ClapMcpAttrs {
@@ -30,6 +44,9 @@ fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> ClapMcpAttrs {
     let mut allow_mcp_without_subcommand = None;
     let mut task_augmented_tools = None;
     let mut stateful = None;
+    let mut mcp_flag = None;
+    let mut mcp_http_flag = None;
+    let mut export_skills_flag = None;
 
     for attr in attrs {
         if !attr.path().is_ident("clap_mcp") {
@@ -86,6 +103,12 @@ fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> ClapMcpAttrs {
                 } else {
                     stateful = Some(true);
                 }
+            } else if meta.path.is_ident("mcp_flag") {
+                mcp_flag = Some(meta_string_value(&meta)?);
+            } else if meta.path.is_ident("mcp_http_flag") {
+                mcp_http_flag = Some(meta_string_value(&meta)?);
+            } else if meta.path.is_ident("export_skills_flag") {
+                export_skills_flag = Some(meta_string_value(&meta)?);
             }
             Ok(())
         });
@@ -99,6 +122,9 @@ fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> ClapMcpAttrs {
         allow_mcp_without_subcommand,
         task_augmented_tools,
         stateful,
+        mcp_flag,
+        mcp_http_flag,
+        export_skills_flag,
     )
 }
 
@@ -568,6 +594,10 @@ fn subcommand_field_type_from_enum(data: &syn::DataEnum) -> Option<Type> {
 ///   (default), `myapp --mcp` starts MCP even when the root has `subcommand_required = true`
 ///   (argv is checked before clap). Does **not** change non-MCP CLI behavior; do not switch to
 ///   `Option<Commands>` solely for MCP. See [`ClapMcpConfig::allow_mcp_without_subcommand`].
+/// - `mcp_flag = "long_name"` — Rename the stdio MCP flag long name (default `"mcp"`). clap arg
+///   id stays [`CLAP_MCP_STDIO_FLAG_ID`](clap_mcp::CLAP_MCP_STDIO_FLAG_ID).
+/// - `mcp_http_flag = "long_name"` — Rename the HTTP MCP flag (requires `http` feature).
+/// - `export_skills_flag = "long_name"` — Rename the export-skills flag.
 /// - `task_augmented_tools` / `task_augmented_tools = true|false` — When true, advertise MCP task
 ///   support and handle task-augmented `tools/call` (in-process only). Requires
 ///   `reinvocation_safe`; combining with `reinvocation_safe = false` is a **compile error**.
@@ -625,6 +655,13 @@ fn subcommand_field_type_from_enum(data: &syn::DataEnum) -> Option<Type> {
 /// MCP clients send **named** JSON; clap-mcp rebuilds argv for tool execution. Two or more
 /// bare positional scalar fields on the same variant (non-`Vec`) are a **compile error** —
 /// use `#[arg(long)]` on each field or `#[clap_mcp(skip)]`. See [PR #12](https://github.com/canardleteer/clap-mcp/pull/12).
+///
+/// **Trailing / passthrough args:** For cargo-style trailing argv, use
+/// `#[arg(last = true, allow_hyphen_values = true)] command: Vec<String>` on direct CLI;
+/// MCP clients pass `command` as a JSON array. `build_tool_argv` inserts `--` before
+/// trailing multi-value positionals when rebuilding argv. An explicit
+/// `#[arg(long)] args: Vec<String>` is often clearer for MCP. Pre-clap MCP detection
+/// ignores tokens after the shell's first `--`.
 ///
 /// ## `#[clap_mcp(skip)]` (on variant or field)
 ///
@@ -744,6 +781,9 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
         allow_mcp_without_subcommand,
         task_augmented_tools,
         stateful,
+        mcp_flag,
+        mcp_http_flag,
+        export_skills_flag,
     ) = parse_clap_mcp_attrs(&input.attrs);
     let stateful_effective = stateful.unwrap_or(false);
 
@@ -794,6 +834,26 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
             || quote! { clap_mcp::ClapMcpConfig::default().allow_mcp_without_subcommand },
         );
 
+    let mut builtin_flag_stmts = Vec::new();
+    if let Some(long) = mcp_flag {
+        builtin_flag_stmts.push(quote! { flags = flags.with_stdio_long(#long); });
+    }
+    if let Some(long) = mcp_http_flag {
+        builtin_flag_stmts.push(quote! { flags = flags.with_http_long(#long); });
+    }
+    if let Some(long) = export_skills_flag {
+        builtin_flag_stmts.push(quote! { flags = flags.with_export_skills_long(#long); });
+    }
+    let builtin_flags_impl = if builtin_flag_stmts.is_empty() {
+        quote! { clap_mcp::ClapMcpBuiltinFlags::default() }
+    } else {
+        quote! {{
+            let mut flags = clap_mcp::ClapMcpBuiltinFlags::default();
+            #(#builtin_flag_stmts)*
+            flags
+        }}
+    };
+
     let config_provider = quote! {
         impl clap_mcp::ClapMcpConfigProvider for #name {
             fn clap_mcp_config() -> clap_mcp::ClapMcpConfig {
@@ -803,6 +863,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                     share_runtime: #share_runtime_expr,
                     catch_in_process_panics: #catch_in_process_panics_expr,
                     allow_mcp_without_subcommand: #allow_mcp_without_subcommand_expr,
+                    builtin_flags: #builtin_flags_impl,
                 }
             }
         }
@@ -992,7 +1053,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
 /// Builds the ClapMcpSchemaMetadataProvider impl from #[clap_mcp(skip)], #[clap_mcp(requires)], and #[clap_mcp(task)].
 fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let name = &input.ident;
-    let (_, _, _, _, _, task_augmented_tools, _) = parse_clap_mcp_attrs(&input.attrs);
+    let (_, _, _, _, _, task_augmented_tools, _, _, _, _) = parse_clap_mcp_attrs(&input.attrs);
     let task_augmented_tools_expr = task_augmented_tools
         .map(|b| quote! { #b })
         .unwrap_or(quote! { false });

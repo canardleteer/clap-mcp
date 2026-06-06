@@ -67,3 +67,71 @@ fn flat_enum_normal_invocation_unchanged() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Hello, MCP!"), "got: {stdout}");
 }
+
+#[test]
+fn passthrough_exec_after_double_dash_does_not_start_mcp() {
+    let out = run_example("passthrough_args", &["exec", "--", "--mcp"]);
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(r#"command=["--mcp"]"#),
+        "trailing --mcp should be passthrough, got: {stdout}"
+    );
+}
+
+#[test]
+fn passthrough_exec_dry_run_with_trailing_command() {
+    let out = run_example(
+        "passthrough_args",
+        &["exec", "--dry-run", "--", "echo", "hello"],
+    );
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("dry_run=true"), "got: {stdout}");
+    assert!(
+        stdout.contains(r#"command=["echo", "hello"]"#),
+        "got: {stdout}"
+    );
+}
+
+#[test]
+fn custom_mcp_flags_user_mcp_is_not_clap_mcp() {
+    let out = run_example("custom_mcp_flags", &["--mcp"]);
+    assert!(
+        out.status.success(),
+        "user --mcp should exit quickly; stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("legacy_mcp=true"),
+        "user flag path should run, got: {stdout}"
+    );
+}
+
+#[test]
+fn custom_mcp_flags_help_shows_renamed_stdio_flag() {
+    let out = run_example("custom_mcp_flags", &["--help"]);
+    assert!(out.status.success());
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        combined.contains("--modelcontextprotocol"),
+        "help should show renamed clap-mcp stdio flag"
+    );
+    assert!(
+        combined.contains("--mcp"),
+        "help should still show unrelated user --mcp flag"
+    );
+}
