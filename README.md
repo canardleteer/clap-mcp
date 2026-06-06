@@ -11,7 +11,18 @@ This is still a draft, and we're exposing a rapidly evolving specification (MCP)
 through a relatively stable one (`clap`). That mismatch in velocity will err
 towards instability of the public API surface.
 
-See [examples/README.md](examples/README.md) for detailed examples of usage.
+> **In general, you should just be able to adapt any `clap` CLI binary, to use
+> `clap-mcp` with natural API semantics.**
+
+* **[Derive with attributes (recommended)](#derive-with-attributes-recommended)** —
+  `#[clap_mcp(...)]` for execution safety and in-process tools
+* **[Derive (minimal)](#derive-minimal)** — `#[derive(ClapMcp)]` on a `Parser`
+  enum with `parse_or_serve_mcp`
+* **[Imperative (existing clap CLI)](#imperative-existing-clap-cli)** — add MCP to
+  a hand-built `clap::Command` with `get_matches_or_serve_mcp`
+
+Runnable server binaries and feature demos:
+[examples/servers](examples/servers).
 
 ## Design
 
