@@ -2291,9 +2291,8 @@ mod tests {
     use super::*;
     use crate::server::{
         build_execution_command, call_tool_result_from_output, call_tool_result_from_panic,
-        call_tool_result_from_subprocess_output, call_tool_result_from_tool_error,
-        command_launch_failure_result, get_prompt_result, list_prompts_result,
-        list_resources_result, placeholder_tool_result, read_resource_result,
+        call_tool_result_from_tool_error, command_launch_failure_result, get_prompt_result,
+        list_prompts_result, list_resources_result, placeholder_tool_result, read_resource_result,
         schema_parse_failure_result, subprocess_stderr_log_params, validate_tool_argument_names,
     };
     use async_trait::async_trait;
@@ -2322,6 +2321,9 @@ mod tests {
 
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
+
+    #[cfg(unix)]
+    use crate::server::call_tool_result_from_subprocess_output;
 
     fn sample_helper_schema() -> ClapSchema {
         schema_from_command(
