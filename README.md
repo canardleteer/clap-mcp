@@ -115,7 +115,7 @@ Every guide in [`docs/`](docs/) is listed below. See also
 | [Logging](docs/logging.md) | `tracing` / `log` bridges, MCP notifications |
 | [Streamable HTTP](docs/http.md) | `--mcp-http`, listen env vars |
 | [OAuth (scaffolding)](docs/oauth.md) | Remote MCP client helpers |
-| [rmcp migration notes](docs/rmcp-migration-notes.md) | API changes, breaking renames |
+| [Migration notes (0.0.3 → 0.0.4)](docs/migration-notes.md) | Breaking changes, rmcp port, API renames |
 
 ### Maintainer notes
 

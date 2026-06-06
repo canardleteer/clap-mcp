@@ -68,3 +68,31 @@ Installing
 need a multiplexing wrapper — either a custom `Log` impl that fans out to
 multiple sinks, or a crate like
 [`multi_log`](https://crates.io/crates/multi_log).
+
+## Task-augmented tools and `meta.taskId`
+
+When MCP task-augmented `tools/call` is enabled (`#[clap_mcp(task_augmented_tools)]`)
+and `ClapMcpServeOptions::log_rx` is set, forwarded notifications include
+`meta.taskId` in notification extensions for logs emitted during the tool body.
+The value matches `CreateTaskResult.task.task_id` for that invocation.
+
+clap-mcp tracks the active task id with [`run_with_mcp_task_id`] (task-local and
+thread-local). Behavior by runtime mode:
+
+| Mode | How task id reaches logs |
+|------|--------------------------|
+| `share_runtime = false` (default) | `run_async_tool` copies the id onto the dedicated async-tool thread via [`McpTaskIdGuard`] |
+| `share_runtime = true` | `run_async_tool` captures the id before `Handle::block_on` and re-scopes with `run_with_mcp_task_id` inside the nested future |
+
+The shared-runtime re-scope is required on **all platforms**: tokio task-local
+from the outer MCP task body does not always propagate into the future polled by
+`block_on`, especially when `parallel_safe = true` and multiple task bodies
+overlap. Without the re-scope, logs may arrive without `meta.taskId`.
+
+Use [`run_async_tool`] for async tool bodies; do not call `Handle::block_on`
+directly from `run`. See [MCP tasks support](mcp-tasks.md) and
+[migration notes](migration-notes.md#task-augmented-toolscall-004-rc1).
+
+[`run_with_mcp_task_id`]: https://docs.rs/clap-mcp/latest/clap_mcp/logging/fn.run_with_mcp_task_id.html
+[`McpTaskIdGuard`]: https://docs.rs/clap-mcp/latest/clap_mcp/logging/struct.McpTaskIdGuard.html
+[`run_async_tool`]: https://docs.rs/clap-mcp/latest/clap_mcp/fn.run_async_tool.html

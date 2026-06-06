@@ -80,7 +80,10 @@ logging uses per-task context so `meta.taskId` stays correct.
 the `tracing` or `log` bridges, log notifications emitted during a
 task-augmented tool body include `meta.taskId` in notification extensions,
 matching `CreateTaskResult.task.task_id` (including when multiple task bodies
-run concurrently).
+run concurrently). With `share_runtime = true`, call async tool bodies through
+[`run_async_tool`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.run_async_tool.html)
+so clap-mcp can re-install per-task logging context inside `block_on` (see
+[Logging — task-augmented tools](logging.md#task-augmented-tools-and-metataskid)).
 
 ## Example: server and client
 
@@ -114,7 +117,7 @@ Additional examples: [task_panic_catch](../examples/servers/task_panic_catch.rs)
 **Pinned stack (review on bump):** workspace [`rmcp`](https://docs.rs/rmcp)
 **1.7.x** (see root `Cargo.toml`; features `server`, `client`, `macros`,
 `transport-io`, `transport-child-process`). Protocol **2025-11-25** (tasks).
-Migration notes: [rmcp-migration-notes.md](rmcp-migration-notes.md).
+Migration notes: [migration-notes.md](migration-notes.md).
 
 ## Note: client-side task routing (not yet supported)
 
