@@ -35,8 +35,60 @@ impl ClientHandler for AcceptElicitationClient {
     }
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn confirm_echo_elicitation_round_trip() {
+#[derive(Clone, Default)]
+struct DeclineElicitationClient;
+
+impl ClientHandler for DeclineElicitationClient {
+    async fn create_elicitation(
+        &self,
+        _request: CreateElicitationRequestParams,
+        _context: RequestContext<RoleClient>,
+    ) -> Result<CreateElicitationResult, ErrorData> {
+        Ok(CreateElicitationResult {
+            meta: None,
+            action: ElicitationAction::Decline,
+            content: None,
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct CancelElicitationClient;
+
+impl ClientHandler for CancelElicitationClient {
+    async fn create_elicitation(
+        &self,
+        _request: CreateElicitationRequestParams,
+        _context: RequestContext<RoleClient>,
+    ) -> Result<CreateElicitationResult, ErrorData> {
+        Ok(CreateElicitationResult {
+            meta: None,
+            action: ElicitationAction::Cancel,
+            content: None,
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct AcceptWithoutValueClient;
+
+impl ClientHandler for AcceptWithoutValueClient {
+    async fn create_elicitation(
+        &self,
+        _request: CreateElicitationRequestParams,
+        _context: RequestContext<RoleClient>,
+    ) -> Result<CreateElicitationResult, ErrorData> {
+        Ok(CreateElicitationResult {
+            meta: None,
+            action: ElicitationAction::Accept,
+            content: Some(serde_json::json!({"other": "field"})),
+        })
+    }
+}
+
+async fn launch_elicitation_client<H: ClientHandler + Clone + 'static>(
+    handler: H,
+) -> rmcp::service::RunningService<RoleClient, H> {
     {
         let _guard = BUILD_LOCK.lock().unwrap();
         let status = std::process::Command::new("cargo")
@@ -55,9 +107,6 @@ async fn confirm_echo_elicitation_round_trip() {
         assert!(status.success());
     }
 
-    let client_handler = AcceptElicitationClient::default();
-    let msg_store = client_handler.last_message.clone();
-
     let transport = TokioChildProcess::new(
         tokio::process::Command::new(example_binary_path("elicitation_confirm")).configure(|cmd| {
             cmd.arg("--mcp");
@@ -66,7 +115,15 @@ async fn confirm_echo_elicitation_round_trip() {
     .map_err(rmcp::RmcpError::transport_creation::<TokioChildProcess>)
     .expect("transport");
 
-    let client = client_handler.serve(transport).await.expect("serve");
+    handler.serve(transport).await.expect("serve")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn confirm_echo_elicitation_round_trip() {
+    let client_handler = AcceptElicitationClient::default();
+    let msg_store = client_handler.last_message.clone();
+
+    let client = launch_elicitation_client(client_handler).await;
     let result = client
         .call_tool(CallToolRequestParams::new("confirm-echo"))
         .await
@@ -81,5 +138,38 @@ async fn confirm_echo_elicitation_round_trip() {
             .contains("confirm-echo")
     );
 
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn confirm_echo_elicitation_decline_returns_declined_message() {
+    let client = launch_elicitation_client(DeclineElicitationClient).await;
+    let result = client
+        .call_tool(CallToolRequestParams::new("confirm-echo"))
+        .await
+        .expect("tool");
+    assert!(tool_text(&result).contains("elicitation declined"));
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn confirm_echo_elicitation_cancel_returns_declined_message() {
+    let client = launch_elicitation_client(CancelElicitationClient).await;
+    let result = client
+        .call_tool(CallToolRequestParams::new("confirm-echo"))
+        .await
+        .expect("tool");
+    assert!(tool_text(&result).contains("elicitation declined"));
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn confirm_echo_elicitation_accept_without_value_uses_default() {
+    let client = launch_elicitation_client(AcceptWithoutValueClient).await;
+    let result = client
+        .call_tool(CallToolRequestParams::new("confirm-echo"))
+        .await
+        .expect("tool");
+    assert!(tool_text(&result).contains("confirmed: accepted"));
     shutdown(client).await;
 }

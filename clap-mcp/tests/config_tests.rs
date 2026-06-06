@@ -650,6 +650,47 @@ async fn test_run_async_tool_shared_runtime_on_multi_thread_runtime() {
 }
 
 #[test]
+fn test_serve_mcp_builder_reports_missing_required_fields() {
+    for (builder, field) in [
+        (ServeMcpBuilder::new(), "listen"),
+        (
+            ServeMcpBuilder::new().listen(McpListen::Stdio),
+            "schema_json",
+        ),
+        (
+            ServeMcpBuilder::new()
+                .listen(McpListen::Stdio)
+                .schema_json("{}"),
+            "config",
+        ),
+        (
+            ServeMcpBuilder::new()
+                .listen(McpListen::Stdio)
+                .schema_json("{}")
+                .config(ClapMcpConfig::default()),
+            "metadata",
+        ),
+    ] {
+        assert!(matches!(
+            builder.build(),
+            Err(ClapMcpError::InvalidConfig(message)) if message.contains(field)
+        ));
+    }
+}
+
+#[cfg(feature = "http")]
+#[test]
+fn test_serve_mcp_builder_http_listen_builds() {
+    ServeMcpBuilder::new()
+        .listen(McpListen::Http("127.0.0.1:0".parse().expect("addr")))
+        .schema_json("{}")
+        .config(ClapMcpConfig::default())
+        .metadata(ClapMcpSchemaMetadata::default())
+        .build()
+        .expect("http listen should build");
+}
+
+#[test]
 fn test_serve_mcp_rejects_current_thread_when_multi_thread_required() {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

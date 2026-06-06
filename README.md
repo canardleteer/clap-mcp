@@ -1121,5 +1121,6 @@ cargo xtask code-coverage-html --open
 Coverage focuses on the `clap-mcp` and `clap-mcp-macros` crates; the `examples`
 crate is excluded from coverage targets.
 
-Release prep includes building and running all example binaries (CI runs each
-with `--help` as a smoke test); see [examples/README.md](examples/README.md).
+Release prep runs example smoke via `cargo xtask examples-help` (builds with
+`--all-features`, runs `--help` on each release-validation binary); see
+[examples/README.md](examples/README.md).

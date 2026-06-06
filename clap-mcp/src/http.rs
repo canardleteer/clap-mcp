@@ -90,3 +90,30 @@ pub(crate) async fn serve_schema_json_over_http(
     axum::serve(listener, router).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::allowed_hosts_for_listen;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    #[test]
+    fn allowed_hosts_for_specific_bind_includes_localhost_variants() {
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+        let hosts = allowed_hosts_for_listen(addr);
+        assert!(hosts.contains(&"localhost".to_string()));
+        assert!(hosts.contains(&"127.0.0.1".to_string()));
+        assert!(hosts.contains(&"::1".to_string()));
+        assert!(hosts.contains(&"127.0.0.1:8080".to_string()));
+        assert!(hosts.contains(&"localhost:8080".to_string()));
+        assert!(hosts.contains(&"[::1]:8080".to_string()));
+        assert!(hosts.contains(&"127.0.0.1:8080".to_string()));
+        assert!(!hosts.contains(&"0.0.0.0:8080".to_string()));
+    }
+
+    #[test]
+    fn allowed_hosts_for_unspecified_bind_includes_wildcard() {
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 9000);
+        let hosts = allowed_hosts_for_listen(addr);
+        assert!(hosts.contains(&"0.0.0.0:9000".to_string()));
+    }
+}
