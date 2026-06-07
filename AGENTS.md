@@ -195,7 +195,7 @@ Every file below must appear in the README Documentation table.
 | [docs/execution-safety.md](docs/execution-safety.md) | CLI authors | `reinvocation_safe`, skip/requires, dual derive, async embedders |
 | [docs/mcp-tasks.md](docs/mcp-tasks.md) | CLI authors | Task-augmented `tools/call`, examples, support matrix |
 | [docs/stateful-tools.md](docs/stateful-tools.md) | CLI authors | Shared session state, `parse_or_serve_mcp_with_state` |
-| [docs/security.md](docs/security.md) | CLI authors | Schema validation, subprocess trust model |
+| [docs/security.md](docs/security.md) | CLI authors | Schema validation, deployment trust model, subprocess and HTTP limits |
 | [docs/tool-output.md](docs/tool-output.md) | CLI authors | `run` return types, structured output, `output-schema` |
 | [docs/logging.md](docs/logging.md) | CLI authors | `tracing` / `log` bridges, MCP notifications |
 | [docs/http.md](docs/http.md) | CLI authors | Streamable HTTP listen (`--mcp-http`) |

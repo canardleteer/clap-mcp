@@ -15,7 +15,9 @@ and shapes that are intentionally out of scope. Runnable binaries are listed in
 | Flat enum root | `output_from` on enum | `subcommands` | Default happy path |
 | Flat struct root (no subcommand) | `output_from` on struct | — | One MCP tool with a wide `inputSchema` (all root fields and flattened `Args` groups) |
 | Skipped flattened `Args` | `#[command(flatten)]` + `#[clap_mcp(skip)]` on field | — | Every clap arg id from the flattened type is excluded, not only the Rust field name |
-| Explicit arg-id skip list | `#[clap_mcp(skip = "id1,id2")]` on field | — | Comma-separated clap arg ids; combines with flatten probe when both apply |
+| Skipped subcommand group | `#[command(subcommand)]` + `#[clap_mcp(skip)]` on field | — | `Subcommand::augment_subcommands` probe adds subcommand names to `skip_commands` (recursive) |
+| Explicit arg-id skip list | `#[clap_mcp(skip = "id1,id2")]` on field | — | Comma-separated clap arg ids on flatten; subcommand names on `#[command(subcommand)]` |
+| Nested `serialize_topic` in flattened `Args` | `#[clap_mcp(args_metadata)]` on shared `Args` + flatten on variant | — | `#[clap_mcp(serialize_topic)]` inside the helper; same-crate `Args` source required |
 | Struct root, subcommand only in `run` | Dual derive; delegate | `struct_subcommand_required` | Root globals not in `run` unless struct `output_from` |
 | Struct root + globals in `run` | `output_from` on struct; `schema_only` on nested enums | `struct_subcommand_globals` | Tool execution receives full parsed root; root `#[arg(global)]` appear on leaf tool `inputSchema` |
 | Multi-level subcommands | `schema_only` on intermediates; auto metadata merge | `nested_subcommands` | Manual `merge_from` rarely needed |
@@ -31,6 +33,20 @@ argument on the root command. That matches a flat CLI layout but produces a
 large schema when many flags and flattened `Args` groups are present. Prefer
 subcommands when you want smaller per-tool schemas; use `#[clap_mcp(skip)]` on
 flattened groups you do not want agents to set over MCP.
+
+## Known limitations
+
+* Derive metadata (`skip`, `requires`, `serialize_topic`, `serialized = "..."`) uses the Rust
+  **field ident** as the MCP arg id, not `#[arg(id = "...")]`. Rename the field to match the
+  clap id or set [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html)
+  imperatively.
+* Flatten skip and nested `serialize_topic` collection require same-crate `Args` / `Subcommand`
+  types visible to the proc macro. Opaque or dependency types need imperative `skip_commands`,
+  `skip_args`, or `serialize_topic_args`.
+* `skip_commands` entries are global by subcommand name across the schema tree.
+* Topical serialization (`serialized`, `serialize_topic`) gates concurrent tool entry only; it
+  does not isolate [`ClapMcpToolExecutorWithState`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.ClapMcpToolExecutorWithState.html)
+  session state. See [Stateful MCP tools](stateful-tools.md) and [Security](security.md).
 
 ## Explicit non-goals
 
