@@ -96,6 +96,19 @@ With the **`output-schema`** feature enabled, you can attach a JSON schema to
 each tool's `outputSchema` field so MCP clients know the shape of the tool's
 output.
 
+## Subprocess vs in-process structured output
+
+| Mode | How structured output reaches MCP clients |
+| --- | --- |
+| **In-process** (`reinvocation_safe = true`) | Return `AsStructured<T>`, a type implementing `IntoClapMcpResult`, or use `Result<AsStructured<T>, E>`. clap-mcp sets `CallToolResult.structuredContent`. |
+| **Subprocess** (`reinvocation_safe = false`) | The child process stdout is captured as **text** unless the CLI prints JSON to stdout (for example `-o json`). There is no automatic `structuredContent` from return types in the child. |
+
+For subprocess parity with in-process structured tools, print JSON from the CLI
+path your subprocess uses (same schema you document with `output_type` when
+enabled). `capture_stdout` merges human-oriented stdout into text results for
+in-process calls; it does not replace `structuredContent` from `run`'s return
+type.
+
 ## `#[clap_mcp_output_type = "TypeName"]`
 
 Use when your tool output is a **single type** (e.g. an enum or struct). The

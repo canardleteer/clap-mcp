@@ -237,6 +237,17 @@ cargo run -p clap-mcp-examples --bin struct_subcommand_required -- add --a 2 --b
 cargo run -p clap-mcp-examples --bin struct_subcommand_required -- --mcp
 ```
 
+### struct_subcommand_globals
+
+Struct root with **global flags** and `#[clap_mcp_output_from = "run_cli"]` on
+the root type so MCP execution sees the full `Cli` (not only the subcommand
+enum). Nested `Commands` uses `#[clap_mcp(schema_only)]`.
+
+```bash
+cargo run -p clap-mcp-examples --bin struct_subcommand_globals -- greet --verbose --name Rust
+cargo run -p clap-mcp-examples --bin struct_subcommand_globals -- --mcp
+```
+
 ### struct_subcommand
 
 Struct root with **optional** subcommand (`Option<Commands>`,
@@ -485,6 +496,7 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | ------------------ | ------------------------------- | ------------------------------------------------------------------ |
 | **subcommands**    | `servers/subcommands.rs`        | Text output, structured output, subprocess                         |
 | **struct_subcommand_required** | `servers/struct_subcommand_required.rs` | Required subcommand struct root (recommended migration) |
+| **struct_subcommand_globals** | `servers/struct_subcommand_globals.rs` | Struct root `output_from` with global flags |
 | **struct_subcommand** | `servers/struct_subcommand.rs` | Optional subcommand struct root (clap demo only)         |
 | **optional_commands_and_args** | `servers/optional_commands_and_args.rs` | `#[clap_mcp(skip)]`, `#[clap_mcp(requires)]` (arg and variant-level) |
 | **passthrough_args** | `servers/passthrough_args.rs` | Trailing `Vec` passthrough (in-process); see `passthrough_common.rs` |
