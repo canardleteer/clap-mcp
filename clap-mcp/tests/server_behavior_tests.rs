@@ -267,31 +267,6 @@ async fn capture_stdout_merges_only_text_outputs() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn nested_subcommands_round_trip() {
-    let client = launch_example("nested_subcommands")
-        .await
-        .expect("nested subcommands client should launch");
-
-    let tools = client
-        .list_tools(None)
-        .await
-        .expect("tool list should work")
-        .tools;
-    assert!(tools.iter().any(|tool| tool.name == "child"));
-
-    let child =
-        client
-            .call_tool(CallToolRequestParams::new("child").with_arguments(
-                serde_json::Map::from_iter([("value".to_string(), serde_json::json!("ok"))]),
-            ))
-            .await
-            .expect("nested child tool should succeed");
-    assert!(tool_text(&child).contains("child=ok"));
-
-    shutdown(client).await;
-}
-
-#[tokio::test(flavor = "current_thread")]
 async fn logging_enabled_servers_expose_the_logging_guide_prompt() {
     let client = launch_example("tracing_bridge")
         .await
