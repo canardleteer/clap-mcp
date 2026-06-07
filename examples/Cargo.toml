@@ -100,6 +100,10 @@ name = "vec_and_flags"
 path = "servers/vec_and_flags.rs"
 
 [[bin]]
+name = "arg_group_hints"
+path = "servers/arg_group_hints.rs"
+
+[[bin]]
 name = "capture_stdout"
 path = "servers/capture_stdout.rs"
 

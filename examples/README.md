@@ -62,7 +62,7 @@ public `ClapMcpServer` / `build_clap_mcp_server`. See
   log_bridge, async_sleep, async_sleep_shared, **async_embedder_serve**,
   **task_tools_dedicated**,
   **task_tools_shared**, **subprocess_exit_handling**, **panic_catch_opt_in**,
-  **custom_resources_prompts**, **vec_and_flags**, **passthrough_args**,
+  **custom_resources_prompts**, **vec_and_flags**, **arg_group_hints**, **passthrough_args**,
   **passthrough_args_subprocess**, **custom_mcp_flags**, **stateful_counter**)
 
 ## Async embedders
@@ -168,6 +168,20 @@ cargo run -p clap-mcp-examples --bin vec_and_flags -- run --files a --files b --
 # MCP server mode (inspect tool schema: files and versions = array, dry_run = boolean, verbose = integer)
 cargo run -p clap-mcp-examples --bin vec_and_flags -- --mcp
 ```
+
+### arg_group_hints
+
+Demonstrates clap **ArgGroup** membership exported as `meta.clapMcp.argGroups` and
+a parse-time description suffix (not JSON Schema `oneOf`). The `search` tool
+requires exactly one of `--exec` or `--exec-batch`; invalid combinations fail at
+clap parse time.
+
+```bash
+cargo run -p clap-mcp-examples --bin arg_group_hints -- search --pattern '*.rs' --exec 'echo hi'
+cargo run -p clap-mcp-examples --bin arg_group_hints -- --mcp
+```
+
+See [Execution safety — Arg groups](../docs/execution-safety.md#arg-groups).
 
 ### passthrough_args / passthrough_args_subprocess
 
@@ -510,6 +524,7 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **passthrough_args_subprocess** | `servers/passthrough_args_subprocess.rs` | Same patterns, subprocess reinvocation |
 | **custom_mcp_flags** | `servers/custom_mcp_flags.rs` | Renamed stdio flag when `--mcp` is already taken |
 | **vec_and_flags** | `servers/vec_and_flags.rs` | Vec/list and flag/count args in MCP schema |
+| **arg_group_hints** | `servers/arg_group_hints.rs` | ArgGroup hints in `meta.clapMcp.argGroups` (advisory, not schema `oneOf`) |
 | **result_output**  | `servers/result_output.rs`      | `#[clap_mcp_output_from]` with `Result<T, E>`, `IntoClapMcpToolError` for structured errors |
 | **structured**     | `servers/structured.rs`         | Structured output via `#[clap_mcp_output_from]` and `AsStructured<T>` |
 | **tracing_bridge** | `servers/tracing_bridge.rs`  | Tracing integration, MCP log forwarding, prompts   |

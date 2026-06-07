@@ -246,6 +246,22 @@ Example: `examples/servers/topical_serialization.rs`,
 `examples/servers/topical_serial_probe.rs`; integration tests:
 `clap-mcp/tests/topical_serialization_tests.rs`.
 
+## Arg group hints (0.0.4-rc.1+)
+
+Additive API (no migration required):
+
+* **[`ClapArgGroup`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapArgGroup.html)**
+  and **`ClapCommand::arg_groups`** on schema nodes
+* **`meta.clapMcp.argGroups`** on `list_tools` when clap ArgGroups are present
+* **Description suffix** on tools with groups (parse-time hint; same extraction as meta)
+
+Hints are advisory; clap parse remains authoritative. No JSON Schema `oneOf`.
+See [Execution safety — Arg groups](execution-safety.md#arg-groups).
+
+Example: `examples/servers/arg_group_hints.rs`; integration test:
+`example_contract_arg_group_hints_meta_and_parse` in
+`clap-mcp/tests/example_contract_tests.rs`.
+
 ## Nested metadata, schema-only enums, struct `output_from` (0.0.4-rc.1+)
 
 Additive API for deeply nested CLIs:

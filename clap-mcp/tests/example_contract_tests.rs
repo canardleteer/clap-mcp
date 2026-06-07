@@ -6,6 +6,7 @@
 //! | `struct_subcommand_globals` | `greet` + `verbose: true` → `verbose:` in output; global on leaf schema |
 //! | `optional_commands_and_args` | `internal` not in tools; `read` schema requires `path` |
 //! | `struct_subcommand_required` | CLI argv parity (`cli_compat_tests.rs`) |
+//! | `arg_group_hints` | `search` has `meta.clapMcp.argGroups`; exec-only round-trip; both exec flags → parse error |
 
 mod common;
 
@@ -133,6 +134,90 @@ async fn example_contract_optional_commands_internal_and_read_requires() {
     assert!(
         required_schema_properties(read).contains("path"),
         "read tool should require path in MCP schema"
+    );
+
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn example_contract_arg_group_hints_meta_and_parse() {
+    let client = launch_example("arg_group_hints")
+        .await
+        .expect("arg_group_hints client should launch");
+
+    let tools = client
+        .list_tools(None)
+        .await
+        .expect("tool list should work")
+        .tools;
+    let search = tools
+        .iter()
+        .find(|t| t.name == "search")
+        .expect("search tool should exist");
+
+    let arg_groups = search
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get("clapMcp"))
+        .and_then(|value| value.get("argGroups"))
+        .and_then(|value| value.as_array())
+        .expect("search should expose argGroups meta");
+    assert_eq!(arg_groups.len(), 1);
+    assert_eq!(
+        arg_groups[0].get("id").and_then(|v| v.as_str()),
+        Some("execs")
+    );
+    let member_ids: Vec<&str> = arg_groups[0]
+        .get("args")
+        .and_then(|v| v.as_array())
+        .expect("args array")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(member_ids.contains(&"exec"));
+    assert!(member_ids.contains(&"exec_batch"));
+
+    let description = search
+        .description
+        .as_ref()
+        .map(|d| d.to_string())
+        .expect("search description");
+    assert!(
+        description.contains("Arg groups (parse-time)"),
+        "description should include parse-time hint: {description}"
+    );
+
+    let ok = client
+        .call_tool(
+            CallToolRequestParams::new("search").with_arguments(serde_json::Map::from_iter([
+                ("pattern".to_string(), serde_json::json!("*.rs")),
+                ("exec".to_string(), serde_json::json!("echo hi")),
+            ])),
+        )
+        .await
+        .expect("search with exec only should succeed");
+    assert!(tool_text(&ok).contains("pattern=*.rs"));
+    assert!(tool_text(&ok).contains("exec=echo hi"));
+
+    let both = client
+        .call_tool(
+            CallToolRequestParams::new("search").with_arguments(serde_json::Map::from_iter([
+                ("pattern".to_string(), serde_json::json!("*.rs")),
+                ("exec".to_string(), serde_json::json!("echo hi")),
+                ("exec_batch".to_string(), serde_json::json!("echo batch")),
+            ])),
+        )
+        .await
+        .expect("search with both exec flags should return a tool result");
+    assert_eq!(
+        both.is_error,
+        Some(true),
+        "conflicting ArgGroup members should fail at parse time"
+    );
+    let err_text = tool_text(&both);
+    assert!(
+        err_text.contains("exec") || err_text.contains("cannot be used"),
+        "parse failure should be reported: {err_text}"
     );
 
     shutdown(client).await;

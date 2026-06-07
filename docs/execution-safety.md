@@ -612,12 +612,57 @@ forwarders that never return.
 
 ## Arg groups
 
-clap `ArgGroup` rules (exactly one of several flags) are enforced at argv parse
-time. MCP tool JSON Schema lists arguments independently; clap-mcp does not emit
-JSON Schema shapes derived from ArgGroup graphs. That would require brittle
-introspection of clap internals and would not reliably cover all group semantics
-across clap versions. Invalid combinations fail when clap parses the rebuilt
-argv. Document exclusivity in tool descriptions when agents need hints.
+clap `ArgGroup` rules (for example exactly one of several flags) are enforced at
+argv parse time. MCP tool JSON Schema lists arguments independently; clap-mcp
+does **not** emit JSON Schema `oneOf` shapes derived from ArgGroup graphs.
+Instead, schema extraction exports advisory hints:
+
+* **`meta.clapMcp.argGroups`** on each tool — structured membership from
+  `Command::get_groups()` on that tool's command node.
+* **Description suffix** — one parse-time sentence on the tool `description`
+  when groups exist (same data as meta).
+* **[`ClapArgGroup`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapArgGroup.html)**
+  on each [`ClapCommand`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapCommand.html)
+  in [`ClapSchema`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapSchema.html).
+
+Example `argGroups` entry:
+
+```json
+"argGroups": [
+  {
+    "id": "execs",
+    "args": ["exec", "exec_batch"],
+    "required": true,
+    "multiple": false
+  }
+]
+```
+
+**Agent usage:** for `required: true`, supply one member of the group; for
+optional groups, at most one unless `multiple` is true. Invalid combinations
+still fail when clap parses the rebuilt argv (hints do not block bad JSON).
+
+Runnable reference:
+[`examples/servers/arg_group_hints.rs`](../examples/servers/arg_group_hints.rs)
+(`cargo run -p clap-mcp-examples --bin arg_group_hints -- --mcp`).
+
+| Risk / limitation | Behavior | Mitigation |
+| --- | --- | --- |
+| Not schema validation | `inputSchema` lists args independently; no `oneOf` | Treat hints as advisory; expect parse errors |
+| Per command node | Groups on parent vs leaf subcommand attach to that node's tool only | Put groups on the command node agents invoke |
+| Hidden / skipped args | Group members use the same MCP visibility filter as `inputSchema` (`skip`, builtins) | Use `#[clap_mcp(skip)]` when an arg must not be agent-visible |
+| Sub-two-member groups | Groups with fewer than two visible members are omitted | Ensure at least two MCP-visible members or document manually |
+| Description suffix | Human-readable duplicate of meta | Prefer `meta.clapMcp.argGroups` for structured clients |
+
+> [!WARNING]
+> Arg group hints do not prevent invalid MCP JSON from reaching clap. They help
+> agents choose valid combinations; clap parse errors remain the enforcement
+> layer.
+
+> [!NOTE]
+> Field semantics (`required`, `multiple`): [`ClapArgGroup`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapArgGroup.html)
+> rustdoc. Runnable demo: `arg_group_hints` (see
+> [examples/README.md](../examples/README.md)).
 
 ## Cross-tool serialization
 
