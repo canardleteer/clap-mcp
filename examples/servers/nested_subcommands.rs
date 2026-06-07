@@ -21,7 +21,7 @@ enum TopLevel {
 }
 
 #[derive(Debug, Subcommand, ClapMcp)]
-#[clap_mcp_output_from = "run_parent"]
+#[clap_mcp(schema_only)]
 enum ParentCommand {
     Child {
         #[arg(long)]

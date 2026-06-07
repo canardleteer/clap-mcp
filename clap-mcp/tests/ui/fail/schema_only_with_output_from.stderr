@@ -1,0 +1,5 @@
+error: clap_mcp: #[clap_mcp(schema_only)] cannot be combined with #[clap_mcp_output_from], #[clap_mcp_output_from_with_state], or #[clap_mcp_state_type]
+ --> tests/ui/fail/schema_only_with_output_from.rs:7:6
+  |
+7 | enum Bad {
+  |      ^^^

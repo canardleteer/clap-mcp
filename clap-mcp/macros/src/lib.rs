@@ -270,6 +270,25 @@ fn serialized_scope_arg_ids(serialized: &ClapMcpSerialized) -> Option<&[String]>
 }
 
 /// Parses #[clap_mcp(skip)] from attributes.
+fn has_clap_mcp_schema_only(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let mut found = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("schema_only") {
+                found = true;
+            }
+            Ok(())
+        });
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
 fn has_clap_mcp_skip(attrs: &[syn::Attribute]) -> bool {
     for attr in attrs {
         if !attr.path().is_ident("clap_mcp") {
@@ -935,6 +954,32 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
 
     let output_from_with_state = get_clap_mcp_output_from_with_state(&input.attrs);
     let state_type = get_clap_mcp_state_type(&input.attrs);
+    let schema_only = has_clap_mcp_schema_only(&input.attrs);
+    if schema_only {
+        if !matches!(&input.data, syn::Data::Enum(_)) {
+            return TokenStream::from(
+                syn::Error::new_spanned(
+                    &input.ident,
+                    "clap_mcp: #[clap_mcp(schema_only)] is only supported on subcommand enums",
+                )
+                .to_compile_error(),
+            );
+        }
+        if get_clap_mcp_output_from(&input.attrs).is_some()
+            || output_from_with_state.is_some()
+            || get_clap_mcp_state_type(&input.attrs).is_some()
+        {
+            return TokenStream::from(
+                syn::Error::new_spanned(
+                    &input.ident,
+                    "clap_mcp: #[clap_mcp(schema_only)] cannot be combined with \
+                     #[clap_mcp_output_from], #[clap_mcp_output_from_with_state], or \
+                     #[clap_mcp_state_type]",
+                )
+                .to_compile_error(),
+            );
+        }
+    }
     if state_type.is_some() && output_from_with_state.is_none() {
         return TokenStream::from(
             syn::Error::new_spanned(
@@ -985,6 +1030,15 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
             syn::Error::new_spanned(
                 &input.ident,
                 "clap_mcp: #[clap_mcp(stateful)] requires reinvocation_safe (in-process execution)",
+            )
+            .to_compile_error(),
+        );
+    }
+    if schema_only && stateful_effective {
+        return TokenStream::from(
+            syn::Error::new_spanned(
+                &input.ident,
+                "clap_mcp: #[clap_mcp(schema_only)] cannot be combined with #[clap_mcp(stateful)]",
             )
             .to_compile_error(),
         );
@@ -1045,77 +1099,82 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
 
     let executor_impl = match &input.data {
         syn::Data::Enum(data) => {
-            let run_path = get_clap_mcp_output_from(&input.attrs);
-            let run_with_state = output_from_with_state.as_ref();
-            let state_ty = state_type.as_ref();
-            let projected_sub = subcommand_field_type_from_enum(data);
-            match (run_path, run_with_state, state_ty) {
-                (Some(run), None, None) => quote! {
-                    impl clap_mcp::ClapMcpToolExecutor for #name {
-                        fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
-                            clap_mcp::IntoClapMcpResult::into_tool_result(#run(self))
-                        }
-                    }
-                },
-                (None, Some(run), Some(st)) => quote! {
-                    impl clap_mcp::ClapMcpToolExecutorWithState for #name {
-                        type State = #st;
-                        fn execute_for_mcp_with_state(
-                            self,
-                            state: &Self::State,
-                        ) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
-                            clap_mcp::IntoClapMcpResult::into_tool_result(#run(self, state))
-                        }
-                    }
-                },
-                (None, Some(run), None) => {
-                    if let Some(sub_ty) = projected_sub {
-                        quote! {
-                            impl clap_mcp::ClapMcpToolExecutorWithState for #name {
-                                type State = <#sub_ty as clap_mcp::ClapMcpToolExecutorWithState>::State;
-                                fn execute_for_mcp_with_state(
-                                    self,
-                                    state: &Self::State,
-                                ) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
-                                    clap_mcp::IntoClapMcpResult::into_tool_result(#run(self, state))
-                                }
+            if schema_only {
+                quote! {}
+            } else {
+                let run_path = get_clap_mcp_output_from(&input.attrs);
+                let run_with_state = output_from_with_state.as_ref();
+                let state_ty = state_type.as_ref();
+                let projected_sub = subcommand_field_type_from_enum(data);
+                match (run_path, run_with_state, state_ty) {
+                    (Some(run), None, None) => quote! {
+                        impl clap_mcp::ClapMcpToolExecutor for #name {
+                            fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+                                clap_mcp::IntoClapMcpResult::into_tool_result(#run(self))
                             }
                         }
-                    } else {
-                        let err = syn::Error::new_spanned(
-                            &input.ident,
-                            "clap_mcp: #[clap_mcp_output_from_with_state = \"run\"] on a leaf enum \
+                    },
+                    (None, Some(run), Some(st)) => quote! {
+                        impl clap_mcp::ClapMcpToolExecutorWithState for #name {
+                            type State = #st;
+                            fn execute_for_mcp_with_state(
+                                self,
+                                state: &Self::State,
+                            ) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+                                clap_mcp::IntoClapMcpResult::into_tool_result(#run(self, state))
+                            }
+                        }
+                    },
+                    (None, Some(run), None) => {
+                        if let Some(sub_ty) = projected_sub {
+                            quote! {
+                                impl clap_mcp::ClapMcpToolExecutorWithState for #name {
+                                    type State = <#sub_ty as clap_mcp::ClapMcpToolExecutorWithState>::State;
+                                    fn execute_for_mcp_with_state(
+                                        self,
+                                        state: &Self::State,
+                                    ) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+                                        clap_mcp::IntoClapMcpResult::into_tool_result(#run(self, state))
+                                    }
+                                }
+                            }
+                        } else {
+                            let err = syn::Error::new_spanned(
+                                &input.ident,
+                                "clap_mcp: #[clap_mcp_output_from_with_state = \"run\"] on a leaf enum \
                              requires #[clap_mcp_state_type = \"Type\"] matching the second \
                              parameter of run (e.g. run(cmd, state: &Mutex<S>) → \
                              #[clap_mcp_state_type = \"Mutex<S>\"])",
+                            );
+                            return TokenStream::from(err.to_compile_error());
+                        }
+                    }
+                    (Some(run), Some(run_st), Some(st)) => quote! {
+                        impl clap_mcp::ClapMcpToolExecutor for #name {
+                            fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+                                clap_mcp::IntoClapMcpResult::into_tool_result(#run(self))
+                            }
+                        }
+                        impl clap_mcp::ClapMcpToolExecutorWithState for #name {
+                            type State = #st;
+                            fn execute_for_mcp_with_state(
+                                self,
+                                state: &Self::State,
+                            ) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+                                clap_mcp::IntoClapMcpResult::into_tool_result(#run_st(self, state))
+                            }
+                        }
+                    },
+                    _ => {
+                        let err = syn::Error::new_spanned(
+                            &input.ident,
+                            "clap_mcp: enum must have #[clap_mcp_output_from = \"run\"] and/or \
+                         #[clap_mcp_output_from_with_state = \"run\"] (with \
+                         #[clap_mcp_state_type = \"Type\"] on leaf enums), or \
+                         #[clap_mcp(schema_only)] when an ancestor owns tool execution",
                         );
                         return TokenStream::from(err.to_compile_error());
                     }
-                }
-                (Some(run), Some(run_st), Some(st)) => quote! {
-                    impl clap_mcp::ClapMcpToolExecutor for #name {
-                        fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
-                            clap_mcp::IntoClapMcpResult::into_tool_result(#run(self))
-                        }
-                    }
-                    impl clap_mcp::ClapMcpToolExecutorWithState for #name {
-                        type State = #st;
-                        fn execute_for_mcp_with_state(
-                            self,
-                            state: &Self::State,
-                        ) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
-                            clap_mcp::IntoClapMcpResult::into_tool_result(#run_st(self, state))
-                        }
-                    }
-                },
-                _ => {
-                    let err = syn::Error::new_spanned(
-                        &input.ident,
-                        "clap_mcp: enum must have #[clap_mcp_output_from = \"run\"] and/or \
-                         #[clap_mcp_output_from_with_state = \"run\"] (with \
-                         #[clap_mcp_state_type = \"Type\"] on leaf enums)",
-                    );
-                    return TokenStream::from(err.to_compile_error());
                 }
             }
         }
