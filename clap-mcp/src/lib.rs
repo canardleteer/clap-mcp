@@ -206,8 +206,9 @@ pub trait ClapMcpConfigProvider {
     fn clap_mcp_config() -> ClapMcpConfig;
 }
 
-/// Provides MCP schema metadata (skip, requires, task tools) from `#[clap_mcp(skip)]`,
-/// `#[clap_mcp(requires = "arg_name")]`, and optional `#[clap_mcp(task)]` on variants.
+/// Provides MCP schema metadata (skip, requires, task tools, serialize) from `#[clap_mcp(skip)]`,
+/// `#[clap_mcp(requires = "arg_name")]`, optional `#[clap_mcp(task)]`, and `#[clap_mcp(serialized)]`
+/// on variants.
 ///
 /// Implemented by the `#[derive(ClapMcp)]` macro. For custom types, implement
 /// with `fn clap_mcp_schema_metadata() -> ClapMcpSchemaMetadata { ClapMcpSchemaMetadata::default() }`.
@@ -863,6 +864,90 @@ pub struct ClapMcpSchemaMetadata {
     /// `#[clap_mcp_output_one_of]` with the `output-schema` feature), this schema is attached
     /// to each tool's `output_schema` field.
     pub output_schema: Option<serde_json::Value>,
+    /// Per-tool topical serialization when [`ClapMcpConfig::parallel_safe`] is true.
+    /// Populated by `#[clap_mcp(serialized)]` or `#[clap_mcp(serialized = "arg1, arg2")]` on
+    /// enum variants.
+    pub serialize_tools: std::collections::HashMap<String, ClapMcpSerializeScope>,
+    /// Optional per-arg topic key functions for arg-scoped serialization (tool name → arg id → fn).
+    /// Populated when a field has `#[clap_mcp(serialize_topic)]` and the variant uses arg-scoped
+    /// `#[clap_mcp(serialized = "...")]`. Requires in-process / derive wiring; subprocess-only
+    /// servers set this imperatively when needed.
+    pub serialize_topic_args: std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, SerializeTopicSegmentFn>,
+    >,
+}
+
+/// Computes one arg's contribution to a topical lock key from MCP JSON.
+pub type SerializeTopicSegmentFn = fn(value: &serde_json::Value) -> Option<String>;
+
+/// Optional typed topical lock segments for arg-scoped serialization.
+///
+/// Default arg-scoped serialization uses canonical MCP JSON (no `Hash` or `Eq` on your Rust types).
+/// Implement this trait (or use [`impl_serialize_topic_hash_eq`] / [`impl_serialize_topic_serde_eq`])
+/// and mark the field with `#[clap_mcp(serialize_topic)]` when parsed-type identity should drive
+/// the lock topic.
+pub trait ClapMcpSerializeTopic {
+    /// Returns a stable lock-key segment for this arg value, or `None` to fall back to canonical JSON
+    /// for that arg (and then to the tool-wide topic if the arg is absent).
+    fn serialize_topic_segment(value: &serde_json::Value) -> Option<String>;
+}
+
+/// Uses [`Hash`] of the deserialized value for the topic segment (after JSON parse succeeds).
+#[macro_export]
+macro_rules! impl_serialize_topic_hash_eq {
+    ($ty:ty) => {
+        impl $crate::ClapMcpSerializeTopic for $ty {
+            fn serialize_topic_segment(value: &serde_json::Value) -> Option<String> {
+                use std::hash::{Hash, Hasher};
+                let parsed: $ty = serde_json::from_value(value.clone()).ok()?;
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                parsed.hash(&mut hasher);
+                Some(format!("h:{}", hasher.finish()))
+            }
+        }
+    };
+}
+
+/// Uses [`serde`] JSON of the deserialized value for the topic segment (semantic equality when
+/// `Eq` matches serde's encoding).
+#[macro_export]
+macro_rules! impl_serialize_topic_serde_eq {
+    ($ty:ty) => {
+        impl $crate::ClapMcpSerializeTopic for $ty {
+            fn serialize_topic_segment(value: &serde_json::Value) -> Option<String> {
+                let parsed: $ty = serde_json::from_value(value.clone()).ok()?;
+                serde_json::to_string(&parsed).ok()
+            }
+        }
+    };
+}
+
+impl_serialize_topic_serde_eq!(String);
+impl_serialize_topic_serde_eq!(bool);
+impl_serialize_topic_serde_eq!(i32);
+impl_serialize_topic_serde_eq!(i64);
+impl_serialize_topic_serde_eq!(u32);
+impl_serialize_topic_serde_eq!(u64);
+
+impl<T> ClapMcpSerializeTopic for Option<T>
+where
+    T: ClapMcpSerializeTopic,
+{
+    fn serialize_topic_segment(value: &serde_json::Value) -> Option<String> {
+        if value.is_null() {
+            return None;
+        }
+        T::serialize_topic_segment(value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClapMcpSerializeScope {
+    /// All invocations of the tool share one lock topic.
+    Tool,
+    /// Lock topic includes canonical MCP JSON values for the listed arg ids.
+    Args(Vec<String>),
 }
 
 pub(crate) fn tool_task_eligible(tool_name: &str, metadata: &ClapMcpSchemaMetadata) -> bool {
@@ -1122,6 +1207,44 @@ fn command_to_tool_with_config(
         );
         if tool_task_eligible(&cmd.name, metadata) {
             clap_mcp.insert("taskAugmented".into(), serde_json::Value::Bool(true));
+        }
+        if let Some(scope) = metadata.serialize_tools.get(&cmd.name) {
+            clap_mcp.insert("serialized".into(), serde_json::Value::Bool(true));
+            match scope {
+                ClapMcpSerializeScope::Tool => {
+                    clap_mcp.insert(
+                        "serializeScope".into(),
+                        serde_json::Value::String("tool".into()),
+                    );
+                }
+                ClapMcpSerializeScope::Args(arg_ids) => {
+                    clap_mcp.insert(
+                        "serializeScope".into(),
+                        serde_json::Value::String("args".into()),
+                    );
+                    clap_mcp.insert(
+                        "serializeArgs".into(),
+                        serde_json::Value::Array(
+                            arg_ids
+                                .iter()
+                                .cloned()
+                                .map(serde_json::Value::String)
+                                .collect(),
+                        ),
+                    );
+                    if let Some(topic_args) = metadata.serialize_topic_args.get(&cmd.name) {
+                        let ids: Vec<_> = topic_args.keys().cloned().collect();
+                        if !ids.is_empty() {
+                            clap_mcp.insert(
+                                "serializeTopicArgs".into(),
+                                serde_json::Value::Array(
+                                    ids.into_iter().map(serde_json::Value::String).collect(),
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
         }
         let mut m = Meta::default();
         m.0.insert("clapMcp".into(), serde_json::Value::Object(clap_mcp));
@@ -2644,6 +2767,73 @@ fn value_to_string(v: &serde_json::Value) -> Option<String> {
     })
 }
 
+/// Stable string for one MCP argument value when building topical lock keys.
+pub(crate) fn canonical_lock_arg_value(v: &serde_json::Value) -> Option<String> {
+    if v.is_null() {
+        return None;
+    }
+    match v {
+        serde_json::Value::Array(arr) => {
+            let mut parts = Vec::with_capacity(arr.len());
+            for item in arr {
+                parts.push(canonical_lock_arg_value(item)?);
+            }
+            Some(format!("[{}]", parts.join(",")))
+        }
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<_> = map.keys().cloned().collect();
+            keys.sort();
+            let mut out = String::from("{");
+            for (i, key) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                let val = canonical_lock_arg_value(map.get(key)?)?;
+                out.push_str(key);
+                out.push(':');
+                out.push_str(&val);
+            }
+            out.push('}');
+            Some(out)
+        }
+        _ => value_to_string(v),
+    }
+}
+
+/// Builds a topical lock key for a tool call when the tool has serialize metadata.
+pub(crate) fn serialize_lock_key(
+    tool_name: &str,
+    args: &serde_json::Map<String, serde_json::Value>,
+    scope: &ClapMcpSerializeScope,
+    topic_fns: Option<&std::collections::HashMap<String, SerializeTopicSegmentFn>>,
+) -> String {
+    let tool_prefix = format!("tool:{tool_name}");
+    match scope {
+        ClapMcpSerializeScope::Tool => tool_prefix,
+        ClapMcpSerializeScope::Args(arg_ids) => {
+            let mut sorted_ids: Vec<_> = arg_ids.clone();
+            sorted_ids.sort();
+            let mut segments = Vec::with_capacity(sorted_ids.len());
+            for id in &sorted_ids {
+                match args.get(id) {
+                    Some(value) => {
+                        let segment = topic_fns
+                            .and_then(|fns| fns.get(id))
+                            .and_then(|f| f(value))
+                            .or_else(|| canonical_lock_arg_value(value));
+                        match segment {
+                            Some(value) => segments.push(format!("{id}={value}")),
+                            None => return tool_prefix,
+                        }
+                    }
+                    None => return tool_prefix,
+                }
+            }
+            format!("{tool_prefix}:{}", segments.join(":"))
+        }
+    }
+}
+
 /// Returns one or more string values for MCP input. For arrays, returns each element as string; otherwise single value.
 fn value_to_strings(v: &serde_json::Value) -> Option<Vec<String>> {
     if v.is_null() {
@@ -2779,6 +2969,7 @@ mod tests {
         Content, GetPromptRequestParams, PromptMessage, PromptMessageContent, PromptMessageRole,
         RawContent, ReadResourceRequestParams, ResourceContents, Tool,
     };
+    use serde::Deserialize;
     use serde_json::json;
     use std::error::Error;
     use std::sync::{Arc, Mutex};
@@ -3117,6 +3308,147 @@ mod tests {
         assert!(error.contains("input"));
 
         assert!(validate_required_args(&schema, "unknown", &serde_json::Map::new()).is_ok());
+    }
+
+    #[test]
+    fn test_serialize_lock_key_tool_wide() {
+        let scope = ClapMcpSerializeScope::Tool;
+        let args = serde_json::Map::new();
+        assert_eq!(
+            serialize_lock_key("flush", &args, &scope, None),
+            "tool:flush"
+        );
+    }
+
+    #[test]
+    fn test_serialize_lock_key_arg_scoped() {
+        let scope = ClapMcpSerializeScope::Args(vec!["output".into()]);
+        let mut args = serde_json::Map::new();
+        args.insert("output".into(), json!("abc"));
+        assert_eq!(
+            serialize_lock_key("flush", &args, &scope, None),
+            "tool:flush:output=abc"
+        );
+    }
+
+    #[test]
+    fn test_serialize_lock_key_missing_arg_falls_back_to_tool_wide() {
+        let scope = ClapMcpSerializeScope::Args(vec!["output".into()]);
+        let args = serde_json::Map::new();
+        assert_eq!(
+            serialize_lock_key("flush", &args, &scope, None),
+            "tool:flush"
+        );
+    }
+
+    #[test]
+    fn test_serialize_lock_key_multi_arg_sorted() {
+        let scope = ClapMcpSerializeScope::Args(vec!["bucket".into(), "region".into()]);
+        let mut args = serde_json::Map::new();
+        args.insert("region".into(), json!("us-east"));
+        args.insert("bucket".into(), json!("logs"));
+        assert_eq!(
+            serialize_lock_key("sync", &args, &scope, None),
+            "tool:sync:bucket=logs:region=us-east"
+        );
+    }
+
+    #[test]
+    fn test_serialize_lock_key_typed_topic_fn() {
+        fn topic(value: &serde_json::Value) -> Option<String> {
+            String::serialize_topic_segment(value)
+        }
+        let scope = ClapMcpSerializeScope::Args(vec!["output".into()]);
+        let mut fns = std::collections::HashMap::new();
+        fns.insert("output".to_string(), topic as SerializeTopicSegmentFn);
+        let mut args = serde_json::Map::new();
+        args.insert("output".into(), json!("a"));
+        let key = serialize_lock_key("flush", &args, &scope, Some(&fns));
+        assert!(key.starts_with("tool:flush:output="));
+        assert_ne!(key, "tool:flush");
+    }
+
+    #[test]
+    fn test_serialize_lock_key_typed_topic_fallback_to_json() {
+        fn bad_parse(_: &serde_json::Value) -> Option<String> {
+            None
+        }
+        let scope = ClapMcpSerializeScope::Args(vec!["output".into()]);
+        let mut fns = std::collections::HashMap::new();
+        fns.insert("output".to_string(), bad_parse as SerializeTopicSegmentFn);
+        let mut args = serde_json::Map::new();
+        args.insert("output".into(), json!("plain"));
+        assert_eq!(
+            serialize_lock_key("flush", &args, &scope, Some(&fns)),
+            "tool:flush:output=plain"
+        );
+    }
+
+    #[test]
+    fn test_serialize_topic_hash_eq_differs_from_json_for_equivalent_values() {
+        #[derive(Hash, Eq, PartialEq, Deserialize)]
+        struct Topic(u32);
+        impl_serialize_topic_hash_eq!(Topic);
+        let json_key = canonical_lock_arg_value(&json!(1)).unwrap();
+        let typed_key = Topic::serialize_topic_segment(&json!(1)).unwrap();
+        assert_ne!(json_key, typed_key);
+        assert_eq!(
+            Topic::serialize_topic_segment(&json!(1)),
+            Topic::serialize_topic_segment(&json!(1))
+        );
+    }
+
+    #[test]
+    fn test_canonical_lock_arg_value_object_key_order() {
+        let a = json!({"b": 2, "a": 1});
+        let b = json!({"a": 1, "b": 2});
+        assert_eq!(canonical_lock_arg_value(&a), canonical_lock_arg_value(&b));
+    }
+
+    #[test]
+    fn test_canonical_lock_arg_value_array_order_matters() {
+        assert_ne!(
+            canonical_lock_arg_value(&json!(["a", "b"])),
+            canonical_lock_arg_value(&json!(["b", "a"]))
+        );
+    }
+
+    #[test]
+    fn test_tools_from_schema_serializes_meta() {
+        let schema = sample_helper_schema();
+        let config = ClapMcpConfig {
+            reinvocation_safe: true,
+            parallel_safe: true,
+            ..Default::default()
+        };
+        let mut metadata = ClapMcpSchemaMetadata::default();
+        metadata.serialize_tools.insert(
+            "sample".into(),
+            ClapMcpSerializeScope::Args(vec!["input".into()]),
+        );
+        let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "sample")
+            .expect("sample tool");
+        let clap_mcp = tool
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("clapMcp"))
+            .and_then(|value| value.as_object())
+            .expect("clapMcp meta");
+        assert_eq!(
+            clap_mcp.get("serialized").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            clap_mcp.get("serializeScope").and_then(|v| v.as_str()),
+            Some("args")
+        );
+        assert_eq!(
+            clap_mcp.get("serializeArgs").and_then(|v| v.as_array()),
+            Some(&vec![json!("input")])
+        );
     }
 
     #[test]

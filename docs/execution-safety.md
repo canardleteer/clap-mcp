@@ -5,7 +5,8 @@
 
 [← Documentation index](../README.md#documentation)
 
-CLIs differ in how safely they can be invoked over MCP. Two flags control this:
+CLIs differ in how safely they can be invoked over MCP. Three layers control
+concurrency and process reuse:
 
 * **`reinvocation_safe`** (default: `false`): Controls whether tool calls spawn
   a fresh subprocess of your binary (`false`) or run in-process via
@@ -13,9 +14,12 @@ CLIs differ in how safely they can be invoked over MCP. Two flags control this:
   state can survive repeated invocations without a process restart. Most CLIs
   that don't hold mutable global state can set this to `true`.
 
-* **`parallel_safe`** (default: `false`): Controls whether tool calls are
-  serialized behind a tokio `Mutex` (`false`) or dispatched concurrently
-  (`true`). Set to `true` only if your CLI logic is safe to run concurrently.
+* **`parallel_safe`** (default: `false`): When `false`, **every** MCP tool call
+  (and task body) is serialized behind one global tokio `Mutex`. That is the
+  safe umbrella when you are unsure, but it over-serializes CLIs where only a
+  few subcommands need mutual exclusion. When `true`, unmarked tools may overlap;
+  combine with [topical serialization](#topical-serialization) to lock only the
+  subcommands (or arg topics) that need it.
 
 * **`share_runtime`** (default: `false`): When `reinvocation_safe` is true,
   controls how async tool execution runs. See
@@ -77,9 +81,145 @@ tool execution.
 Compilable example: [Usage — Derive with attributes](usage.md#derive-with-attributes-recommended).
 
 > [!NOTE]
-> With `reinvocation_safe`, tool calls run in-process. `parallel_safe` defaults
-> to `false` (serialized); set `parallel_safe = true` only when your `run`
-> logic is concurrency-safe.
+> With `reinvocation_safe`, tool calls run in-process. `parallel_safe = false`
+> serializes **all** tools (heavy hammer). Prefer `parallel_safe = true` plus
+> `#[clap_mcp(serialized)]` on the few subcommands that need exclusion when your
+> CLI is mostly concurrent-safe.
+
+## Topical serialization
+
+When most of your CLI is safe to run concurrently but a few subcommands need
+mutual exclusion, set `parallel_safe = true` globally and mark only those
+subcommands with `#[clap_mcp(serialized)]` or `#[clap_mcp(serialized = "arg")]`.
+That sculpts the global umbrella into per-tool (or per-arg) topics instead of
+forcing everything through one lock.
+
+| Declaration | Lock topic |
+| --- | --- |
+| `#[clap_mcp(serialized)]` on a variant | All invocations of that tool serialize together |
+| `#[clap_mcp(serialized = "output")]` | Invocations with the same MCP `output` value serialize; different values may overlap |
+| `#[clap_mcp(serialized = "region, bucket")]` | Composite topic from all listed arg ids (sorted when building the key) |
+
+**Specificity:** less specific declaration or invocation → wider lock. For
+arg-scoped serialization, if a listed arg is omitted or null in the MCP request,
+clap-mcp falls back to the tool-wide topic for that tool (same as `serialized`
+without args).
+
+Topical serialization applies only when `parallel_safe = true`. When
+`parallel_safe = false`, the global mutex still serializes all tools (topical
+metadata is ignored).
+
+```rust
+#[derive(Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = true)]
+#[clap_mcp_output_from = "run"]
+enum Cli {
+    Search { #[arg(long)] query: String },
+
+    /// All flush invocations serialize with each other.
+    #[clap_mcp(serialized)]
+    FlushAll,
+
+    /// Only flushes targeting the same output path serialize together.
+    #[clap_mcp(serialized = "output")]
+    Flush {
+        #[clap_mcp(serialize_topic)]
+        #[arg(long)]
+        output: String,
+    },
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Search { query } => format!("search: {query}"),
+        Cli::FlushAll => "flushed".into(),
+        Cli::Flush { output } => format!("flushed to {output}"),
+    }
+}
+```
+
+Imperative metadata: set [`ClapMcpSchemaMetadata::serialize_tools`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.serialize_tools)
+with [`ClapMcpSerializeScope::Tool`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.ClapMcpSerializeScope.html)
+or `ClapMcpSerializeScope::Args(vec![...])`. Marked tools expose
+`meta.clapMcp.serialized`, `serializeScope`, optional `serializeArgs`, and
+`serializeTopicArgs` on `list_tools`.
+
+### Default topic keys (no Rust traits required)
+
+Arg-scoped serialization uses **canonical MCP JSON** for lock keys. Your Rust arg
+types do not need `Hash`, `Eq`, or any clap-mcp trait. clap-mcp builds keys from
+the raw `tools/call` argument map before clap parses your enum. That keeps the
+common path declarative and subprocess-friendly.
+
+Canonicalization is best-effort for MCP dispatch, not a guarantee of equivalence
+after parsing (for example `"1"` vs `1` may differ). Prefer consistent MCP client
+types, or use typed topics below when parsed identity matters.
+
+### Optional typed topics (`Hash` / `Eq` / serde)
+
+When you **want** parsed-type semantics and accept the extra complexity, mark the
+field with `#[clap_mcp(serialize_topic)]` (the arg must appear in
+`serialized = "..."` on the same variant). clap-mcp calls
+[`ClapMcpSerializeTopic::serialize_topic_segment`] for that arg before falling
+back to JSON canonicalization.
+
+Helpers (opt-in per type):
+
+```rust
+use clap_mcp::{ClapMcpSerializeTopic, impl_serialize_topic_hash_eq, impl_serialize_topic_serde_eq};
+use serde::{Deserialize, Serialize};
+
+#[derive(Hash, Eq, PartialEq, Deserialize)]
+struct ShardId(u32);
+impl_serialize_topic_hash_eq!(ShardId);
+
+#[derive(Serialize, Deserialize, Eq, PartialEq)]
+struct OutputPath(String);
+impl_serialize_topic_serde_eq!(OutputPath);
+```
+
+`String` and common scalars already implement `ClapMcpSerializeTopic` via
+`impl_serialize_topic_serde_eq!`. Imperative servers can set
+[`ClapMcpSchemaMetadata::serialize_topic_args`] with function pointers directly.
+
+### Documented guidance (recommended use)
+
+* Use **arg-scoped** serialization on identity-like args: paths, resource names,
+  tenant ids, shard keys.
+* Use **tool-wide** `serialized` when the whole subcommand touches shared mutable
+  state and per-arg splitting is not worth the complexity.
+* Do **not** use arg-scoped serialization on large blobs, nested config objects,
+  or values whose JSON form may not match your CLI's parsed equality. Prefer
+  tool-wide `serialized` or lock inside `run()`.
+* Pair with `#[clap_mcp(requires = "output")]` when omitting a scoped arg is
+  invalid for your CLI anyway.
+
+### Complexity balance
+
+clap-mcp deliberately splits the problem into three levels so the derive surface
+stays small:
+
+| Level | Mechanism | Complexity | When |
+| --- | --- | --- | --- |
+| Global | `parallel_safe = false` | Lowest config | Unsure; serialize everything |
+| Topical (JSON) | `parallel_safe = true` + `serialized` / `serialized = "arg"` | Low | ~95% case; identity-like args |
+| Typed topic | `serialize_topic` + `ClapMcpSerializeTopic` | Medium | Parsed `Hash`/`Eq`/serde identity |
+| In-process locks | `Mutex` in `run()` / [stateful tools](stateful-tools.md) | Highest | Cross-tool groups, custom rules |
+
+The attribute layer is **documented guidance**, not a validated concurrency
+framework. JSON topical keys do not promise post-parse equality. Typed topics
+extend that when you implement the trait (or use the macros) and accept parse +
+key maintenance. Anything beyond that belongs in your tool code, not more
+clap-mcp attributes.
+
+> [!TIP]
+> Topical serialization covers the common case: mark a few subcommands, optionally
+> keyed by a simple arg. Use `serialize_topic` when parsed-type identity matters.
+> If you need cross-command lock groups or ordering, lock inside your tool code
+> instead of extending the derive surface. See [Stateful MCP tools](stateful-tools.md).
+
+Runnable examples: **topical_serialization** (author demo) and **topical_serial_probe**
+(integration probe) in [examples/README.md](../examples/README.md).
 
 ## Schema metadata (skip and requires)
 

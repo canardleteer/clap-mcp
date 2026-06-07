@@ -5,7 +5,7 @@ use clap_mcp::AsStructured;
 use clap_mcp::ClapMcp;
 use clap_mcp::{
     ClapMcpConfig, ClapMcpConfigProvider, ClapMcpError, ClapMcpRunnable, ClapMcpSchemaMetadata,
-    ClapMcpSchemaMetadataProvider, ClapMcpToolExecutor, ClapMcpToolOutput,
+    ClapMcpSchemaMetadataProvider, ClapMcpSerializeScope, ClapMcpToolExecutor, ClapMcpToolOutput,
     LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, McpListen, PROMPT_LOGGING_GUIDE,
     ParseOrServeMcp, ServeMcpBuilder, run_async_tool, schema_from_command,
     schema_from_command_with_metadata, serve_mcp, tools_from_schema_with_metadata,
@@ -838,6 +838,92 @@ fn run_skip_requires(cmd: TestSkipRequires) -> String {
         ),
         TestSkipRequires::Sort { versions } => format!("versions: {:?}", versions),
     }
+}
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = true)]
+#[clap_mcp_output_from = "run_serialized_metadata"]
+#[command(name = "test-serialized-metadata")]
+enum TestSerializedMetadata {
+    #[clap_mcp(serialized)]
+    Whole,
+    #[clap_mcp(serialized = "target")]
+    Scoped {
+        #[clap_mcp(serialize_topic)]
+        #[arg(long)]
+        target: Option<String>,
+    },
+}
+
+fn run_serialized_metadata(cmd: TestSerializedMetadata) -> String {
+    match cmd {
+        TestSerializedMetadata::Whole => "whole".to_string(),
+        TestSerializedMetadata::Scoped { target } => format!("scoped: {target:?}"),
+    }
+}
+
+#[test]
+fn test_clap_mcp_serialized_metadata() {
+    let metadata = TestSerializedMetadata::clap_mcp_schema_metadata();
+    assert_eq!(
+        metadata.serialize_tools.get("whole"),
+        Some(&ClapMcpSerializeScope::Tool)
+    );
+    assert_eq!(
+        metadata.serialize_tools.get("scoped"),
+        Some(&ClapMcpSerializeScope::Args(vec!["target".into()]))
+    );
+
+    let config = ClapMcpConfig {
+        reinvocation_safe: true,
+        parallel_safe: true,
+        ..Default::default()
+    };
+    let cmd = TestSerializedMetadata::command();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+    let whole = tools
+        .iter()
+        .find(|t| t.name == "whole")
+        .expect("whole tool");
+    let scoped = tools
+        .iter()
+        .find(|t| t.name == "scoped")
+        .expect("scoped tool");
+    let whole_meta = whole
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("clapMcp"))
+        .and_then(|v| v.as_object())
+        .expect("whole clapMcp meta");
+    assert_eq!(
+        whole_meta.get("serialized").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        whole_meta.get("serializeScope").and_then(|v| v.as_str()),
+        Some("tool")
+    );
+    let scoped_meta = scoped
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("clapMcp"))
+        .and_then(|v| v.as_object())
+        .expect("scoped clapMcp meta");
+    assert_eq!(
+        scoped_meta.get("serializeScope").and_then(|v| v.as_str()),
+        Some("args")
+    );
+    assert_eq!(
+        scoped_meta.get("serializeArgs").and_then(|v| v.as_array()),
+        Some(&vec![serde_json::json!("target")])
+    );
+    assert_eq!(
+        scoped_meta
+            .get("serializeTopicArgs")
+            .and_then(|v| v.as_array()),
+        Some(&vec![serde_json::json!("target")])
+    );
 }
 
 #[test]

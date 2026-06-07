@@ -155,7 +155,7 @@ your tool's locking, I/O, and global state. Details:
 | [`tokei`](https://github.com/XAMPPRocky/tokei) | Count lines / stats | `reinvocation_safe`, `parallel_safe = true` | Walks trees read-only |
 | [`xh`](https://github.com/ducaale/xh) | HTTP client (calls remote API) | `reinvocation_safe`, `parallel_safe = true` | Thin CLI over network; backend is separate |
 | gRPC/`tonic` admin CLI | RPC client (calls remote service) | `reinvocation_safe`, `parallel_safe = true` | Your user's case: MCP on the client binary |
-| [`cargo`](https://github.com/rust-lang/cargo) | Build / resolve / lock | Default (subprocess) or `reinvocation_safe`, `parallel_safe = false` | Registry and artifact locks; heavy side effects |
+| [`cargo`](https://github.com/rust-lang/cargo) | Build / resolve / lock | Default (subprocess) or `reinvocation_safe`, `parallel_safe = true`, `#[clap_mcp(serialized)]` on mutating subcommands | Registry and artifact locks; see [topical serialization](docs/execution-safety.md#topical-serialization) |
 | [`sqlx-cli`](https://github.com/launchbadge/sqlx) | DB migrate / prepare | Default (subprocess) | Schema mutations; prefer process isolation |
 | [`wasm-pack`](https://github.com/rustwasm/wasm-pack) | Build wasm via cargo | Default (subprocess) | Spawns nested toolchains |
 | [`hyperfine`](https://github.com/sharkdp/hyperfine) | Benchmark runner | Default (subprocess) | Spawns arbitrary shell commands per run |
@@ -181,7 +181,7 @@ Every guide in [`docs/`](docs/) is listed below. See also
 | [Usage patterns](docs/usage.md) | Derive (minimal / with attributes), imperative CLI, struct root |
 | [Custom resources and prompts](docs/custom-content.md) | `ClapMcpServeOptions`, static/dynamic content |
 | [Exporting agent skills](docs/export-skills.md) | `--export-skills`, SKILL.md generation |
-| [Execution safety](docs/execution-safety.md) | `reinvocation_safe`, skip/requires, dual derive, async embedders |
+| [Execution safety](docs/execution-safety.md) | `reinvocation_safe`, topical serialization, skip/requires, dual derive, async embedders |
 | [MCP tasks support](docs/mcp-tasks.md) | Task-augmented `tools/call`, examples, support matrix |
 | [Stateful MCP tools](docs/stateful-tools.md) | Shared session state, `parse_or_serve_mcp_with_state` |
 | [Security](docs/security.md) | Schema validation, subprocess model, trust boundaries |

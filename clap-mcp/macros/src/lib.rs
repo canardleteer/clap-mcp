@@ -180,6 +180,95 @@ fn has_clap_mcp_task(attrs: &[syn::Attribute]) -> bool {
     false
 }
 
+/// Parsed `#[clap_mcp(serialized)]` scope on a variant.
+enum ClapMcpSerialized {
+    Tool,
+    Args(Vec<String>),
+}
+
+/// Parses `#[clap_mcp(serialized)]` or `#[clap_mcp(serialized = "arg1, arg2")]` on enum variants.
+fn get_clap_mcp_serialized(attrs: &[syn::Attribute]) -> Option<ClapMcpSerialized> {
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let mut result = None;
+        let parse_result = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("serialized") {
+                if meta.input.peek(syn::token::Eq) {
+                    let value: Expr = meta.value()?.parse()?;
+                    if let Expr::Lit(lit) = value
+                        && let Lit::Str(s) = &lit.lit
+                    {
+                        let args: Vec<String> = s
+                            .value()
+                            .split(',')
+                            .map(|p| p.trim().to_string())
+                            .filter(|p| !p.is_empty())
+                            .collect();
+                        if args.is_empty() {
+                            return Err(
+                                meta.error("serialized = \"...\" requires at least one arg id")
+                            );
+                        }
+                        result = Some(ClapMcpSerialized::Args(args));
+                    }
+                } else {
+                    result = Some(ClapMcpSerialized::Tool);
+                }
+            }
+            Ok(())
+        });
+        if parse_result.is_err() {
+            continue;
+        }
+        if result.is_some() {
+            return result;
+        }
+    }
+    None
+}
+
+fn variant_field_ids(fields: &syn::Fields) -> Vec<String> {
+    fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            f.ident
+                .as_ref()
+                .map(|ident| ident.to_string())
+                .unwrap_or_else(|| format!("__f{i}"))
+        })
+        .collect()
+}
+
+/// Parses `#[clap_mcp(serialize_topic)]` on a field used with arg-scoped `serialized`.
+fn has_clap_mcp_serialize_topic(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let mut found = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("serialize_topic") {
+                found = true;
+            }
+            Ok(())
+        });
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
+fn serialized_scope_arg_ids(serialized: &ClapMcpSerialized) -> Option<&[String]> {
+    match serialized {
+        ClapMcpSerialized::Tool => None,
+        ClapMcpSerialized::Args(ids) => Some(ids.as_slice()),
+    }
+}
+
 /// Parses #[clap_mcp(skip)] from attributes.
 fn has_clap_mcp_skip(attrs: &[syn::Attribute]) -> bool {
     for attr in attrs {
@@ -679,6 +768,15 @@ fn subcommand_field_type_from_enum(data: &syn::DataEnum) -> Option<Type> {
 /// Make the argument required in the MCP tool schema even if optional in clap.
 /// Use `requires` for the field's own id, or `requires = "name"` to specify.
 ///
+/// ## `#[clap_mcp(serialized)]` / `#[clap_mcp(serialized = "arg1, arg2")]` (on variant)
+///
+/// When [`ClapMcpConfig::parallel_safe`] is true, serializes concurrent MCP invocations of this
+/// tool. Shorthand `serialized` locks the whole tool; `serialized = "output"` locks by arg id
+/// (comma-separated for multiple ids). See the execution-safety guide for documented use.
+///
+/// Optional: `#[clap_mcp(serialize_topic)]` on a field listed in `serialized = "..."` uses
+/// [`ClapMcpSerializeTopic`] for that arg when you opt into typed topic keys.
+///
 /// ## `#[clap_mcp(requires = "arg1,arg2")]` (on variant)
 ///
 /// Variant-level alternative: one or more optional args to make required (single name or
@@ -734,6 +832,58 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                         )
                         .to_compile_error(),
                     );
+                }
+                if let Some(serialized) = get_clap_mcp_serialized(&variant.attrs) {
+                    let field_ids: std::collections::HashSet<String> =
+                        variant_field_ids(&variant.fields).into_iter().collect();
+                    if let ClapMcpSerialized::Args(arg_ids) = &serialized {
+                        for arg_id in arg_ids {
+                            if !field_ids.contains(arg_id) {
+                                return TokenStream::from(
+                                    syn::Error::new_spanned(
+                                        &variant.ident,
+                                        format!(
+                                            "clap_mcp: serialized = \"{arg_id}\" — no field or arg \
+                                             with id `{arg_id}` on this variant"
+                                        ),
+                                    )
+                                    .to_compile_error(),
+                                );
+                            }
+                        }
+                    }
+                    for (i, f) in variant.fields.iter().enumerate() {
+                        if !has_clap_mcp_serialize_topic(&f.attrs) {
+                            continue;
+                        }
+                        let arg_id = f
+                            .ident
+                            .as_ref()
+                            .map(|i| i.to_string())
+                            .unwrap_or_else(|| format!("__f{i}"));
+                        let Some(scope_args) = serialized_scope_arg_ids(&serialized) else {
+                            return TokenStream::from(
+                                syn::Error::new_spanned(
+                                    f.ident.as_ref().unwrap_or(&variant.ident),
+                                    "clap_mcp: #[clap_mcp(serialize_topic)] requires arg-scoped \
+                                     #[clap_mcp(serialized = \"arg_id\")] on the same variant",
+                                )
+                                .to_compile_error(),
+                            );
+                        };
+                        if !scope_args.contains(&arg_id) {
+                            return TokenStream::from(
+                                syn::Error::new_spanned(
+                                    f.ident.as_ref().unwrap_or(&variant.ident),
+                                    format!(
+                                        "clap_mcp: #[clap_mcp(serialize_topic)] on `{arg_id}` \
+                                         requires that arg in #[clap_mcp(serialized = \"...\")]"
+                                    ),
+                                )
+                                .to_compile_error(),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1052,6 +1202,26 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
 }
 
 /// Builds the ClapMcpSchemaMetadataProvider impl from #[clap_mcp(skip)], #[clap_mcp(requires)], and #[clap_mcp(task)].
+fn serialize_topic_bindings_quote(
+    bindings: &[(String, String, syn::Type)],
+) -> proc_macro2::TokenStream {
+    let entries = bindings.iter().map(|(cmd, arg, ty)| {
+        let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
+        let arg_lit = syn::LitStr::new(arg, proc_macro2::Span::call_site());
+        quote! {
+            m.serialize_topic_args
+                .entry(#cmd_lit.to_string())
+                .or_default()
+                .insert(
+                    #arg_lit.to_string(),
+                    <#ty as clap_mcp::ClapMcpSerializeTopic>::serialize_topic_segment,
+                );
+        }
+    });
+    quote! { #(#entries)* }
+}
+
+/// Builds the ClapMcpSchemaMetadataProvider impl from #[clap_mcp(skip)], #[clap_mcp(requires)], and #[clap_mcp(task)].
 fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let name = &input.ident;
     let (_, _, _, _, _, task_augmented_tools, _, _, _, _) = parse_clap_mcp_attrs(&input.attrs);
@@ -1064,6 +1234,9 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let mut requires_args: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     let mut task_tool_names = Vec::<String>::new();
+    let mut serialize_tools: std::collections::HashMap<String, ClapMcpSerialized> =
+        std::collections::HashMap::new();
+    let mut serialize_topic_bindings: Vec<(String, String, syn::Type)> = Vec::new();
     let mut warn_optional_positional = false;
 
     let optional_positional_warn_block: proc_macro2::TokenStream = quote! {
@@ -1096,6 +1269,9 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 if has_clap_mcp_task(&v.attrs) {
                     task_tool_names.push(cmd_name.clone());
                 }
+                if let Some(serialized) = get_clap_mcp_serialized(&v.attrs) {
+                    serialize_tools.insert(cmd_name.clone(), serialized);
+                }
                 requires_args
                     .entry(cmd_name.clone())
                     .or_default()
@@ -1119,6 +1295,13 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                             .entry(cmd_name.clone())
                             .or_default()
                             .push(arg_id.clone());
+                    }
+                    if has_clap_mcp_serialize_topic(&f.attrs) {
+                        serialize_topic_bindings.push((
+                            cmd_name.clone(),
+                            arg_id.clone(),
+                            f.ty.clone(),
+                        ));
                     }
                     if let Some(req) = get_clap_mcp_requires(&f.attrs) {
                         let req_id = if req.is_empty() { arg_id } else { req };
@@ -1178,7 +1361,9 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     let merge = !skip_commands.is_empty()
                         || !skip_args.is_empty()
                         || !requires_args.is_empty()
-                        || !task_tool_names.is_empty();
+                        || !task_tool_names.is_empty()
+                        || !serialize_tools.is_empty()
+                        || !serialize_topic_bindings.is_empty();
                     if merge {
                         let skip_commands_lit = skip_commands.iter().map(|s| {
                             let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
@@ -1212,6 +1397,31 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 m.requires_args.entry(#k_lit.to_string()).or_default().extend([#(#vs),*]);
                             }
                         });
+                        let serialize_tools_entries = serialize_tools.iter().map(|(k, scope)| {
+                            let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+                            match scope {
+                                ClapMcpSerialized::Tool => quote! {
+                                    m.serialize_tools.insert(
+                                        #k_lit.to_string(),
+                                        clap_mcp::ClapMcpSerializeScope::Tool,
+                                    );
+                                },
+                                ClapMcpSerialized::Args(args) => {
+                                    let arg_lits = args.iter().map(|s| {
+                                        let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+                                        quote! { #lit.to_string() }
+                                    });
+                                    quote! {
+                                        m.serialize_tools.insert(
+                                            #k_lit.to_string(),
+                                            clap_mcp::ClapMcpSerializeScope::Args(vec![#(#arg_lits),*]),
+                                        );
+                                    }
+                                }
+                            }
+                        });
+                        let serialize_topic_entries =
+                            serialize_topic_bindings_quote(&serialize_topic_bindings);
                         let warn_block = if warn_optional_positional {
                             optional_positional_warn_block.clone()
                         } else {
@@ -1227,6 +1437,8 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     m.task_augmented_tools = m.task_augmented_tools || #task_augmented_tools_expr;
                                     #(#skip_args_entries)*
                                     #(#requires_args_entries)*
+                                    #(#serialize_tools_entries)*
+                                    #serialize_topic_entries
                                     #skip_root_assign
                                     #output_schema_assign
                                     m
@@ -1281,6 +1493,30 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
             m.requires_args.insert(#k_lit.to_string(), vec![#(#vs),*]);
         }
     });
+    let serialize_tools_entries = serialize_tools.iter().map(|(k, scope)| {
+        let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+        match scope {
+            ClapMcpSerialized::Tool => quote! {
+                m.serialize_tools.insert(
+                    #k_lit.to_string(),
+                    clap_mcp::ClapMcpSerializeScope::Tool,
+                );
+            },
+            ClapMcpSerialized::Args(args) => {
+                let arg_lits = args.iter().map(|s| {
+                    let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+                    quote! { #lit.to_string() }
+                });
+                quote! {
+                    m.serialize_tools.insert(
+                        #k_lit.to_string(),
+                        clap_mcp::ClapMcpSerializeScope::Args(vec![#(#arg_lits),*]),
+                    );
+                }
+            }
+        }
+    });
+    let serialize_topic_entries = serialize_topic_bindings_quote(&serialize_topic_bindings);
     let task_tool_names_lit = task_tool_names.iter().map(|s| {
         let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
         quote! { #lit.to_string() }
@@ -1302,6 +1538,8 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 m.task_augmented_tools = #task_augmented_tools_expr;
                 #(#skip_args_entries)*
                 #(#requires_args_entries)*
+                #(#serialize_tools_entries)*
+                #serialize_topic_entries
                 #output_schema_assign
                 m
             }
