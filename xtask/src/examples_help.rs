@@ -14,6 +14,8 @@ const RELEASE_VALIDATION_EXCLUDE: &[&str] = &[
     "placeholder_server",
     // Test fixture for bad executable paths; same.
     "invalid_executable_server",
+    // Exits before clap `--help` when OAuth env vars are unset.
+    "oauth_http_client",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +142,7 @@ fn load_example_bins(root: &Path) -> Result<Vec<ExampleBin>> {
 
 fn parse_example_bins(content: &str) -> Result<Vec<ExampleBin>> {
     let mut bins = Vec::new();
+    let mut in_bin_table = false;
     let mut current_name: Option<String> = None;
     let mut current_features: Vec<String> = Vec::new();
 
@@ -157,6 +160,15 @@ fn parse_example_bins(content: &str) -> Result<Vec<ExampleBin>> {
         let trimmed = line.trim();
         if trimmed == "[[bin]]" {
             flush(current_name.take(), std::mem::take(&mut current_features))?;
+            in_bin_table = true;
+            continue;
+        }
+        if !in_bin_table {
+            continue;
+        }
+        if trimmed.starts_with("[[") && trimmed != "[[bin]]" {
+            flush(current_name.take(), std::mem::take(&mut current_features))?;
+            in_bin_table = false;
             continue;
         }
         if let Some(name) = trimmed.strip_prefix("name = ") {
@@ -270,6 +282,9 @@ mod tests {
     #[test]
     fn parse_example_bins_reads_names_and_required_features() {
         let sample = r#"
+[package]
+name = "not-a-bin"
+
 [[bin]]
 name = "plain"
 
@@ -299,6 +314,9 @@ name = "placeholder_server"
 
 [[bin]]
 name = "invalid_executable_server"
+
+[[bin]]
+name = "oauth_http_client"
 "#;
         let manifest = parse_example_bins(sample).expect("parse");
         let bins = release_validation_bins(&manifest).expect("release");
