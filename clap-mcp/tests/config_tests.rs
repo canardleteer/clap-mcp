@@ -1,6 +1,6 @@
 //! Tests for ClapMcpConfig and configuration possibilities.
 
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_mcp::AsStructured;
 use clap_mcp::ClapMcp;
 use clap_mcp::{
@@ -863,6 +863,48 @@ fn run_skip_requires(cmd: TestSkipRequires) -> String {
     }
 }
 
+#[derive(Debug, Args)]
+struct SkippedFlattenedArgs {
+    #[arg(long)]
+    alpha: Option<String>,
+    #[arg(long)]
+    beta: Option<String>,
+}
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_flat_skip_flatten"]
+#[command(name = "test-flat-skip-flatten")]
+struct TestFlatSkipFlatten {
+    #[command(flatten)]
+    #[clap_mcp(skip)]
+    hidden: SkippedFlattenedArgs,
+    #[arg(long)]
+    visible: Option<String>,
+}
+
+fn run_flat_skip_flatten(cmd: TestFlatSkipFlatten) -> String {
+    format!("visible={:?}", cmd.visible)
+}
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_explicit_skip_ids"]
+#[command(name = "test-explicit-skip-ids")]
+struct TestExplicitSkipIds {
+    #[clap_mcp(skip = "foo,bar")]
+    #[arg(long)]
+    foo: Option<String>,
+    #[arg(long)]
+    bar: Option<String>,
+    #[arg(long)]
+    kept: Option<String>,
+}
+
+fn run_explicit_skip_ids(cmd: TestExplicitSkipIds) -> String {
+    format!("foo={:?}, bar={:?}, kept={:?}", cmd.foo, cmd.bar, cmd.kept)
+}
+
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = true)]
 #[clap_mcp_output_from = "run_serialized_metadata"]
@@ -1007,6 +1049,41 @@ fn test_clap_mcp_skip_root_struct_field() {
     assert!(
         out_arg.is_none(),
         "root-level #[clap_mcp(skip)] field 'out' should be excluded from MCP schema"
+    );
+}
+
+#[test]
+fn test_skip_flattened_args_excludes_all_arg_ids() {
+    let cmd = TestFlatSkipFlatten::command();
+    let metadata = TestFlatSkipFlatten::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let root = &schema.root;
+    assert_eq!(root.name, "test-flat-skip-flatten");
+    assert!(
+        root.args.iter().all(|a| a.id != "alpha" && a.id != "beta"),
+        "flattened #[clap_mcp(skip)] should exclude every arg id from the flattened Args type, got: {:?}",
+        root.args.iter().map(|a| a.id.as_str()).collect::<Vec<_>>()
+    );
+    assert!(
+        root.args.iter().any(|a| a.id == "visible"),
+        "non-skipped root field should remain in MCP schema"
+    );
+}
+
+#[test]
+fn test_skip_explicit_arg_id_list() {
+    let cmd = TestExplicitSkipIds::command();
+    let metadata = TestExplicitSkipIds::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let root = &schema.root;
+    assert!(
+        root.args.iter().all(|a| a.id != "foo" && a.id != "bar"),
+        "#[clap_mcp(skip = \"foo,bar\")] should exclude both listed arg ids, got: {:?}",
+        root.args.iter().map(|a| a.id.as_str()).collect::<Vec<_>>()
+    );
+    assert!(
+        root.args.iter().any(|a| a.id == "kept"),
+        "unlisted arg should remain in MCP schema"
     );
 }
 
