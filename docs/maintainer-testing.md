@@ -77,3 +77,4 @@ Current excludes:
 | `clap-mcp-conformance-http` | Maintainer conformance fixture |
 | `placeholder_server` | No clap `Parser` `--help` |
 | `invalid_executable_server` | Bad-executable test fixture |
+| `oauth_http_client` | Requires OAuth env vars before `--help` |
