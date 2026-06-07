@@ -518,6 +518,12 @@ pub trait ClapMcpToolExecutor {
 /// The MCP server stores state in an [`Arc`] for its lifetime and passes **`&Self::State`** on
 /// each tool call (not `&Arc<…>` — the shared pointer is an implementation detail).
 ///
+/// Session state is shared for the **MCP server process lifetime**, not per MCP client or OS user.
+/// Stateful MCP is intended for localhost or a single trusted operator. Do not use it when
+/// multiple or untrusted callers can reach the server (for example Streamable HTTP beyond
+/// loopback). See [Security](https://github.com/canardleteer/clap-mcp/blob/main/docs/security.md)
+/// and [Stateful MCP tools](https://github.com/canardleteer/clap-mcp/blob/main/docs/stateful-tools.md).
+///
 /// # Setup
 ///
 /// * Set [`ClapMcpConfig::reinvocation_safe`](ClapMcpConfig::reinvocation_safe) — subprocess mode
@@ -909,6 +915,136 @@ impl ClapMcpSchemaMetadata {
     }
 }
 
+/// Whether a flattened field contributes clap arg ids or subcommand names to MCP skip metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlattenSkipKind {
+    /// `#[command(flatten)]` on a `clap::Args` type.
+    Args,
+    /// `#[command(flatten)]` on a `clap::Subcommand` type.
+    Subcommand,
+}
+
+fn collect_flatten_subcommand_names(cmd: &clap::Command, out: &mut Vec<String>) {
+    for sub in cmd.get_subcommands() {
+        out.push(sub.get_name().to_string());
+        collect_flatten_subcommand_names(sub, out);
+    }
+}
+
+/// Applies `#[clap_mcp(skip)]` on a flattened `clap::Args` field.
+pub fn apply_flatten_args_field_skip<T: clap::Args>(
+    skip_commands: &mut Vec<String>,
+    skip_args: &mut std::collections::HashMap<String, Vec<String>>,
+    root_command: &str,
+    explicit: Option<&[String]>,
+    run_bare_probe: bool,
+) {
+    let _ = skip_commands;
+    if run_bare_probe {
+        let probe = T::augment_args(clap::Command::new("_clap_mcp_skip_probe"));
+        let collected: Vec<String> = probe
+            .get_arguments()
+            .map(|a| a.get_id().as_str().to_string())
+            .collect();
+        skip_args
+            .entry(root_command.to_string())
+            .or_default()
+            .extend(collected);
+    }
+    if let Some(ids) = explicit {
+        skip_args
+            .entry(root_command.to_string())
+            .or_default()
+            .extend(ids.iter().cloned());
+    }
+}
+
+/// Applies `#[clap_mcp(skip)]` on a flattened `clap::Subcommand` field.
+pub fn apply_flatten_subcommand_field_skip<T: clap::Subcommand>(
+    skip_commands: &mut Vec<String>,
+    skip_args: &mut std::collections::HashMap<String, Vec<String>>,
+    root_command: &str,
+    explicit: Option<&[String]>,
+    run_bare_probe: bool,
+) {
+    let _ = (skip_args, root_command);
+    if run_bare_probe {
+        let probe = T::augment_subcommands(clap::Command::new("_clap_mcp_skip_probe"));
+        let mut names = Vec::new();
+        collect_flatten_subcommand_names(&probe, &mut names);
+        skip_commands.extend(names);
+    }
+    if let Some(ids) = explicit {
+        skip_commands.extend(ids.iter().cloned());
+    }
+}
+
+/// Serialize-topic bindings contributed by a flattened `clap::Args` helper type.
+///
+/// Implement via `#[derive(ClapMcp)]` with `#[clap_mcp(args_metadata)]` on the shared `Args` struct.
+pub trait ClapMcpFlattenArgsTopics {
+    /// Rust field idents for args in this flattened group (see execution-safety guide for `#[arg(id)]` limits).
+    const FIELD_IDS: &'static [&'static str];
+
+    /// Field idents from nested flattened `Args` groups (see [`Self::FIELD_IDS`]).
+    const NESTED_FIELD_IDS: &'static [&'static str] = &[];
+
+    /// Registers `#[clap_mcp(serialize_topic)]` fields for `tool_name` on the parent variant.
+    fn merge_serialize_topics(
+        tool_name: &str,
+        target: &mut std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, SerializeTopicSegmentFn>,
+        >,
+    );
+}
+
+const fn str_eq_const(a: &str, b: &str) -> bool {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0usize;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Returns true when `arg` matches a field ident on flattened `Args` type `T`.
+const fn ids_contain(ids: &[&str], arg: &str) -> bool {
+    let mut i = 0usize;
+    while i < ids.len() {
+        if str_eq_const(ids[i], arg) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Returns true when `arg` matches a field ident on flattened `Args` type `T` (including one nested flatten).
+pub const fn flatten_args_contains_field<T: ClapMcpFlattenArgsTopics>(arg: &str) -> bool {
+    ids_contain(T::FIELD_IDS, arg) || ids_contain(T::NESTED_FIELD_IDS, arg)
+}
+
+/// Compile-time check that `arg` appears on at least one flattened `Args` type in `checks`.
+pub const fn assert_serialized_in_any_flatten_args(arg: &str, checks: &[bool]) {
+    let mut i = 0usize;
+    while i < checks.len() {
+        if checks[i] {
+            return;
+        }
+        i += 1;
+    }
+    let _ = arg;
+    panic!("serialized arg is not a field on any flattened Args type for this variant");
+}
+
 /// Computes one arg's contribution to a topical lock key from MCP JSON.
 pub type SerializeTopicSegmentFn = fn(value: &serde_json::Value) -> Option<String>;
 
@@ -918,6 +1054,12 @@ pub type SerializeTopicSegmentFn = fn(value: &serde_json::Value) -> Option<Strin
 /// Implement this trait (or use [`impl_serialize_topic_hash_eq`] / [`impl_serialize_topic_serde_eq`])
 /// and mark the field with `#[clap_mcp(serialize_topic)]` when parsed-type identity should drive
 /// the lock topic.
+///
+/// Topical locks do not isolate session state ([`ClapMcpToolExecutorWithState`]). Derive metadata
+/// uses the Rust **field ident** as the MCP arg id for `serialize_topic` and `serialized = "..."`
+/// validation, not `#[arg(id = "...")]`. Match the field name to the clap id or set
+/// [`ClapMcpSchemaMetadata::serialize_topic_args`] imperatively. See
+/// [execution-safety](https://github.com/canardleteer/clap-mcp/blob/main/docs/execution-safety.md).
 pub trait ClapMcpSerializeTopic {
     /// Returns a stable lock-key segment for this arg value, or `None` to fall back to canonical JSON
     /// for that arg (and then to the tool-wide topic if the arg is absent).
@@ -2403,6 +2545,9 @@ where
 ///
 /// `state` is stored as [`Arc`] internally; your `run` function receives `&T::State` on each
 /// tool call. Requires [`ClapMcpConfig::reinvocation_safe`](ClapMcpConfig::reinvocation_safe).
+///
+/// Session state is shared for the server process lifetime, not per MCP client. See
+/// [`ClapMcpToolExecutorWithState`] for multi-user and untrusted-remote guidance.
 pub fn parse_or_serve_mcp_with_state<T>(options: ClapMcpRunOptions, state: Arc<T::State>) -> T
 where
     T: ClapMcpSchemaMetadataProvider
@@ -2420,6 +2565,7 @@ where
 /// Parse CLI or serve MCP with shared session state when `--mcp` is present.
 ///
 /// Requires [`ClapMcpToolExecutorWithState`] on the derive target (see trait docs for setup).
+/// Session state is shared for the server process lifetime; see that trait for security scope.
 pub trait ParseOrServeMcpWithState: ClapMcpToolExecutorWithState + Sized {
     /// Parse argv or start MCP with `state` captured for the server lifetime.
     fn parse_or_serve_mcp_with_state(state: Arc<Self::State>) -> Self;

@@ -143,6 +143,10 @@ impl ServeMcpBuilder {
     ///
     /// Requires `reinvocation_safe` on the derive target. Pass the same `Arc` you would give to
     /// [`crate::ParseOrServeMcpWithState::parse_or_serve_mcp_with_state`].
+    ///
+    /// Session state is shared for the server process lifetime, not per MCP client. Intended for
+    /// localhost or a single trusted operator; see [`ClapMcpToolExecutorWithState`] and
+    /// [Security](https://github.com/canardleteer/clap-mcp/blob/main/docs/security.md).
     pub fn for_cli_with_state<T>(listen: McpListen, state: Arc<T::State>) -> Self
     where
         T: ClapMcpToolExecutorWithState
