@@ -238,8 +238,9 @@ intentional.
 clap-mcp rebuilds **positional-only** argv for subprocess and in-process tool
 calls. Two or more bare scalar positionals on the same variant (non-`Vec`) are
 rejected at **compile time** — use `#[arg(long)]` on each field or
-`#[clap_mcp(skip)]`. See the **stateful_counter** and **vec_and_flags** examples
-for safe patterns.
+`#[clap_mcp(skip)]` on the variant (skipped variants are exempt from this
+guard; you do not need to reshape fields MCP never exposes). See the
+**stateful_counter** and **vec_and_flags** examples for safe patterns.
 
 **Argument-level** (on each field; excerpt):
 
@@ -345,6 +346,34 @@ let schema = schema_from_command_with_metadata(&cmd, &metadata);
 When the client omits a required argument, the tool returns a clear error:
 `"Missing required argument(s): path. The MCP tool schema marks these as
 required."`
+
+### `hide` vs `#[clap_mcp(skip)]`
+
+clap's `#[command(hide = true)]` affects help text only. MCP tool exposure is
+controlled by `#[clap_mcp(skip)]`. Hidden subcommands still appear in
+`tools/list` unless you skip them explicitly. clap-mcp does not map `hide` to
+skip by default so agents are not surprised when a maintainer hides a command
+from `--help` but still wants it callable.
+
+### Optional args that trigger interactive fallback
+
+| CLI behavior when arg omitted | MCP attribute |
+| --- | --- |
+| Reads stdin, opens a prompt, or picks a "last used" default | `#[clap_mcp(requires)]` or `#[clap_mcp(requires = "arg")]` |
+| Should not be callable without the arg | `#[clap_mcp(requires)]` |
+| Interactive-only; no JSON-safe default | `#[clap_mcp(skip)]` on the subcommand |
+
+`Option<T>` with `#[arg(long)]` is common for human-friendly CLIs. MCP clients
+send JSON; omitting the key is not the same as omitting a flag in the shell.
+
+### Nested subcommand metadata
+
+The derive deep-merges `ClapMcpSchemaMetadata` from nested `#[command(subcommand)]`
+enum fields into each ancestor. Skips, requires, task markers, and topical
+serialization attrs on inner enums propagate to the root schema without a manual
+merge function. For imperative servers, use
+[`ClapMcpSchemaMetadata::merge_from`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#method.merge_from)
+the same way.
 
 ## Dual derive — root and subcommand
 
@@ -484,7 +513,18 @@ If [`ClapMcpConfig::needs_multi_thread_runtime`] is true and you call
 [`ClapMcpError::RequiresMultiThreadRuntime`]; use
 `#[tokio::main(flavor = "multi_thread")]` or [`ServeMcpBuilder::serve_blocking`].
 
-## Crash and panic behavior
+## Interactive and session commands
+
+MCP `tools/call` is request/response. It does not provide a bidirectional TTY,
+SSH session, or long-lived pipe. Subcommands that attach to a terminal, open an
+interactive REPL, or replace the process (`exec`, `process::exit`) are poor MCP
+tools.
+
+Mark them with `#[clap_mcp(skip)]` and document the shell invocation for
+operators. Examples: `connect`, `ssh`, `shell`, `completions`, blocking
+forwarders that never return.
+
+## Crash, exit, and panic behavior
 
 * **Subprocess (`reinvocation_safe` = false):** If the tool process exits with a
   non-zero status, the server returns a tool result with `is_error: true` and a
@@ -499,6 +539,28 @@ If [`ClapMcpConfig::needs_multi_thread_runtime`] is true and you call
   [`ClapMcpConfig::catch_in_process_panics`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#structfield.catch_in_process_panics)
   and the **panic_catch_opt_in** and **subprocess_exit_handling** examples in
   [examples/README.md](../examples/README.md).
+
+> [!WARNING]
+> `catch_in_process_panics` does **not** intercept `std::process::exit` or
+> `exec`. In-process tool code that terminates the process kills the MCP server.
+> Skip those subcommands, run them in subprocess mode only, or refactor them to
+> return `Result` instead of exiting.
+
+## Arg groups
+
+clap `ArgGroup` rules (exactly one of several flags) are enforced at argv parse
+time. MCP tool JSON Schema lists arguments independently; it does not emit
+`oneOf` shapes for arg groups. Invalid combinations fail when clap parses the
+rebuilt argv. Document exclusivity in tool descriptions when agents need hints.
+
+## Cross-tool serialization
+
+Topical `#[clap_mcp(serialized)]` locks are keyed per tool name (and optional
+args). Tools that must exclude each other but are not the same MCP tool name
+(for example `forward start` and `forward stop`) need coordination in your
+code: a shared `Mutex` in `run()`, [stateful tools](stateful-tools.md), or
+`parallel_safe = false` when conservative serialization is acceptable. clap-mcp
+does not provide a cross-tool lock-group attribute.
 
 ## Async tools and share_runtime
 

@@ -181,7 +181,7 @@ Every guide in [`docs/`](docs/) is listed below. See also
 | [Usage patterns](docs/usage.md) | Derive (minimal / with attributes), imperative CLI, struct root |
 | [Custom resources and prompts](docs/custom-content.md) | `ClapMcpServeOptions`, static/dynamic content |
 | [Exporting agent skills](docs/export-skills.md) | `--export-skills`, SKILL.md generation |
-| [Execution safety](docs/execution-safety.md) | `reinvocation_safe`, topical serialization, skip/requires, dual derive, async embedders |
+| [Execution safety](docs/execution-safety.md) | `reinvocation_safe`, topical serialization, skip/requires, nested metadata, dual derive, async embedders |
 | [MCP tasks support](docs/mcp-tasks.md) | Task-augmented `tools/call`, examples, support matrix |
 | [Stateful MCP tools](docs/stateful-tools.md) | Shared session state, `parse_or_serve_mcp_with_state` |
 | [Security](docs/security.md) | Schema validation, subprocess model, trust boundaries |

@@ -241,3 +241,21 @@ is ignored). See [Execution safety — Topical serialization](execution-safety.m
 Example: `examples/servers/topical_serialization.rs`,
 `examples/servers/topical_serial_probe.rs`; integration tests:
 `clap-mcp/tests/topical_serialization_tests.rs`.
+
+## Nested metadata, schema-only enums, struct `output_from` (0.0.4-rc.1+)
+
+Additive API for deeply nested CLIs:
+
+* **`ClapMcpSchemaMetadata::merge_from`** — imperative deep merge of skip,
+  requires, task, and serialization metadata
+* **Derive deep-merge** — nested `#[command(subcommand)]` enum metadata folds
+  into ancestors automatically
+* **`#[clap_mcp(schema_only)]`** on intermediate subcommand enums — metadata
+  only; no `output_from` stub when an ancestor owns execution
+* **`#[clap_mcp_output_from = "run"]` on struct roots** — `run` receives the
+  full parsed struct (global flags and subcommand field)
+* **Skipped variants** — multi-positional compile guard no longer applies to
+  `#[clap_mcp(skip)]` variants
+
+Examples: `nested_subcommands`, `struct_subcommand_globals`; see
+[Execution safety](execution-safety.md).
