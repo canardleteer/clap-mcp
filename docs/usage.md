@@ -225,8 +225,9 @@ Full pattern and compilable example:
 [Execution safety — Dual derive](execution-safety.md#dual-derive--root-and-subcommand).
 Runnable binaries: **struct_subcommand_required** (subcommand `run`),
 **struct_subcommand_globals** (struct `run` with globals), **flat_struct_root**
-(single wide tool, no subcommand), **flatten_skip** (skip flatten + serialize_topic)
-in [examples/README.md](../examples/README.md).
+(single wide tool, no subcommand), **flatten_skip** (skip flatten + serialize_topic),
+**flatten_subcommand_skip_flat** / **flatten_subcommand_skip_nested** (skip flattened
+`Subcommand`) in [examples/README.md](../examples/README.md).
 
 ## Related guides
 

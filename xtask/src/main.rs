@@ -16,7 +16,9 @@ struct Cli {
 enum Command {
     /// Build server, run pinned conformance harness in Docker (local dev).
     Conformance(conformance::ConformanceArgs),
-    /// Start subcommands_http for CI; writes CONFORMANCE_PORT to GITHUB_ENV when set.
+    /// Stop a running conformance-server and remove pid/log/port artifacts.
+    ConformanceStop(conformance::ConformanceStopArgs),
+    /// Start clap-mcp-conformance-http for CI/debug (not for ad-hoc local harness runs).
     ConformanceServer(conformance::ConformanceServerArgs),
     /// Run tests with LLVM coverage and emit an HTML report (clap-mcp + macros only).
     CodeCoverageHtml(code_coverage::CodeCoverageHtmlArgs),
@@ -28,6 +30,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Conformance(args) => conformance::run_conformance(args),
+        Command::ConformanceStop(args) => conformance::run_conformance_stop(args),
         Command::ConformanceServer(args) => conformance::run_conformance_server(args),
         Command::CodeCoverageHtml(args) => code_coverage::run_code_coverage_html(args),
         Command::ExamplesHelp(args) => examples_help::run_examples_help(args),

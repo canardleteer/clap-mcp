@@ -63,7 +63,8 @@ public `ClapMcpServer` / `build_clap_mcp_server`. See
   **task_tools_dedicated**,
   **task_tools_shared**, **subprocess_exit_handling**, **panic_catch_opt_in**,
   **custom_resources_prompts**, **vec_and_flags**, **arg_group_hints**, **preserve_cli_parse**,
-  **flat_struct_root**, **flatten_skip**, **passthrough_args**,
+  **flat_struct_root**, **flatten_skip**, **flatten_subcommand_skip_flat**,
+  **flatten_subcommand_skip_nested**, **passthrough_args**,
   **passthrough_args_subprocess**, **custom_mcp_flags**, **stateful_counter**)
 
 ## Async embedders
@@ -222,6 +223,27 @@ cargo run -p clap-mcp-examples --bin flatten_skip -- --mcp
 
 See [Execution safety — Topical serialization](../docs/execution-safety.md#topical-serialization)
 and [Supported CLI shapes](../docs/supported-cli-shapes.md).
+
+### flatten_subcommand_skip_flat
+
+`#[clap_mcp(skip)]` on a flattened `Subcommand` enum (flat hidden tools). MCP exposes
+one wide root tool with `visible`; shell users can still run `hidden-a` / `hidden-b`.
+
+```bash
+cargo run -p clap-mcp-examples --bin flatten_subcommand_skip_flat -- hidden-a
+cargo run -p clap-mcp-examples --bin flatten_subcommand_skip_flat -- --visible ops
+cargo run -p clap-mcp-examples --bin flatten_subcommand_skip_flat -- --mcp
+```
+
+### flatten_subcommand_skip_nested
+
+Same skip pattern with nested subcommands: `build`, `compile`, `link`, and `clean`
+are excluded from MCP tools recursively.
+
+```bash
+cargo run -p clap-mcp-examples --bin flatten_subcommand_skip_nested -- build compile
+cargo run -p clap-mcp-examples --bin flatten_subcommand_skip_nested -- --mcp
+```
 
 ### passthrough_args / passthrough_args_subprocess
 
@@ -568,6 +590,8 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **preserve_cli_parse** | `servers/preserve_cli_parse.rs` | `parse_or_serve_mcp_preserve_cli` for native clap Usage on invalid argv |
 | **flat_struct_root** | `servers/flat_struct_root.rs` | Flat struct root — single MCP tool, wide `inputSchema` |
 | **flatten_skip** | `servers/flatten_skip.rs` | Skip flattened `Args`, skip variants, `args_metadata` + `serialize_topic` |
+| **flatten_subcommand_skip_flat** | `servers/flatten_subcommand_skip_flat.rs` | Skip flattened `Subcommand` enum (flat hidden tools) |
+| **flatten_subcommand_skip_nested** | `servers/flatten_subcommand_skip_nested.rs` | Skip flattened `Subcommand` enum (nested hidden tools) |
 | **result_output**  | `servers/result_output.rs`      | `#[clap_mcp_output_from]` with `Result<T, E>`, `IntoClapMcpToolError` for structured errors |
 | **structured**     | `servers/structured.rs`         | Structured output via `#[clap_mcp_output_from]` and `AsStructured<T>` |
 | **tracing_bridge** | `servers/tracing_bridge.rs`  | Tracing integration, MCP log forwarding, prompts   |

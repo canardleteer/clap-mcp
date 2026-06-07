@@ -7,8 +7,8 @@
 //! - `#[arg(id = "...")]` aligned with derive metadata (`custom-out`)
 //!
 //! Skipping a whole flattened `Subcommand` field (`#[command(subcommand)]` +
-//! `#[clap_mcp(skip)]`) is covered in integration tests (`test_skip_flattened_subcommands_*`
-//! in `clap-mcp/tests/config_tests.rs`).
+//! `#[clap_mcp(skip)]`) is demonstrated in **flatten_subcommand_skip_flat** and
+//! **flatten_subcommand_skip_nested** (see [examples/README.md](../README.md)).
 //!
 //! Run:
 //!   cargo run -p clap-mcp-examples --bin flatten_skip -- show --id abc
