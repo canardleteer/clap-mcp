@@ -411,6 +411,14 @@ to `true` via the derive with `#[clap_mcp(skip_root_when_subcommands)]` on the
 root struct, or imperatively (e.g. implement `ClapMcpSchemaMetadataProvider` for
 the root and set the field, or build metadata manually).
 
+**Nested enums (schema only):** When a struct root or ancestor enum owns tool
+execution (manual `ClapMcpToolExecutor` or `#[clap_mcp_output_from]` on the
+executor type), intermediate subcommand enums can use `#[clap_mcp(schema_only)]`
+instead of a dead `#[clap_mcp_output_from]` stub. The derive emits
+`ClapMcpSchemaMetadataProvider` only; skip, requires, task, and serialization
+attrs still apply and merge into ancestor metadata. See **nested_subcommands** in
+[examples/README.md](../examples/README.md).
+
 ## Runtime config
 
 Use `ClapMcpConfig` with `parse_or_serve_mcp_with` or
