@@ -462,6 +462,7 @@ fn format_pids(pids: &[u32]) -> String {
         .join(", ")
 }
 
+#[cfg(unix)]
 fn conformance_binary_paths(root: &Path) -> Vec<PathBuf> {
     let exe = env::consts::EXE_SUFFIX;
     ["debug", "release"]
