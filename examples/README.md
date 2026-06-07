@@ -19,8 +19,12 @@ cargo xtask examples-help --profile http   # HTTP examples only
 cargo xtask examples-help --profile all    # every [[bin]] in Cargo.toml
 ```
 
-The canonical `release` list lives in [`xtask/src/examples_help.rs`](../xtask/src/examples_help.rs)
-(`RELEASE_VALIDATION_BINS`). Add new release-critical examples there when you add a `[[bin]]`.
+The `release` profile runs `--help` on every `[[bin]]` in
+[`examples/Cargo.toml`](Cargo.toml) except bins listed in
+`RELEASE_VALIDATION_EXCLUDE` in
+[`xtask/src/examples_help.rs`](../xtask/src/examples_help.rs). Add a new
+`[[bin]]` here only; edit the exclude list when `--help` smoke is inappropriate.
+See [Maintainer testing](../docs/maintainer-testing.md#adding-an-example).
 
 ## 0.0.4 API (derive path)
 
