@@ -9,6 +9,8 @@
 //! | `arg_group_hints` | `search` has `meta.clapMcp.argGroups`; exec-only round-trip; both exec flags → parse error |
 //! | `flat_struct_root` | exactly one tool; wide `inputSchema` includes root + flattened arg ids |
 //! | `flatten_skip` | skipped connection args absent; `reindex`/`repair` not in tools; `show` round-trip |
+//! | `flatten_subcommand_skip_flat` | single root tool; `visible` on schema; `hidden-a`/`hidden-b` absent |
+//! | `flatten_subcommand_skip_nested` | `build`/`compile`/`link`/`clean` absent from tools |
 //! | `preserve_cli_parse` | invalid argv exits non-zero with Usage in stderr (see also `cli_compat_tests.rs`) |
 
 mod common;
@@ -337,6 +339,70 @@ async fn example_contract_flatten_skip_hidden_args_and_commands() {
             .await
             .expect("show should succeed");
     assert!(tool_text(&show_result).contains("show:abc"));
+
+    shutdown(client).await;
+}
+
+const FLATTEN_SUBCOMMAND_SKIP_FLAT_TOOL: &str = "flatten-subcommand-skip-flat";
+const FLATTEN_SUBCOMMAND_SKIP_NESTED_TOOL: &str = "flatten-subcommand-skip-nested";
+
+#[tokio::test(flavor = "current_thread")]
+async fn example_contract_flatten_subcommand_skip_flat() {
+    let client = launch_example("flatten_subcommand_skip_flat")
+        .await
+        .expect("flatten_subcommand_skip_flat client should launch");
+
+    let tools = client
+        .list_tools(None)
+        .await
+        .expect("tool list should work")
+        .tools;
+    assert_eq!(
+        tools.len(),
+        1,
+        "flat skip should expose one wide root tool, got: {:?}",
+        tool_names(&tools)
+    );
+    let tool = &tools[0];
+    assert_eq!(tool.name, FLATTEN_SUBCOMMAND_SKIP_FLAT_TOOL);
+    assert!(
+        schema_property_keys(tool).contains("visible"),
+        "root visible flag should appear on MCP schema"
+    );
+    let names = tool_names(&tools);
+    assert!(
+        !names.contains(&"hidden-a") && !names.contains(&"hidden-b"),
+        "flattened skipped subcommands must not become MCP tools: {names:?}"
+    );
+
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn example_contract_flatten_subcommand_skip_nested() {
+    let client = launch_example("flatten_subcommand_skip_nested")
+        .await
+        .expect("flatten_subcommand_skip_nested client should launch");
+
+    let tools = client
+        .list_tools(None)
+        .await
+        .expect("tool list should work")
+        .tools;
+    let names = tool_names(&tools);
+    for hidden in ["build", "compile", "link", "clean"] {
+        assert!(
+            !names.contains(&hidden),
+            "nested flattened skip must hide {hidden}, got: {names:?}"
+        );
+    }
+    assert!(
+        tools.len() <= 1,
+        "nested skip should not expose per-subcommand tools, got: {names:?}"
+    );
+    if tools.len() == 1 {
+        assert_eq!(tools[0].name, FLATTEN_SUBCOMMAND_SKIP_NESTED_TOOL);
+    }
 
     shutdown(client).await;
 }

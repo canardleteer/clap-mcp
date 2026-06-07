@@ -72,6 +72,8 @@ Documented in [`example_contract_tests.rs`](../clap-mcp/tests/example_contract_t
 | `preserve_cli_parse` | Invalid argv → non-zero exit + `Usage` in stderr (`cli_compat_tests.rs`); MCP `--mcp` via `launch_example` |
 | `flat_struct_root` | Exactly one tool (`flat-struct-root`); schema includes root + flattened arg ids |
 | `flatten_skip` | Skipped connection args absent; `reindex`/`repair` not in tools; `flush` has `serialized` meta |
+| `flatten_subcommand_skip_flat` | One root tool; `visible` on schema; `hidden-a`/`hidden-b` absent |
+| `flatten_subcommand_skip_nested` | `build`/`compile`/`link`/`clean` absent from tools |
 
 ## Adding an example
 
@@ -93,3 +95,16 @@ Current excludes:
 | `placeholder_server` | No clap `Parser` `--help` |
 | `invalid_executable_server` | Bad-executable test fixture |
 | `oauth_http_client` | Requires OAuth env vars before `--help` |
+
+## MCP conformance (local)
+
+Prefer `cargo xtask conformance` (or `./scripts/run-conformance.sh`). It stops stale
+`clap-mcp-conformance-http` processes before running the pinned Docker harness.
+
+| Command | Use |
+| --- | --- |
+| `cargo xtask conformance` | Local harness run (start → test → stop) |
+| `cargo xtask conformance-stop` | Stop `conformance-server` / orphan fixture; remove pid/log/port files |
+| `cargo xtask conformance-server` | CI/debug only; stale guard unless `--force` |
+
+See [conformance-baseline.md](conformance-baseline.md) for baseline updates and local safety.

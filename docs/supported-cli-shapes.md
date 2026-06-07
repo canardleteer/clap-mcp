@@ -18,7 +18,7 @@ and shapes that are intentionally out of scope. Runnable binaries are listed in
 | Flat enum root | `output_from` on enum | `subcommands` | Default happy path |
 | Flat struct root (no subcommand) | `output_from` on struct | `flat_struct_root` | One MCP tool with a wide `inputSchema` (all root fields and flattened `Args` groups) |
 | Skipped flattened `Args` | `#[command(flatten)]` + `#[clap_mcp(skip)]` on field | `flatten_skip` | Every clap arg id from the flattened type is excluded, not only the Rust field name |
-| Skipped subcommand group | `#[command(subcommand)]` + `#[clap_mcp(skip)]` on field | `config_tests` (`test_skip_flattened_subcommands_*`) | `Subcommand::augment_subcommands` probe adds subcommand names to `skip_commands` (recursive) |
+| Skipped subcommand group | `#[command(subcommand)]` + `#[clap_mcp(skip)]` on field | `flatten_subcommand_skip_flat`, `flatten_subcommand_skip_nested` | `Subcommand::augment_subcommands` probe adds subcommand names to `skip_commands` (recursive) |
 | Explicit arg-id skip list | `#[clap_mcp(skip = "id1,id2")]` on field | `optional_commands_and_args` | Comma-separated clap arg ids on flatten; subcommand names on `#[command(subcommand)]` |
 | Nested `serialize_topic` in flattened `Args` | `#[clap_mcp(args_metadata)]` on shared `Args` + flatten on variant | `flatten_skip` | `#[clap_mcp(serialize_topic)]` inside the helper; same-crate `Args` source required |
 | Preserve-cli parse | `parse_or_serve_mcp_preserve_cli*` / `get_matches_preserve_cli_or_serve_mcp*` | `preserve_cli_parse` | Native `Parser::parse` when argv has no clap-mcp entry flags |

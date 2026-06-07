@@ -116,6 +116,14 @@ name = "flatten_skip"
 path = "servers/flatten_skip.rs"
 
 [[bin]]
+name = "flatten_subcommand_skip_flat"
+path = "servers/flatten_subcommand_skip_flat.rs"
+
+[[bin]]
+name = "flatten_subcommand_skip_nested"
+path = "servers/flatten_subcommand_skip_nested.rs"
+
+[[bin]]
 name = "capture_stdout"
 path = "servers/capture_stdout.rs"
 

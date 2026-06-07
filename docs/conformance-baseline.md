@@ -110,29 +110,41 @@ remains in the job log (`verbose: true`).
 
 ## Local safety (`conformance-server`)
 
-Prefer **`cargo xtask conformance`** for local runs. It starts the fixture, runs
-the harness, and stops the server when the harness exits.
+Prefer **`cargo xtask conformance`** (or `./scripts/run-conformance.sh`) for local
+runs. It starts the fixture, runs the harness, stops stale servers first, and
+tears down the server when the harness exits.
 
-`cargo xtask conformance-server` exists for CI and advanced debugging. It
+Stop/cleanup:
+
+```shell
+cargo xtask conformance-stop
+```
+
+Or `./scripts/stop-conformance-server.sh` (same command).
+
+`cargo xtask conformance-server` exists for CI and advanced debugging only. It
 redirects fixture stdout/stderr to `target/conformance-server.log` (default) and
-keeps the process alive until the parent exits. Do not background it and forget
-it; an orphaned server can fill disk if stderr tracing is verbose.
+keeps the process alive until the parent exits. Do not background it for ad-hoc
+local harness runs; an orphaned server can still fill disk if stderr tracing is
+verbose (log cap below limits growth but does not replace a proper stop).
 
 Safeguards:
 
+* `conformance-server` refuses to start when a pid file or orphan
+  `clap-mcp-conformance-http` process is present unless you pass `--force`.
 * Fixture stderr tracing uses a default `EnvFilter` of `warn,clap_mcp=info`
   (override with `RUST_LOG` when debugging).
 * On Linux and macOS, `--log-max-mb` (default `10`) sets `RLIMIT_FSIZE` on the
   server child so the capture file cannot grow without bound.
 * The server child pid is written to `target/conformance-server.pid` and removed
-  when `conformance-server` exits; the child is sent `SIGTERM` if the parent
-  dies (`PR_SET_PDEATHSIG` on Unix).
+  when `conformance-server` or `conformance-stop` exits; the child is sent
+  `SIGTERM` if the parent dies (`PR_SET_PDEATHSIG` on Linux).
 
-If a server is still running after a crashed session:
+Manual fallback if `conformance-stop` is unavailable:
 
 ```shell
 kill "$(cat target/conformance-server.pid)" 2>/dev/null || true
-rm -f target/conformance-server.log target/conformance-server.pid
+rm -f target/conformance-server.log target/conformance-server.pid target/conformance-port
 ```
 
 ## Version pin

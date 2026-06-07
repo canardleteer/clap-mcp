@@ -97,6 +97,11 @@ cargo install cargo-llvm-cov
 cargo llvm-cov test -p clap-mcp -p clap-mcp-macros --all-features --summary-only
 cargo xtask code-coverage-html          # HTML report in target/llvm-cov/html
 cargo xtask code-coverage-html --open   # same, then open in browser
+
+# MCP conformance harness (maintainer)
+cargo xtask conformance                 # local Docker harness; stops stale servers first
+cargo xtask conformance-stop          # stop conformance-server / orphan fixture
+# conformance-server is CI/debug-only — see docs/conformance-baseline.md#local-safety-conformance-server
 ```
 
 CI runs the gate above on Ubuntu, Windows, and macOS.
