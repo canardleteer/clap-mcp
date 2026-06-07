@@ -282,6 +282,7 @@ fn configure_child_process(cmd: &mut Command, log_max_bytes: u64) {
     // calls are used (`prctl`, `setrlimit`). Failures propagate to `spawn()` as errors.
     unsafe {
         cmd.pre_exec(move || {
+            #[cfg(target_os = "linux")]
             if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) == -1 {
                 return Err(std::io::Error::last_os_error());
             }
