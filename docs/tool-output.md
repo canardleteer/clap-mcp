@@ -92,6 +92,23 @@ tool execution and merges it with Text output. This applies only when
 not present on Windows, so code that sets `capture_stdout` does not compile on
 Windows. Subprocess mode already captures stdout via `Command::output()`.
 
+Use `capture_stdout` when your tool prints human-oriented lines to stdout (for
+example a formatted listing) while `run` still returns structured data via
+`AsStructured` or `IntoClapMcpResult`. MCP clients receive `structuredContent`
+from the return type **and** merged text from captured stdout when both are
+present. `capture_stdout` does not turn stdout into `structuredContent`; it
+supplements text results for agents that read the text channel.
+
+```rust
+clap_mcp::parse_or_serve_mcp_with::<Cli>(clap_mcp::ClapMcpRunOptions {
+    serve: clap_mcp::ClapMcpServeOptions {
+        capture_stdout: true,
+        ..Default::default()
+    },
+    ..Default::default()
+});
+```
+
 With the **`output-schema`** feature enabled, you can attach a JSON schema to
 each tool's `outputSchema` field so MCP clients know the shape of the tool's
 output.
