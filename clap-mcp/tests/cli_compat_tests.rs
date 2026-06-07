@@ -135,3 +135,30 @@ fn custom_mcp_flags_help_shows_renamed_stdio_flag() {
         "help should still show unrelated user --mcp flag"
     );
 }
+
+#[test]
+fn preserve_cli_parse_invalid_argv_shows_usage() {
+    let out = run_example("preserve_cli_parse", &["greet"]);
+    assert!(
+        !out.status.success(),
+        "missing required --name should fail; stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Usage"),
+        "preserve-cli path should surface clap Usage formatting: {stderr}"
+    );
+}
+
+#[test]
+fn preserve_cli_parse_valid_invocation_succeeds() {
+    let out = run_example("preserve_cli_parse", &["greet", "--name", "Ada"]);
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Hello, Ada!"), "got: {stdout}");
+}

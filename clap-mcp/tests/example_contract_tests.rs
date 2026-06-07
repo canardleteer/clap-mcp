@@ -7,6 +7,9 @@
 //! | `optional_commands_and_args` | `internal` not in tools; `read` schema requires `path` |
 //! | `struct_subcommand_required` | CLI argv parity (`cli_compat_tests.rs`) |
 //! | `arg_group_hints` | `search` has `meta.clapMcp.argGroups`; exec-only round-trip; both exec flags → parse error |
+//! | `flat_struct_root` | exactly one tool; wide `inputSchema` includes root + flattened arg ids |
+//! | `flatten_skip` | skipped connection args absent; `reindex`/`repair` not in tools; `show` round-trip |
+//! | `preserve_cli_parse` | invalid argv exits non-zero with Usage in stderr (see also `cli_compat_tests.rs`) |
 
 mod common;
 
@@ -27,6 +30,14 @@ fn required_schema_properties(tool: &rmcp::model::Tool) -> HashSet<String> {
                 .filter_map(|v| v.as_str().map(str::to_string))
                 .collect()
         })
+        .unwrap_or_default()
+}
+
+fn schema_property_keys(tool: &rmcp::model::Tool) -> HashSet<String> {
+    tool.input_schema
+        .get("properties")
+        .and_then(|value| value.as_object())
+        .map(|props| props.keys().cloned().collect())
         .unwrap_or_default()
 }
 
@@ -219,6 +230,113 @@ async fn example_contract_arg_group_hints_meta_and_parse() {
         err_text.contains("exec") || err_text.contains("cannot be used"),
         "parse failure should be reported: {err_text}"
     );
+
+    shutdown(client).await;
+}
+
+const FLAT_STRUCT_ROOT_TOOL: &str = "flat-struct-root";
+
+#[tokio::test(flavor = "current_thread")]
+async fn example_contract_flat_struct_root_single_tool() {
+    let client = launch_example("flat_struct_root")
+        .await
+        .expect("flat_struct_root client should launch");
+
+    let tools = client
+        .list_tools(None)
+        .await
+        .expect("tool list should work")
+        .tools;
+    assert_eq!(
+        tools.len(),
+        1,
+        "flat struct root should expose one MCP tool, got: {:?}",
+        tool_names(&tools)
+    );
+    let tool = &tools[0];
+    assert_eq!(tool.name, FLAT_STRUCT_ROOT_TOOL);
+
+    let keys = schema_property_keys(tool);
+    for key in ["verbose", "target", "email", "region"] {
+        assert!(
+            keys.contains(key),
+            "flat struct root schema should include {key}, got: {keys:?}"
+        );
+    }
+
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new(FLAT_STRUCT_ROOT_TOOL).with_arguments(
+                serde_json::Map::from_iter([
+                    ("target".to_string(), serde_json::json!("prod")),
+                    ("verbose".to_string(), serde_json::json!(true)),
+                ]),
+            ),
+        )
+        .await
+        .expect("flat struct root tool call should succeed");
+    assert!(tool_text(&result).contains("target=prod"));
+
+    shutdown(client).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn example_contract_flatten_skip_hidden_args_and_commands() {
+    let client = launch_example("flatten_skip")
+        .await
+        .expect("flatten_skip client should launch");
+
+    let tools = client
+        .list_tools(None)
+        .await
+        .expect("tool list should work")
+        .tools;
+    let names = tool_names(&tools);
+    assert!(names.contains(&"show"));
+    assert!(names.contains(&"flush"));
+    assert!(
+        !names.contains(&"reindex") && !names.contains(&"repair"),
+        "skipped variants must not be MCP tools: {names:?}"
+    );
+
+    let show = tools
+        .iter()
+        .find(|t| t.name == "show")
+        .expect("show tool should exist");
+    let show_keys = schema_property_keys(show);
+    assert!(
+        !show_keys.contains("host") && !show_keys.contains("port"),
+        "skipped flattened connection args must not appear on show schema: {show_keys:?}"
+    );
+
+    let flush = tools
+        .iter()
+        .find(|t| t.name == "flush")
+        .expect("flush tool should exist");
+    assert!(
+        schema_property_keys(flush).contains("custom-out"),
+        "flush should expose custom clap arg id on schema"
+    );
+    let serialized = flush
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("clapMcp"))
+        .and_then(|v| v.get("serialized"))
+        .and_then(|v| v.as_bool());
+    assert_eq!(
+        serialized,
+        Some(true),
+        "flush should advertise serialized meta"
+    );
+
+    let show_result =
+        client
+            .call_tool(CallToolRequestParams::new("show").with_arguments(
+                serde_json::Map::from_iter([("id".to_string(), serde_json::json!("abc"))]),
+            ))
+            .await
+            .expect("show should succeed");
+    assert!(tool_text(&show_result).contains("show:abc"));
 
     shutdown(client).await;
 }

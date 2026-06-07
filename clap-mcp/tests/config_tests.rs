@@ -7,8 +7,9 @@ use clap_mcp::{
     ClapMcpConfig, ClapMcpConfigProvider, ClapMcpError, ClapMcpRunnable, ClapMcpSchemaMetadata,
     ClapMcpSchemaMetadataProvider, ClapMcpSerializeScope, ClapMcpToolExecutor, ClapMcpToolOutput,
     LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, McpListen, PROMPT_LOGGING_GUIDE,
-    ParseOrServeMcp, ServeMcpBuilder, run_async_tool, schema_from_command,
-    schema_from_command_with_metadata, serve_mcp, tools_from_schema_with_metadata,
+    ParseOrServeMcp, ServeMcpBuilder, argv_contains_clap_mcp_flags, run_async_tool,
+    schema_from_command, schema_from_command_with_metadata, serve_mcp,
+    tools_from_schema_with_metadata,
 };
 use serde::Serialize;
 
@@ -1801,4 +1802,23 @@ fn test_tools_from_schema_with_metadata_output_schema() {
             tool.name
         );
     }
+}
+
+#[test]
+fn test_preserve_cli_argv_detection_for_normal_cli() {
+    let flags = TestCliDefaults::clap_mcp_config().builtin_flags;
+    let normal = vec!["greet".to_string(), "--name".to_string(), "Ada".to_string()];
+    assert!(
+        !argv_contains_clap_mcp_flags(&normal, &flags),
+        "preserve-cli path should use native Parser when no clap-mcp flags are present"
+    );
+    assert!(
+        argv_contains_clap_mcp_flags(&["--mcp".to_string()], &flags),
+        "MCP entry flag should still be detected"
+    );
+    let passthrough = vec!["exec".to_string(), "--".to_string(), "--mcp".to_string()];
+    assert!(
+        !argv_contains_clap_mcp_flags(&passthrough, &flags),
+        "tokens after -- must not count as clap-mcp entry flags"
+    );
 }
