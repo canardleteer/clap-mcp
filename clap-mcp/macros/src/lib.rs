@@ -896,9 +896,13 @@ fn nested_subcommand_type_paths_from_enum(data: &syn::DataEnum) -> Vec<syn::Path
 /// `#[arg(long)] args: Vec<String>` is often clearer for MCP. Pre-clap MCP detection
 /// ignores tokens after the shell's first `--`.
 ///
-/// ## `#[clap_mcp(skip)]` (on variant or field)
+/// ## `#[clap_mcp(skip)]` / `#[clap_mcp(skip = "id1,id2")]` (on variant or field)
 ///
-/// Exclude the subcommand or argument from MCP exposure.
+/// Exclude the subcommand or argument from MCP exposure. On a normal field, bare
+/// `skip` uses the field's clap arg id. On a `#[command(flatten)]` field, bare `skip`
+/// probes `Args::augment_args` and excludes every arg id from the flattened type.
+/// `skip = "id1,id2"` adds explicit comma-separated clap arg ids (merged with the
+/// flatten probe when both apply on the same field).
 ///
 /// ## `#[clap_mcp(skip_root_when_subcommands)]` (on root struct with subcommand)
 ///

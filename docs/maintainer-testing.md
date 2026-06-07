@@ -31,6 +31,7 @@ applies:
 | Struct executor path change | Struct `output_from` receives full root; default still delegates | `complex_cli_struct_output_from_*`, `struct_subcommand_globals` example |
 | Struct-root metadata delegate (light path) | Root flags OR onto nested metadata (`task_augmented_tools`, `skip_root_when_subcommands`, `output_schema`) | `test_struct_root_task_augmented_tools_metadata_delegate` |
 | Leaf tool schema / argv / validation | Root `#[arg(global)]` on struct roots appear on nested leaf tools | `complex_cli_leaf_tool_schema_includes_root_global`, `example_contract_struct_subcommand_globals_*` |
+| `#[clap_mcp(skip)]` on `#[command(flatten)]` | `Args::augment_args` probe skips every flattened arg id | `test_skip_flattened_args_excludes_all_arg_ids`, `test_skip_explicit_arg_id_list`, `tests/ui/pass/skip_arg_list.rs` |
 | New `#[clap_mcp(...)]` config flag | Documented in supported-shapes matrix if embedder-visible | [supported-cli-shapes.md](supported-cli-shapes.md) |
 | New `[[bin]]` in examples | Auto-included in `cargo xtask examples-help` unless on exclude list | [examples/Cargo.toml](../examples/Cargo.toml), [examples/README.md](../examples/README.md); add contract test if MCP semantics matter |
 

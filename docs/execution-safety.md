@@ -335,6 +335,13 @@ struct Args {
 }
 ```
 
+**Flattened `Args`:** On a `#[command(flatten)]` field, bare `#[clap_mcp(skip)]`
+removes **every** clap arg id contributed by the flattened type (via
+`Args::augment_args`), not only the Rust field name. Use this when a whole
+flattened group should stay CLI-only. To skip specific ids on any field, use
+`#[clap_mcp(skip = "id1,id2")]` (comma-separated clap arg ids). When both apply
+on a flattened field, the probe ids and the explicit list are merged.
+
 **Imperative:** Use `schema_from_command_with_metadata` and
 `get_matches_or_serve_mcp_with_config_and_metadata` with
 `ClapMcpSchemaMetadata`. Excerpt:
@@ -590,6 +597,22 @@ args). Tools that must exclude each other but are not the same MCP tool name
 code: a shared `Mutex` in `run()`, [stateful tools](stateful-tools.md), or
 `parallel_safe = false` when conservative serialization is acceptable. clap-mcp
 does not provide a cross-tool lock-group attribute.
+
+## Working directory (`chdir`)
+
+In-process tool execution (`reinvocation_safe = true`) runs in the **same OS
+process** as the MCP server. If tool code calls `std::env::set_current_dir` (or
+equivalent), that change is visible to **other concurrent tool calls** when
+`parallel_safe = true`. clap-mcp does not isolate per-call working directories.
+
+| Goal | Pattern |
+| --- | --- |
+| Hide cwd/base-dir knobs from MCP | `#[clap_mcp(skip)]` on the field; require absolute paths in MCP JSON |
+| Serialize cwd-sensitive work | `parallel_safe = false` or topical `#[clap_mcp(serialized)]` on the tool |
+| Per-call isolation | Subprocess mode (`reinvocation_safe = false`) or resolve paths without mutating process cwd |
+
+Prefer absolute paths in MCP tool arguments when the human CLI accepts relative
+paths against a configurable base directory.
 
 ## Async tools and share_runtime
 
