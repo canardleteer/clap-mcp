@@ -1173,6 +1173,39 @@ pub struct ClapSchema {
     pub root: ClapCommand,
 }
 
+/// One clap [`ArgGroup`](clap::ArgGroup) visible on a single command node at schema extraction.
+///
+/// Populated from `Command::get_groups()` and emitted on MCP tools as `meta.clapMcp.argGroups`
+/// (plus an optional parse-time sentence on the tool `description`). Hints are **advisory**:
+/// clap argv parse remains authoritative and invalid combinations still fail at parse time.
+///
+/// # Limitations
+///
+/// * **Not JSON Schema** — does not add `oneOf` / `anyOf` to `inputSchema`; do not treat
+///   `argGroups` as machine-enforced constraints.
+/// * **Per command node** — `args` lists MCP-visible arg ids on this command node only.
+///   Parent or sibling subcommand groups are not merged into leaf tools.
+/// * **Visibility** — `args` uses the same MCP visibility filter as schema/`inputSchema`
+///   (builtins and `skip_args`; hidden args follow whatever that filter does today).
+/// * **Sub-two-member groups** — groups with fewer than two visible members are omitted.
+///
+/// # Semantics
+///
+/// `required` and `multiple` mirror clap `ArgGroup` flags at schema extraction time.
+/// For `required: true`, agents should supply one member; for optional groups, at most one
+/// unless `multiple` is true.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClapArgGroup {
+    /// clap ArgGroup id (`ArgGroup::get_id()`).
+    pub id: String,
+    /// MCP-visible arg ids on this command node (after skip/builtin filtering).
+    pub args: Vec<String>,
+    /// Whether the group is required at parse time (`ArgGroup::is_required_set()`).
+    pub required: bool,
+    /// Whether multiple members may be set (`ArgGroup::is_multiple()`).
+    pub multiple: bool,
+}
+
 /// A command or subcommand in the schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClapCommand {
@@ -1181,6 +1214,13 @@ pub struct ClapCommand {
     pub long_about: Option<String>,
     pub version: Option<String>,
     pub args: Vec<ClapArg>,
+    /// clap ArgGroups on this command node (omitted from JSON when empty).
+    ///
+    /// Each nested MCP tool carries only groups attached to its own command node.
+    /// Skipped commands (`ClapMcpSchemaMetadata::skip_commands`) never produce tools,
+    /// so their groups are not exported.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub arg_groups: Vec<ClapArgGroup>,
     pub subcommands: Vec<ClapCommand>,
 }
 
@@ -1286,10 +1326,95 @@ fn is_omitted_schema_clap_arg(arg: &clap::Arg) -> bool {
     is_clap_mcp_builtin_arg_id(id)
 }
 
+/// MCP-visible arg ids on one clap command node (schema extraction and ArgGroup membership).
+///
+/// Single source of truth for which arg ids appear in both `ClapCommand::args` and
+/// `ClapArgGroup::args` on this node, and therefore in leaf `inputSchema` for args
+/// defined on that node (globals from ancestors are separate).
+fn mcp_visible_arg_ids_on_command(
+    cmd: &Command,
+    metadata: &ClapMcpSchemaMetadata,
+) -> std::collections::HashSet<String> {
+    let cmd_name = cmd.get_name().to_string();
+    let skip_args: std::collections::HashSet<_> = metadata
+        .skip_args
+        .get(&cmd_name)
+        .map(|v| v.iter().cloned().collect())
+        .unwrap_or_default();
+
+    cmd.get_arguments()
+        .filter(|a| !is_omitted_schema_clap_arg(a))
+        .map(|a| a.get_id().to_string())
+        .filter(|id| !skip_args.contains(id))
+        .collect()
+}
+
+fn extract_arg_groups(cmd: &Command, metadata: &ClapMcpSchemaMetadata) -> Vec<ClapArgGroup> {
+    let visible = mcp_visible_arg_ids_on_command(cmd, metadata);
+    let mut built = cmd.clone();
+    built.build();
+    let mut groups = Vec::new();
+    for group in built.get_groups() {
+        let mut args: Vec<String> = group
+            .get_args()
+            .map(|id| id.to_string())
+            .filter(|id| visible.contains(id))
+            .collect();
+        args.sort();
+        if args.len() < 2 {
+            continue;
+        }
+        let required = group.is_required_set();
+        let multiple = {
+            let mut g = group.clone();
+            g.is_multiple()
+        };
+        groups.push(ClapArgGroup {
+            id: group.get_id().to_string(),
+            args,
+            required,
+            multiple,
+        });
+    }
+    groups.sort_by(|a, b| a.id.cmp(&b.id));
+    groups
+}
+
+fn format_arg_groups_description_suffix(groups: &[ClapArgGroup]) -> Option<String> {
+    if groups.is_empty() {
+        return None;
+    }
+    let parts: Vec<String> = groups
+        .iter()
+        .map(|g| {
+            let args_list = g
+                .args
+                .iter()
+                .map(|a| format!("`{a}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let constraint = if g.required {
+                "requires one of"
+            } else {
+                "at most one of"
+            };
+            let mut s = format!("`{}` {constraint}: {args_list}", g.id);
+            if g.multiple {
+                s.push_str(" (multiple allowed)");
+            }
+            s
+        })
+        .collect();
+    Some(format!("Arg groups (parse-time): {}.", parts.join("; ")))
+}
+
 /// Builds MCP tools from a clap schema with execution config and metadata.
 ///
 /// One tool per command (root + every subcommand). Tools include `meta.clapMcp` with
-/// `reinvocationSafe`, `parallelSafe`, and optional `taskAugmented` hints.
+/// `reinvocationSafe`, `parallelSafe`, optional `taskAugmented`, optional topical
+/// serialization hints, and optional `argGroups` when clap ArgGroups are present on
+/// the tool's command node. Tool `description` may include a parse-time ArgGroup suffix
+/// when groups exist.
 pub fn tools_from_schema_with_metadata(
     schema: &ClapSchema,
     config: &ClapMcpConfig,
@@ -1417,11 +1542,23 @@ fn command_to_tool_with_config(
         );
     }
 
-    let description = cmd
+    let mut description = cmd
         .long_about
         .as_deref()
         .or(cmd.about.as_deref())
         .map(String::from);
+    if let Some(suffix) = format_arg_groups_description_suffix(&cmd.arg_groups) {
+        description = Some(match description {
+            Some(mut d) => {
+                if !d.is_empty() {
+                    d.push(' ');
+                }
+                d.push_str(&suffix);
+                d
+            }
+            None => suffix,
+        });
+    }
     let title = cmd.about.as_ref().map(String::from);
 
     let meta = {
@@ -1478,6 +1615,11 @@ fn command_to_tool_with_config(
                     }
                 }
             }
+        }
+        if !cmd.arg_groups.is_empty()
+            && let Ok(value) = serde_json::to_value(&cmd.arg_groups)
+        {
+            clap_mcp.insert("argGroups".into(), value);
         }
         let mut m = Meta::default();
         m.0.insert("clapMcp".into(), serde_json::Value::Object(clap_mcp));
@@ -2027,32 +2169,28 @@ fn command_to_schema_with_metadata(
     metadata: &ClapMcpSchemaMetadata,
     skip_commands: &std::collections::HashSet<String>,
 ) -> ClapCommand {
+    let visible = mcp_visible_arg_ids_on_command(cmd, metadata);
     let mut args: Vec<ClapArg> = cmd
         .get_arguments()
-        .filter(|a| !is_omitted_schema_clap_arg(a))
+        .filter(|a| visible.contains(a.get_id().as_str()))
         .map(arg_to_schema)
         .collect();
 
     let cmd_name = cmd.get_name().to_string();
-    let skip_args: std::collections::HashSet<_> = metadata
-        .skip_args
-        .get(&cmd_name)
-        .map(|v| v.iter().cloned().collect())
-        .unwrap_or_default();
-
     let requires_args: std::collections::HashSet<_> = metadata
         .requires_args
         .get(&cmd_name)
         .map(|v| v.iter().cloned().collect())
         .unwrap_or_default();
 
-    args.retain(|a| !skip_args.contains(&a.id));
     for arg in &mut args {
         if requires_args.contains(&arg.id) {
             arg.required = true;
         }
     }
     args.sort_by(|a, b| a.id.cmp(&b.id));
+
+    let arg_groups = extract_arg_groups(cmd, metadata);
 
     let subcommands: Vec<ClapCommand> = cmd
         .get_subcommands()
@@ -2066,6 +2204,7 @@ fn command_to_schema_with_metadata(
         long_about: cmd.get_long_about().map(|s| s.to_string()),
         version: cmd.get_version().map(|s| s.to_string()),
         args,
+        arg_groups,
         subcommands,
     }
 }
@@ -3268,7 +3407,7 @@ mod tests {
         schema_parse_failure_result, subprocess_stderr_log_params, validate_tool_argument_names,
     };
     use async_trait::async_trait;
-    use clap::{Arg, ArgAction, Command, CommandFactory};
+    use clap::{Arg, ArgAction, ArgGroup, Command, CommandFactory};
     use rmcp::ServerHandler;
     use rmcp::model::{
         Content, GetPromptRequestParams, PromptMessage, PromptMessageContent, PromptMessageRole,
@@ -3716,6 +3855,171 @@ mod tests {
         assert_ne!(
             canonical_lock_arg_value(&json!(["a", "b"])),
             canonical_lock_arg_value(&json!(["b", "a"]))
+        );
+    }
+
+    fn command_with_arg_group() -> Command {
+        Command::new("exec-modes")
+            .arg(Arg::new("exec").long("exec"))
+            .arg(Arg::new("exec_batch").long("exec-batch"))
+            .group(
+                ArgGroup::new("execs")
+                    .args(["exec", "exec_batch"])
+                    .required(true),
+            )
+    }
+
+    #[test]
+    fn test_arg_groups_extracted_from_command() {
+        let schema = schema_from_command(&command_with_arg_group());
+        assert_eq!(schema.root.name, "exec-modes");
+        assert_eq!(schema.root.arg_groups.len(), 1);
+        let group = &schema.root.arg_groups[0];
+        assert_eq!(group.id, "execs");
+        assert_eq!(group.args, vec!["exec", "exec_batch"]);
+        assert!(group.required);
+        assert!(!group.multiple);
+    }
+
+    #[test]
+    fn test_arg_groups_meta_in_list_tools() {
+        let schema = schema_from_command(&command_with_arg_group());
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig::default(),
+            &ClapMcpSchemaMetadata::default(),
+        );
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "exec-modes")
+            .expect("exec-modes tool");
+        let arg_groups = tool
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("clapMcp"))
+            .and_then(|value| value.get("argGroups"))
+            .and_then(|value| value.as_array())
+            .expect("argGroups meta");
+        assert_eq!(arg_groups.len(), 1);
+        assert_eq!(
+            arg_groups[0].get("id").and_then(|v| v.as_str()),
+            Some("execs")
+        );
+        let args = arg_groups[0]
+            .get("args")
+            .and_then(|v| v.as_array())
+            .expect("args array");
+        assert_eq!(
+            args.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(),
+            vec!["exec", "exec_batch"]
+        );
+    }
+
+    #[test]
+    fn test_arg_groups_skip_filters_members() {
+        let mut metadata = ClapMcpSchemaMetadata::default();
+        metadata
+            .skip_args
+            .insert("exec-modes".into(), vec!["exec_batch".into()]);
+        let schema = schema_from_command_with_metadata(&command_with_arg_group(), &metadata);
+        assert!(
+            schema.root.arg_groups.is_empty(),
+            "group with one visible member should be omitted"
+        );
+    }
+
+    #[test]
+    fn test_arg_groups_omitted_when_empty() {
+        let schema = sample_helper_schema();
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig::default(),
+            &ClapMcpSchemaMetadata::default(),
+        );
+        for tool in &tools {
+            let has_arg_groups = tool
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.get("clapMcp"))
+                .and_then(|value| value.get("argGroups"))
+                .is_some();
+            assert!(!has_arg_groups, "tool {} should omit argGroups", tool.name);
+        }
+    }
+
+    #[test]
+    fn test_arg_group_description_suffix() {
+        let schema = schema_from_command(&command_with_arg_group());
+        let tool = command_to_tool_with_config(
+            &schema,
+            &schema.root,
+            &ClapMcpConfig::default(),
+            &ClapMcpSchemaMetadata::default(),
+            None,
+        );
+        let description = tool
+            .description
+            .as_ref()
+            .map(|d| d.to_string())
+            .expect("description");
+        assert!(description.contains("Arg groups (parse-time)"));
+        assert!(description.contains("`execs` requires one of"));
+        assert!(description.contains("`exec`"));
+        assert!(description.contains("`exec_batch`"));
+    }
+
+    #[test]
+    fn test_arg_groups_per_command_node() {
+        let cmd = Command::new("root")
+            .arg(Arg::new("root_a").long("root-a"))
+            .arg(Arg::new("root_b").long("root-b"))
+            .group(ArgGroup::new("root_group").args(["root_a", "root_b"]))
+            .subcommand(
+                Command::new("leaf")
+                    .arg(Arg::new("leaf_x").long("leaf-x"))
+                    .arg(Arg::new("leaf_y").long("leaf-y"))
+                    .group(ArgGroup::new("leaf_group").args(["leaf_x", "leaf_y"])),
+            );
+        let schema = schema_from_command(&cmd);
+        assert_eq!(schema.root.arg_groups.len(), 1);
+        assert_eq!(schema.root.arg_groups[0].id, "root_group");
+        let leaf = schema
+            .root
+            .subcommands
+            .iter()
+            .find(|c| c.name == "leaf")
+            .expect("leaf subcommand");
+        assert_eq!(leaf.arg_groups.len(), 1);
+        assert_eq!(leaf.arg_groups[0].id, "leaf_group");
+
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig::default(),
+            &ClapMcpSchemaMetadata::default(),
+        );
+        let root_tool = tools.iter().find(|t| t.name == "root").expect("root tool");
+        let leaf_tool = tools.iter().find(|t| t.name == "leaf").expect("leaf tool");
+        let root_groups = root_tool
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("clapMcp"))
+            .and_then(|v| v.get("argGroups"))
+            .and_then(|v| v.as_array())
+            .expect("root argGroups");
+        assert_eq!(
+            root_groups[0].get("id").and_then(|v| v.as_str()),
+            Some("root_group")
+        );
+        let leaf_groups = leaf_tool
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("clapMcp"))
+            .and_then(|v| v.get("argGroups"))
+            .and_then(|v| v.as_array())
+            .expect("leaf argGroups");
+        assert_eq!(
+            leaf_groups[0].get("id").and_then(|v| v.as_str()),
+            Some("leaf_group")
         );
     }
 

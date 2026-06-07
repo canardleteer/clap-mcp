@@ -40,6 +40,7 @@ applies:
 | Macro/runtime coverage after new tests | `cargo llvm-cov` on `clap-mcp` + `clap-mcp-macros` | Quick filters above |
 | New `#[clap_mcp(...)]` config flag | Documented in supported-shapes matrix if embedder-visible | [supported-cli-shapes.md](supported-cli-shapes.md) |
 | New `[[bin]]` in examples | Auto-included in `cargo xtask examples-help` unless on exclude list | [examples/Cargo.toml](../examples/Cargo.toml), [examples/README.md](../examples/README.md); add contract test if MCP semantics matter |
+| ArgGroup hints (`argGroups` meta, description suffix) | `mcp_visible_arg_ids_on_command` shared with schema args; per-node groups only | `test_arg_groups_*` in `lib.rs`, `example_contract_arg_group_hints_*`, `arg_group_hints` example; rustdoc `-D warnings` |
 
 ### PR self-check
 
@@ -66,6 +67,7 @@ Documented in [`example_contract_tests.rs`](../clap-mcp/tests/example_contract_t
 | `struct_subcommand_globals` | `greet` in tools; `verbose` on greet `inputSchema`; `greet` + `verbose: true` → output contains `verbose:` |
 | `optional_commands_and_args` | `internal` not in tools; `read` schema requires `path` |
 | `struct_subcommand_required` | CLI argv parity (see `cli_compat_tests.rs`) |
+| `arg_group_hints` | `search` exposes `meta.clapMcp.argGroups`; exec-only round-trip; both exec flags → `is_error` |
 
 ## Adding an example
 

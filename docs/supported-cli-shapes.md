@@ -31,6 +31,7 @@ and shapes that are intentionally out of scope. Runnable binaries are listed in
 | Skipped shell-only tools | `#[clap_mcp(skip)]`; positionals OK on skipped variants | `optional_commands_and_args` | Skipped variants exempt from multi-positional guard |
 | Interactive / TTY / exec | `skip` | [Execution safety — Interactive](execution-safety.md#interactive-and-session-commands) | Not an MCP tool |
 | Cross-tool locking | `Mutex` / stateful / `parallel_safe = false` | [Execution safety — Cross-tool](execution-safety.md#cross-tool-serialization) | No lock-group attribute |
+| ArgGroup hints (not schema `oneOf`) | clap `#[group]` / `.group()`; `meta.clapMcp.argGroups` + description suffix | `arg_group_hints` | Advisory; parse-time enforcement only |
 
 ## Flat struct tradeoff
 
@@ -63,7 +64,7 @@ flattened groups you do not want agents to set over MCP.
 clap-mcp does not currently provide first-class support for:
 
 * Mapping `hide` to MCP tool visibility (use `#[clap_mcp(skip)]` explicitly).
-* ArgGroup-aware JSON Schema generation.
+* ArgGroup-aware JSON Schema `oneOf` generation (`meta.clapMcp.argGroups` hints are supported; see [Arg groups](execution-safety.md#arg-groups)).
 * In-process `exit` trapping for subprocess mode.
 * Bidirectional interactive MCP sessions over stdio.
 
