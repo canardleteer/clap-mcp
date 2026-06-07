@@ -62,7 +62,8 @@ public `ClapMcpServer` / `build_clap_mcp_server`. See
   log_bridge, async_sleep, async_sleep_shared, **async_embedder_serve**,
   **task_tools_dedicated**,
   **task_tools_shared**, **subprocess_exit_handling**, **panic_catch_opt_in**,
-  **custom_resources_prompts**, **vec_and_flags**, **arg_group_hints**, **passthrough_args**,
+  **custom_resources_prompts**, **vec_and_flags**, **arg_group_hints**, **preserve_cli_parse**,
+  **flat_struct_root**, **flatten_skip**, **passthrough_args**,
   **passthrough_args_subprocess**, **custom_mcp_flags**, **stateful_counter**)
 
 ## Async embedders
@@ -182,6 +183,45 @@ cargo run -p clap-mcp-examples --bin arg_group_hints -- --mcp
 ```
 
 See [Execution safety — Arg groups](../docs/execution-safety.md#arg-groups).
+
+### preserve_cli_parse
+
+Uses **`parse_or_serve_mcp_preserve_cli()`** so invalid human CLI argv keeps clap's
+native Usage formatting. MCP entry (`--mcp`) still works.
+
+```bash
+cargo run -p clap-mcp-examples --bin preserve_cli_parse -- greet --name Ada
+cargo run -p clap-mcp-examples --bin preserve_cli_parse -- greet   # clap Usage error
+cargo run -p clap-mcp-examples --bin preserve_cli_parse -- --mcp
+```
+
+See [Usage — Preserve CLI parse](../docs/usage.md#preserve-cli-parse).
+
+### flat_struct_root
+
+Struct root with **no subcommand**: one MCP tool whose `inputSchema` includes root
+flags and flattened `Args` fields. Demonstrates the wide-schema tradeoff documented
+in [Supported CLI shapes](../docs/supported-cli-shapes.md#flat-struct-tradeoff).
+
+```bash
+cargo run -p clap-mcp-examples --bin flat_struct_root -- --verbose --target prod --email a@b.c
+cargo run -p clap-mcp-examples --bin flat_struct_root -- --mcp
+```
+
+### flatten_skip
+
+`#[clap_mcp(skip)]` on flattened `Args`, skipped maintenance variants, and
+`#[clap_mcp(args_metadata)]` with `#[clap_mcp(serialize_topic)]` plus
+`#[arg(id = "custom-out")]`.
+
+```bash
+cargo run -p clap-mcp-examples --bin flatten_skip -- show --id abc
+cargo run -p clap-mcp-examples --bin flatten_skip -- flush --custom-out /tmp/out
+cargo run -p clap-mcp-examples --bin flatten_skip -- --mcp
+```
+
+See [Execution safety — Topical serialization](../docs/execution-safety.md#topical-serialization)
+and [Supported CLI shapes](../docs/supported-cli-shapes.md).
 
 ### passthrough_args / passthrough_args_subprocess
 
@@ -525,6 +565,9 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **custom_mcp_flags** | `servers/custom_mcp_flags.rs` | Renamed stdio flag when `--mcp` is already taken |
 | **vec_and_flags** | `servers/vec_and_flags.rs` | Vec/list and flag/count args in MCP schema |
 | **arg_group_hints** | `servers/arg_group_hints.rs` | ArgGroup hints in `meta.clapMcp.argGroups` (advisory, not schema `oneOf`) |
+| **preserve_cli_parse** | `servers/preserve_cli_parse.rs` | `parse_or_serve_mcp_preserve_cli` for native clap Usage on invalid argv |
+| **flat_struct_root** | `servers/flat_struct_root.rs` | Flat struct root — single MCP tool, wide `inputSchema` |
+| **flatten_skip** | `servers/flatten_skip.rs` | Skip flattened `Args`, skip variants, `args_metadata` + `serialize_topic` |
 | **result_output**  | `servers/result_output.rs`      | `#[clap_mcp_output_from]` with `Result<T, E>`, `IntoClapMcpToolError` for structured errors |
 | **structured**     | `servers/structured.rs`         | Structured output via `#[clap_mcp_output_from]` and `AsStructured<T>` |
 | **tracing_bridge** | `servers/tracing_bridge.rs`  | Tracing integration, MCP log forwarding, prompts   |
