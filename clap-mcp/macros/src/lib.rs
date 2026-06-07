@@ -109,9 +109,7 @@ fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> ClapMcpAttrs {
                 mcp_http_flag = Some(meta_string_value(&meta)?);
             } else if meta.path.is_ident("export_skills_flag") {
                 export_skills_flag = Some(meta_string_value(&meta)?);
-            } else if meta.path.is_ident("args_metadata")
-                && meta.input.peek(syn::token::Eq)
-            {
+            } else if meta.path.is_ident("args_metadata") && meta.input.peek(syn::token::Eq) {
                 let value: Expr = meta.value()?.parse()?;
                 if !expr_to_bool(&value) {
                     return Err(meta.error("args_metadata only supports `true` or bare flag"));
