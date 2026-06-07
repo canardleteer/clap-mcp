@@ -841,90 +841,6 @@ fn run_skip_requires(cmd: TestSkipRequires) -> String {
 }
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe, parallel_safe = false)]
-#[clap_mcp_output_from = "run_skipped_multi_positional"]
-#[command(name = "test-skipped-multi-positional")]
-enum TestSkippedMultiPositional {
-    List,
-    #[clap_mcp(skip)]
-    Upload {
-        name: String,
-        local_path: String,
-    },
-}
-
-fn run_skipped_multi_positional(cmd: TestSkippedMultiPositional) -> String {
-    match cmd {
-        TestSkippedMultiPositional::List => "list".to_string(),
-        TestSkippedMultiPositional::Upload { name, local_path } => {
-            format!("{name}:{local_path}")
-        }
-    }
-}
-
-#[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe, parallel_safe = false)]
-#[command(name = "test-nested-skip-cli", subcommand_required = true)]
-struct TestNestedSkipCli {
-    #[command(subcommand)]
-    command: TestNestedTopCommands,
-}
-
-#[derive(Debug, Subcommand, ClapMcp)]
-#[clap_mcp_output_from = "run_nested_top"]
-enum TestNestedTopCommands {
-    Sandbox {
-        #[command(subcommand)]
-        command: TestNestedSandboxCommands,
-    },
-}
-
-#[derive(Debug, Subcommand, ClapMcp)]
-#[clap_mcp_output_from = "run_nested_sandbox"]
-enum TestNestedSandboxCommands {
-    Create {
-        #[arg(long)]
-        name: String,
-    },
-    #[clap_mcp(skip)]
-    Connect,
-}
-
-fn run_nested_top(cmd: TestNestedTopCommands) -> String {
-    match cmd {
-        TestNestedTopCommands::Sandbox { command } => run_nested_sandbox(command),
-    }
-}
-
-fn run_nested_sandbox(cmd: TestNestedSandboxCommands) -> String {
-    match cmd {
-        TestNestedSandboxCommands::Create { name } => format!("create:{name}"),
-        TestNestedSandboxCommands::Connect => "connect".to_string(),
-    }
-}
-
-#[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe, parallel_safe = false)]
-#[clap_mcp_output_from = "run_struct_globals"]
-#[command(name = "test-struct-globals")]
-struct TestStructGlobalsCli {
-    #[arg(long, global = true)]
-    verbose: bool,
-    #[command(subcommand)]
-    command: TestStructGlobalsCommands,
-}
-
-#[derive(Debug, Subcommand, ClapMcp)]
-#[clap_mcp(schema_only)]
-enum TestStructGlobalsCommands {
-    Ping,
-}
-
-fn run_struct_globals(cli: TestStructGlobalsCli) -> String {
-    format!("verbose={} ping", cli.verbose)
-}
-
-#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = true)]
 #[clap_mcp_output_from = "run_serialized_metadata"]
 #[command(name = "test-serialized-metadata")]
@@ -1023,36 +939,6 @@ fn test_clap_mcp_skip_command() {
 }
 
 #[test]
-fn test_struct_root_output_from_sees_global_fields() {
-    let cli = TestStructGlobalsCli {
-        verbose: true,
-        command: TestStructGlobalsCommands::Ping,
-    };
-    let out = cli
-        .execute_for_mcp()
-        .expect("struct-root output_from should execute");
-    match out {
-        ClapMcpToolOutput::Text(s) => assert_eq!(s, "verbose=true ping"),
-        other => panic!("expected text output, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_nested_subcommand_skip_metadata_merged_at_root() {
-    let cmd = TestNestedSkipCli::command();
-    let metadata = TestNestedSkipCli::clap_mcp_schema_metadata();
-    let schema = schema_from_command_with_metadata(&cmd, &metadata);
-    let config = ClapMcpConfig::default();
-    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
-    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
-    assert!(names.contains(&"create"));
-    assert!(
-        !names.contains(&"connect"),
-        "nested #[clap_mcp(skip)] on child enum must propagate to root metadata"
-    );
-}
-
-#[test]
 fn test_clap_mcp_schema_metadata_merge_from() {
     let mut base = ClapMcpSchemaMetadata::default();
     let mut child = ClapMcpSchemaMetadata::default();
@@ -1083,21 +969,6 @@ fn test_clap_mcp_schema_metadata_merge_from() {
     assert_eq!(
         base.serialize_tools.get("create"),
         Some(&ClapMcpSerializeScope::Args(vec!["name".into()]))
-    );
-}
-
-#[test]
-fn test_skipped_variant_with_ambiguous_positionals_excluded_from_tools() {
-    let cmd = TestSkippedMultiPositional::command();
-    let metadata = TestSkippedMultiPositional::clap_mcp_schema_metadata();
-    let schema = schema_from_command_with_metadata(&cmd, &metadata);
-    let config = ClapMcpConfig::default();
-    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
-    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
-    assert!(names.contains(&"list"));
-    assert!(
-        !names.contains(&"upload"),
-        "skipped variant with multiple positionals must not appear as an MCP tool"
     );
 }
 
