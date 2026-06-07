@@ -1,0 +1,50 @@
+error: clap_mcp: cannot classify external flattened type for skip; use imperative skip_commands / skip_args or define the type in this crate
+  --> tests/ui/fail/skip_flatten_unknown_type.rs:13:13
+   |
+13 |     opaque: std::ffi::OsString,
+   |             ^^^^^^^^^^^^^^^^^^
+
+error[E0277]: the trait bound `OsString: FromArgMatches` is not satisfied
+  --> tests/ui/fail/skip_flatten_unknown_type.rs:13:13
+   |
+13 |     opaque: std::ffi::OsString,
+   |             ^^^^^^^^^^^^^^^^^^ the trait `FromArgMatches` is not implemented for `OsString`
+   |
+help: the following other types implement trait `FromArgMatches`
+  --> tests/ui/fail/skip_flatten_unknown_type.rs:6:17
+   |
+ 6 | #[derive(Debug, Parser, ClapMcp)]
+   |                 ^^^^^^ `Cli`
+   |
+  ::: $CARGO/clap_builder-$VERSION/src/derive.rs
+   |
+   | impl<T: FromArgMatches> FromArgMatches for Box<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Box<T>`
+...
+   | impl FromArgMatches for () {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^ `()`
+...
+   | impl FromArgMatches for Infallible {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Infallible`
+   = note: this error originates in the derive macro `Parser` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `OsString: clap::Args` is not satisfied
+  --> tests/ui/fail/skip_flatten_unknown_type.rs:13:13
+   |
+13 |     opaque: std::ffi::OsString,
+   |             ^^^^^^^^^^^^^^^^^^ the trait `clap::Args` is not implemented for `OsString`
+   |
+help: the following other types implement trait `clap::Args`
+  --> tests/ui/fail/skip_flatten_unknown_type.rs:6:17
+   |
+ 6 | #[derive(Debug, Parser, ClapMcp)]
+   |                 ^^^^^^ `Cli`
+   |
+  ::: $CARGO/clap_builder-$VERSION/src/derive.rs
+   |
+   | impl<T: Args> Args for Box<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Box<T>`
+...
+   | impl Args for () {
+   | ^^^^^^^^^^^^^^^^ `()`
+   = note: this error originates in the derive macro `Parser` (in Nightly builds, run with -Z macro-backtrace for more info)

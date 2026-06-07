@@ -1070,6 +1070,318 @@ fn test_skip_flattened_args_excludes_all_arg_ids() {
     );
 }
 
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum HiddenSubcommands {
+    #[command(name = "hidden-a")]
+    HiddenA,
+    #[command(name = "hidden-b")]
+    HiddenB,
+}
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_flat_skip_flatten_subcommands"]
+#[command(name = "test-flat-skip-flatten-subcommands")]
+struct TestFlatSkipFlattenSubcommands {
+    #[command(subcommand)]
+    #[clap_mcp(skip)]
+    commands: HiddenSubcommands,
+    #[arg(long)]
+    visible: Option<String>,
+}
+
+fn run_flat_skip_flatten_subcommands(cmd: TestFlatSkipFlattenSubcommands) -> String {
+    format!("visible={:?}", cmd.visible)
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum NestedBuildActions {
+    #[command(name = "compile")]
+    Compile,
+    #[command(name = "link")]
+    Link,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum NestedOuterCommands {
+    #[command(name = "build")]
+    Build {
+        #[command(subcommand)]
+        action: NestedBuildActions,
+    },
+    #[command(name = "clean")]
+    Clean,
+}
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_nested_skip_flatten_subcommands"]
+#[command(name = "test-nested-skip-flatten-subcommands")]
+struct TestNestedSkipFlattenSubcommands {
+    #[command(subcommand)]
+    #[clap_mcp(skip)]
+    commands: NestedOuterCommands,
+}
+
+fn run_nested_skip_flatten_subcommands(cmd: TestNestedSkipFlattenSubcommands) -> String {
+    format!("{cmd:?}")
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum ExplicitHiddenSubcommands {
+    #[command(name = "hidden")]
+    Hidden,
+    #[command(name = "also_hidden")]
+    AlsoHidden,
+    #[command(name = "kept")]
+    Kept,
+}
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_explicit_skip_subcommand_names"]
+#[command(name = "test-explicit-skip-subcommand-names")]
+struct TestExplicitSkipSubcommandNames {
+    #[command(subcommand)]
+    #[clap_mcp(skip = "hidden,also_hidden")]
+    commands: ExplicitHiddenSubcommands,
+}
+
+fn run_explicit_skip_subcommand_names(cmd: TestExplicitSkipSubcommandNames) -> String {
+    format!("{cmd:?}")
+}
+
+#[derive(Debug, Args, ClapMcp)]
+#[clap_mcp(args_metadata)]
+struct FlushTopicArgs {
+    #[clap_mcp(serialize_topic)]
+    #[arg(long)]
+    output: Option<String>,
+}
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = true)]
+#[clap_mcp_output_from = "run_nested_flatten_serialize_topic"]
+#[command(name = "test-nested-flatten-serialize-topic")]
+enum TestNestedFlattenSerializeTopic {
+    #[clap_mcp(serialized = "output")]
+    Flush {
+        #[command(flatten)]
+        args: FlushTopicArgs,
+    },
+}
+
+fn run_nested_flatten_serialize_topic(cmd: TestNestedFlattenSerializeTopic) -> String {
+    match cmd {
+        TestNestedFlattenSerializeTopic::Flush { args } => format!("output={:?}", args.output),
+    }
+}
+
+#[derive(Debug, Args, ClapMcp)]
+#[clap_mcp(args_metadata)]
+struct InnerTopicArgs {
+    #[clap_mcp(serialize_topic)]
+    #[arg(long)]
+    topic: Option<String>,
+}
+
+#[derive(Debug, Args, ClapMcp)]
+#[clap_mcp(args_metadata)]
+struct OuterTopicArgs {
+    #[command(flatten)]
+    inner: InnerTopicArgs,
+}
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = true)]
+#[clap_mcp_output_from = "run_two_level_flatten_serialize_topic"]
+#[command(name = "test-two-level-flatten-serialize-topic")]
+enum TestTwoLevelFlattenSerializeTopic {
+    #[clap_mcp(serialized = "topic")]
+    Run {
+        #[command(flatten)]
+        args: OuterTopicArgs,
+    },
+}
+
+fn run_two_level_flatten_serialize_topic(cmd: TestTwoLevelFlattenSerializeTopic) -> String {
+    match cmd {
+        TestTwoLevelFlattenSerializeTopic::Run { args } => {
+            format!("topic={:?}", args.inner.topic)
+        }
+    }
+}
+
+#[derive(Debug, Args, ClapMcp)]
+#[clap_mcp(args_metadata)]
+struct SharedTopicArgs {
+    #[clap_mcp(serialize_topic)]
+    #[arg(long)]
+    key: Option<String>,
+}
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = true)]
+#[clap_mcp_output_from = "run_shared_args_serialize_topic"]
+#[command(name = "test-shared-args-serialize-topic")]
+enum TestSharedArgsSerializeTopic {
+    #[clap_mcp(serialized = "key")]
+    Alpha {
+        #[command(flatten)]
+        shared: SharedTopicArgs,
+    },
+    #[clap_mcp(serialized = "key")]
+    Beta {
+        #[command(flatten)]
+        shared: SharedTopicArgs,
+    },
+}
+
+fn run_shared_args_serialize_topic(cmd: TestSharedArgsSerializeTopic) -> String {
+    match cmd {
+        TestSharedArgsSerializeTopic::Alpha { shared } => format!("alpha key={:?}", shared.key),
+        TestSharedArgsSerializeTopic::Beta { shared } => format!("beta key={:?}", shared.key),
+    }
+}
+
+#[test]
+fn test_skip_flattened_subcommands_excludes_all_command_names() {
+    let cmd = TestFlatSkipFlattenSubcommands::command();
+    let metadata = TestFlatSkipFlattenSubcommands::clap_mcp_schema_metadata();
+    assert!(
+        metadata.skip_commands.iter().any(|s| s == "hidden-a"),
+        "skip_commands should include hidden-a: {:?}",
+        metadata.skip_commands
+    );
+    assert!(
+        metadata.skip_commands.iter().any(|s| s == "hidden-b"),
+        "skip_commands should include hidden-b: {:?}",
+        metadata.skip_commands
+    );
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let config = ClapMcpConfig::default();
+    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        !names.contains(&"hidden-a") && !names.contains(&"hidden-b"),
+        "flattened #[clap_mcp(skip)] on Subcommand should hide subcommand tools, got: {names:?}"
+    );
+    assert_eq!(schema.root.name, "test-flat-skip-flatten-subcommands");
+    assert!(
+        schema.root.args.iter().any(|a| a.id == "visible"),
+        "non-skipped root field should remain in MCP schema"
+    );
+}
+
+#[test]
+fn test_skip_flattened_subcommands_nested_depth() {
+    let metadata = TestNestedSkipFlattenSubcommands::clap_mcp_schema_metadata();
+    for name in ["build", "compile", "link", "clean"] {
+        assert!(
+            metadata.skip_commands.iter().any(|s| s == name),
+            "nested flatten subcommand skip should include {name}: {:?}",
+            metadata.skip_commands
+        );
+    }
+    let cmd = TestNestedSkipFlattenSubcommands::command();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let config = ClapMcpConfig::default();
+    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    for hidden in ["build", "compile", "link", "clean"] {
+        assert!(
+            !names.contains(&hidden),
+            "tool {hidden} should be skipped, got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_skip_explicit_subcommand_name_list() {
+    let metadata = TestExplicitSkipSubcommandNames::clap_mcp_schema_metadata();
+    assert!(metadata.skip_commands.contains(&"hidden".to_string()));
+    assert!(metadata.skip_commands.contains(&"also_hidden".to_string()));
+    assert!(!metadata.skip_commands.contains(&"kept".to_string()));
+    let cmd = TestExplicitSkipSubcommandNames::command();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let config = ClapMcpConfig::default();
+    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(names.contains(&"kept"));
+    assert!(!names.contains(&"hidden"));
+    assert!(!names.contains(&"also_hidden"));
+}
+
+#[test]
+fn test_nested_flatten_args_serialize_topic_metadata() {
+    let metadata = TestNestedFlattenSerializeTopic::clap_mcp_schema_metadata();
+    let bindings = metadata
+        .serialize_topic_args
+        .get("flush")
+        .expect("flush tool serialize_topic bindings");
+    assert!(bindings.contains_key("output"));
+    let config = ClapMcpConfig {
+        reinvocation_safe: true,
+        parallel_safe: true,
+        ..Default::default()
+    };
+    let cmd = TestNestedFlattenSerializeTopic::command();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+    let flush = tools
+        .iter()
+        .find(|t| t.name == "flush")
+        .expect("flush tool");
+    let meta = flush
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("clapMcp"))
+        .and_then(|v| v.as_object())
+        .expect("flush clapMcp meta");
+    assert_eq!(
+        meta.get("serializeTopicArgs").and_then(|v| v.as_array()),
+        Some(&vec![serde_json::json!("output")])
+    );
+}
+
+#[test]
+fn test_nested_flatten_args_serialize_topic_two_level() {
+    let metadata = TestTwoLevelFlattenSerializeTopic::clap_mcp_schema_metadata();
+    let bindings = metadata
+        .serialize_topic_args
+        .get("run")
+        .expect("run tool serialize_topic bindings");
+    assert!(bindings.contains_key("topic"));
+}
+
+#[test]
+fn test_nested_flatten_args_serialized_validation_compiles() {
+    let metadata = TestNestedFlattenSerializeTopic::clap_mcp_schema_metadata();
+    assert_eq!(
+        metadata.serialize_tools.get("flush"),
+        Some(&ClapMcpSerializeScope::Args(vec!["output".into()]))
+    );
+}
+
+#[test]
+fn test_shared_args_type_two_variants_serialize_topic() {
+    let metadata = TestSharedArgsSerializeTopic::clap_mcp_schema_metadata();
+    for tool in ["alpha", "beta"] {
+        let bindings = metadata
+            .serialize_topic_args
+            .get(tool)
+            .unwrap_or_else(|| panic!("{tool} serialize_topic bindings"));
+        assert!(
+            bindings.contains_key("key"),
+            "{tool} should bind serialize_topic for key"
+        );
+    }
+}
+
 #[test]
 fn test_skip_explicit_arg_id_list() {
     let cmd = TestExplicitSkipIds::command();

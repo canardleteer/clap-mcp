@@ -109,6 +109,13 @@ fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> ClapMcpAttrs {
                 mcp_http_flag = Some(meta_string_value(&meta)?);
             } else if meta.path.is_ident("export_skills_flag") {
                 export_skills_flag = Some(meta_string_value(&meta)?);
+            } else if meta.path.is_ident("args_metadata")
+                && meta.input.peek(syn::token::Eq)
+            {
+                let value: Expr = meta.value()?.parse()?;
+                if !expr_to_bool(&value) {
+                    return Err(meta.error("args_metadata only supports `true` or bare flag"));
+                }
             }
             Ok(())
         });
@@ -353,45 +360,147 @@ fn has_clap_mcp_skip(attrs: &[syn::Attribute]) -> bool {
     !matches!(get_clap_mcp_skip_mode(attrs), ClapMcpSkipMode::None)
 }
 
+fn has_clap_mcp_args_metadata(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let mut found = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("args_metadata") {
+                found = true;
+            }
+            Ok(())
+        });
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FlattenSkipKindTag {
+    Args,
+    Subcommand,
+}
+
+struct FlattenSkipEntry {
+    flat_ty: syn::Type,
+    root_name: String,
+    explicit: Option<Vec<String>>,
+    run_bare_probe: bool,
+    kind: FlattenSkipKindTag,
+}
+
+fn flattened_type_kind(ty: &syn::Type) -> Result<FlattenSkipKindTag, syn::Error> {
+    let ty = inner_type_if_option(ty).unwrap_or(ty);
+    let syn::Type::Path(type_path) = ty else {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "clap_mcp: #[clap_mcp(skip)] on #[command(flatten)] requires a path type",
+        ));
+    };
+    if type_path.path.segments.len() >= 2 {
+        let first = type_path.path.segments.first().unwrap();
+        let first_name = first.ident.to_string();
+        if first_name != "crate" && first_name != "self" && first_name != "super" {
+            return Err(syn::Error::new_spanned(
+                ty,
+                "clap_mcp: cannot classify external flattened type for skip; use imperative \
+                 skip_commands / skip_args or define the type in this crate",
+            ));
+        }
+    }
+    let last = type_path
+        .path
+        .segments
+        .last()
+        .map(|s| s.ident.to_string())
+        .unwrap_or_default();
+    let lower = last.to_ascii_lowercase();
+    let kind = if lower.contains("subcommand") || lower.ends_with("commands") {
+        FlattenSkipKindTag::Subcommand
+    } else {
+        FlattenSkipKindTag::Args
+    };
+    Ok(kind)
+}
+
 fn quote_flatten_skip_stmts(
-    probes: &[(String, syn::Type)],
+    entries: &[FlattenSkipEntry],
     target: &proc_macro2::Ident,
 ) -> Vec<proc_macro2::TokenStream> {
-    probes
+    entries
         .iter()
-        .map(|(root_name, flat_ty)| {
-            let root_lit = syn::LitStr::new(root_name, proc_macro2::Span::call_site());
-            quote! {
-                {
-                    let probe = clap::Command::new("_clap_mcp_skip_probe");
-                    let probe = <#flat_ty as clap::Args>::augment_args(probe);
-                    for arg in probe.get_arguments() {
-                        #target
-                            .skip_args
-                            .entry(#root_lit.to_string())
-                            .or_default()
-                            .push(arg.get_id().as_str().to_string());
-                    }
+        .map(|entry| {
+            let flat_ty = &entry.flat_ty;
+            let root_lit = syn::LitStr::new(&entry.root_name, proc_macro2::Span::call_site());
+            let explicit_expr = match &entry.explicit {
+                Some(ids) => {
+                    let lits = ids.iter().map(|s| {
+                        let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+                        quote! { #lit.to_string() }
+                    });
+                    quote! { Some::<Vec<String>>(vec![#(#lits),*]) }
                 }
+                None => quote! { None::<Vec<String>> },
+            };
+            let run_bare_probe = entry.run_bare_probe;
+            let apply_fn = match entry.kind {
+                FlattenSkipKindTag::Args => {
+                    quote! { clap_mcp::apply_flatten_args_field_skip::<#flat_ty> }
+                }
+                FlattenSkipKindTag::Subcommand => {
+                    quote! { clap_mcp::apply_flatten_subcommand_field_skip::<#flat_ty> }
+                }
+            };
+            quote! {
+                #apply_fn(
+                    &mut #target.skip_commands,
+                    &mut #target.skip_args,
+                    #root_lit,
+                    #explicit_expr.as_deref(),
+                    #run_bare_probe,
+                );
             }
         })
         .collect()
 }
 
-fn apply_field_skip_to_skip_args(
+fn apply_field_skip(
     skip_args: &mut std::collections::HashMap<String, Vec<String>>,
-    flatten_skip_probes: &mut Vec<(String, syn::Type)>,
+    flatten_skip_entries: &mut Vec<FlattenSkipEntry>,
     root_name: &str,
     field_ident: &str,
     field_attrs: &[syn::Attribute],
     field_ty: &syn::Type,
-) {
+) -> Option<syn::Error> {
     match get_clap_mcp_skip_mode(field_attrs) {
         ClapMcpSkipMode::None => {}
         ClapMcpSkipMode::Bare => {
-            if field_has_command_flatten(field_attrs) {
+            if field_has_command_subcommand(field_attrs) {
+                let sub_ty = inner_type_if_option(field_ty).unwrap_or(field_ty).clone();
+                flatten_skip_entries.push(FlattenSkipEntry {
+                    flat_ty: sub_ty,
+                    root_name: root_name.to_string(),
+                    explicit: None,
+                    run_bare_probe: true,
+                    kind: FlattenSkipKindTag::Subcommand,
+                });
+            } else if field_has_command_flatten(field_attrs) {
                 let flat_ty = inner_type_if_option(field_ty).unwrap_or(field_ty).clone();
-                flatten_skip_probes.push((root_name.to_string(), flat_ty));
+                let kind = match flattened_type_kind(&flat_ty) {
+                    Ok(k) => k,
+                    Err(e) => return Some(e),
+                };
+                flatten_skip_entries.push(FlattenSkipEntry {
+                    flat_ty,
+                    root_name: root_name.to_string(),
+                    explicit: None,
+                    run_bare_probe: true,
+                    kind,
+                });
             } else {
                 skip_args
                     .entry(root_name.to_string())
@@ -400,14 +509,126 @@ fn apply_field_skip_to_skip_args(
             }
         }
         ClapMcpSkipMode::Explicit(ids) => {
-            if field_has_command_flatten(field_attrs) {
+            if field_has_command_subcommand(field_attrs) {
+                let sub_ty = inner_type_if_option(field_ty).unwrap_or(field_ty).clone();
+                flatten_skip_entries.push(FlattenSkipEntry {
+                    flat_ty: sub_ty,
+                    root_name: root_name.to_string(),
+                    explicit: Some(ids),
+                    run_bare_probe: false,
+                    kind: FlattenSkipKindTag::Subcommand,
+                });
+            } else if field_has_command_flatten(field_attrs) {
                 let flat_ty = inner_type_if_option(field_ty).unwrap_or(field_ty).clone();
-                flatten_skip_probes.push((root_name.to_string(), flat_ty));
+                let kind = match flattened_type_kind(&flat_ty) {
+                    Ok(k) => k,
+                    Err(e) => return Some(e),
+                };
+                flatten_skip_entries.push(FlattenSkipEntry {
+                    flat_ty,
+                    root_name: root_name.to_string(),
+                    explicit: Some(ids),
+                    run_bare_probe: true,
+                    kind,
+                });
+            } else {
+                skip_args
+                    .entry(root_name.to_string())
+                    .or_default()
+                    .extend(ids);
             }
-            skip_args
-                .entry(root_name.to_string())
+        }
+    }
+    None
+}
+
+fn build_args_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
+    let name = &input.ident;
+    let syn::Data::Struct(data) = &input.data else {
+        return syn::Error::new_spanned(
+            name,
+            "clap_mcp: #[clap_mcp(args_metadata)] is only supported on structs",
+        )
+        .to_compile_error();
+    };
+
+    let mut field_ids: Vec<String> = Vec::new();
+    let mut topic_entries: Vec<(String, syn::Type)> = Vec::new();
+    let mut flatten_merge_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut nested_flatten_types: Vec<syn::Type> = Vec::new();
+    for (i, f) in data.fields.iter().enumerate() {
+        let arg_id = f
+            .ident
+            .as_ref()
+            .map(|i| i.to_string())
+            .unwrap_or_else(|| format!("__f{i}"));
+        if field_has_command_flatten(&f.attrs) {
+            let flat_ty = inner_type_if_option(&f.ty).unwrap_or(&f.ty).clone();
+            nested_flatten_types.push(flat_ty.clone());
+            flatten_merge_stmts.push(quote! {
+                <#flat_ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_serialize_topics(
+                    tool_name,
+                    target,
+                );
+            });
+            continue;
+        }
+        field_ids.push(arg_id.clone());
+        if has_clap_mcp_serialize_topic(&f.attrs) {
+            topic_entries.push((arg_id, f.ty.clone()));
+        }
+    }
+
+    let field_id_lits = field_ids.iter().map(|s| {
+        let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+        quote! { #lit }
+    });
+    let merge_entries = topic_entries.iter().map(|(arg_id, ty)| {
+        let arg_lit = syn::LitStr::new(arg_id, proc_macro2::Span::call_site());
+        quote! {
+            target
+                .entry(tool_name.to_string())
                 .or_default()
-                .extend(ids);
+                .insert(
+                    #arg_lit.to_string(),
+                    <#ty as clap_mcp::ClapMcpSerializeTopic>::serialize_topic_segment,
+                );
+        }
+    });
+    let nested_field_ids_expr = if nested_flatten_types.len() == 1 {
+        let ty = &nested_flatten_types[0];
+        quote! { <#ty as clap_mcp::ClapMcpFlattenArgsTopics>::FIELD_IDS }
+    } else {
+        quote! { &[] as &[&str] }
+    };
+
+    quote! {
+        impl clap_mcp::ClapMcpFlattenArgsTopics for #name {
+            const FIELD_IDS: &'static [&'static str] = &[#(#field_id_lits),*];
+            const NESTED_FIELD_IDS: &'static [&'static str] = #nested_field_ids_expr;
+
+            fn merge_serialize_topics(
+                tool_name: &str,
+                target: &mut std::collections::HashMap<
+                    String,
+                    std::collections::HashMap<String, clap_mcp::SerializeTopicSegmentFn>,
+                >,
+            ) {
+                #(#merge_entries)*
+                #(#flatten_merge_stmts)*
+            }
+        }
+
+        impl clap_mcp::ClapMcpConfigProvider for #name {
+            fn clap_mcp_config() -> clap_mcp::ClapMcpConfig {
+                clap_mcp::ClapMcpConfig::default()
+            }
+        }
+
+        impl clap_mcp::ClapMcpSchemaMetadataProvider for #name {
+            fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
+                clap_mcp::ClapMcpSchemaMetadata::default()
+            }
         }
     }
 }
@@ -840,7 +1061,8 @@ fn nested_subcommand_type_paths_from_enum(data: &syn::DataEnum) -> Vec<syn::Path
 ///   `catch_in_process_panics = true` maps panics in task-scheduled work to task error payloads.
 /// - `stateful` / `stateful = true|false` — On a struct root (or delegating enum) with a
 ///   subcommand field, implement [`ClapMcpToolExecutorWithState`] by delegating to the
-///   subcommand. Requires `reinvocation_safe`.
+///   subcommand. Requires `reinvocation_safe`. Not for multi-user or untrusted remote MCP
+///   callers; see [`ClapMcpToolExecutorWithState`].
 ///
 /// ## `#[clap_mcp(task)]` (on variant)
 ///
@@ -872,7 +1094,10 @@ fn nested_subcommand_type_paths_from_enum(data: &syn::DataEnum) -> Vec<syn::Path
 /// ## Stateful tools (`#[clap_mcp_output_from_with_state]`, `#[clap_mcp(stateful)]`)
 ///
 /// For session state across MCP tool calls (requires `reinvocation_safe`), see
-/// [`ClapMcpToolExecutorWithState`]. On the **leaf** subcommand enum:
+/// [`ClapMcpToolExecutorWithState`]. Session state is shared for the MCP server process
+/// lifetime, not per MCP client; see [Stateful MCP tools](https://github.com/canardleteer/clap-mcp/blob/main/docs/stateful-tools.md)
+/// and [Security](https://github.com/canardleteer/clap-mcp/blob/main/docs/security.md).
+/// On the **leaf** subcommand enum:
 ///
 /// - `#[clap_mcp_output_from_with_state = "run"]` — path to `run(cmd, state: &State) -> T`
 /// - `#[clap_mcp_state_type = "Type"]` — must match the second parameter of `run` (without `&`)
@@ -899,10 +1124,13 @@ fn nested_subcommand_type_paths_from_enum(data: &syn::DataEnum) -> Vec<syn::Path
 /// ## `#[clap_mcp(skip)]` / `#[clap_mcp(skip = "id1,id2")]` (on variant or field)
 ///
 /// Exclude the subcommand or argument from MCP exposure. On a normal field, bare
-/// `skip` uses the field's clap arg id. On a `#[command(flatten)]` field, bare `skip`
-/// probes `Args::augment_args` and excludes every arg id from the flattened type.
-/// `skip = "id1,id2"` adds explicit comma-separated clap arg ids (merged with the
-/// flatten probe when both apply on the same field).
+/// `skip` uses the field's Rust field ident (see arg-id note under `serialize_topic` below).
+/// On a `#[command(flatten)]` `Args` field, bare `skip` probes `Args::augment_args` and
+/// excludes every arg id from the flattened type. On a `#[command(subcommand)]` field, bare
+/// `skip` probes `Subcommand::augment_subcommands` and adds subcommand **names** to
+/// `skip_commands` (recursive). `skip = "id1,id2"` on flatten lists arg ids; on subcommand
+/// lists subcommand names. External flattened types are a compile error; use imperative
+/// `skip_commands` / `skip_args`. See [Supported CLI shapes](https://github.com/canardleteer/clap-mcp/blob/main/docs/supported-cli-shapes.md).
 ///
 /// ## `#[clap_mcp(skip_root_when_subcommands)]` (on root struct with subcommand)
 ///
@@ -922,7 +1150,12 @@ fn nested_subcommand_type_paths_from_enum(data: &syn::DataEnum) -> Vec<syn::Path
 /// (comma-separated for multiple ids). See the execution-safety guide for documented use.
 ///
 /// Optional: `#[clap_mcp(serialize_topic)]` on a field listed in `serialized = "..."` uses
-/// [`ClapMcpSerializeTopic`] for that arg when you opt into typed topic keys.
+/// [`ClapMcpSerializeTopic`] for that arg when you opt into typed topic keys. The attribute may
+/// also appear on fields inside shared `Args` helpers when flattened on a variant: add
+/// `#[clap_mcp(args_metadata)]` on the `Args` struct (same crate). External `Args` types need
+/// imperative [`ClapMcpSchemaMetadata::serialize_topic_args`]. Derive metadata uses the Rust
+/// **field ident** as the arg id, not `#[arg(id = "...")]`. Topical locks do not isolate session
+/// state. See [execution-safety](https://github.com/canardleteer/clap-mcp/blob/main/docs/execution-safety.md).
 ///
 /// ## `#[clap_mcp(requires = "arg1,arg2")]` (on variant)
 ///
@@ -967,6 +1200,12 @@ fn nested_subcommand_type_paths_from_enum(data: &syn::DataEnum) -> Vec<syn::Path
 pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
+    if has_clap_mcp_args_metadata(&input.attrs) {
+        return TokenStream::from(build_args_metadata_impl(&input));
+    }
+
+    let mut serialized_flatten_const_checks: Vec<proc_macro2::TokenStream> = Vec::new();
+
     match &input.data {
         syn::Data::Enum(data) => {
             for variant in &data.variants {
@@ -986,9 +1225,18 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                 if let Some(serialized) = get_clap_mcp_serialized(&variant.attrs) {
                     let field_ids: std::collections::HashSet<String> =
                         variant_field_ids(&variant.fields).into_iter().collect();
+                    let flatten_types: Vec<syn::Type> = variant
+                        .fields
+                        .iter()
+                        .filter(|f| field_has_command_flatten(&f.attrs))
+                        .map(|f| inner_type_if_option(&f.ty).unwrap_or(&f.ty).clone())
+                        .collect();
                     if let ClapMcpSerialized::Args(arg_ids) = &serialized {
                         for arg_id in arg_ids {
-                            if !field_ids.contains(arg_id) {
+                            if field_ids.contains(arg_id) {
+                                continue;
+                            }
+                            if flatten_types.is_empty() {
                                 return TokenStream::from(
                                     syn::Error::new_spanned(
                                         &variant.ident,
@@ -1000,6 +1248,18 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                                     .to_compile_error(),
                                 );
                             }
+                            let arg_lit = syn::LitStr::new(arg_id, proc_macro2::Span::call_site());
+                            let checks = flatten_types.iter().map(|ty| {
+                                quote! { clap_mcp::flatten_args_contains_field::<#ty>(#arg_lit) }
+                            });
+                            serialized_flatten_const_checks.push(quote! {
+                                const _: () = {
+                                    clap_mcp::assert_serialized_in_any_flatten_args(
+                                        #arg_lit,
+                                        &[#(#checks),*],
+                                    );
+                                };
+                            });
                         }
                     }
                     for (i, f) in variant.fields.iter().enumerate() {
@@ -1414,6 +1674,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     let schema_metadata_impl = build_schema_metadata_impl(&input);
 
     let expanded = quote! {
+        #(#serialized_flatten_const_checks)*
         #config_provider
         #executor_impl
         #schema_metadata_impl
@@ -1459,7 +1720,9 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let mut serialize_tools: std::collections::HashMap<String, ClapMcpSerialized> =
         std::collections::HashMap::new();
     let mut serialize_topic_bindings: Vec<(String, String, syn::Type)> = Vec::new();
-    let mut flatten_skip_probes: Vec<(String, syn::Type)> = Vec::new();
+    let mut flatten_serialize_topic_cmds: Vec<(String, syn::Type)> = Vec::new();
+    let mut flatten_skip_entries: Vec<FlattenSkipEntry> = Vec::new();
+    let mut flatten_skip_error: Option<syn::Error> = None;
     let mut warn_optional_positional = false;
 
     let optional_positional_warn_block: proc_macro2::TokenStream = quote! {
@@ -1492,6 +1755,10 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 if has_clap_mcp_task(&v.attrs) {
                     task_tool_names.push(cmd_name.clone());
                 }
+                let variant_has_serialized_args = matches!(
+                    get_clap_mcp_serialized(&v.attrs),
+                    Some(ClapMcpSerialized::Args(_))
+                );
                 if let Some(serialized) = get_clap_mcp_serialized(&v.attrs) {
                     serialize_tools.insert(cmd_name.clone(), serialized);
                 }
@@ -1513,14 +1780,22 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     {
                         warn_optional_positional = true;
                     }
-                    apply_field_skip_to_skip_args(
+                    if let Some(e) = apply_field_skip(
                         &mut skip_args,
-                        &mut flatten_skip_probes,
+                        &mut flatten_skip_entries,
                         &cmd_name,
                         &arg_id,
                         &f.attrs,
                         &f.ty,
-                    );
+                    ) {
+                        flatten_skip_error = Some(e);
+                    }
+                    if field_has_command_flatten(&f.attrs) && variant_has_serialized_args {
+                        let flat_ty = inner_type_if_option(&f.ty).unwrap_or(&f.ty).clone();
+                        if matches!(flattened_type_kind(&flat_ty), Ok(FlattenSkipKindTag::Args)) {
+                            flatten_serialize_topic_cmds.push((cmd_name.clone(), flat_ty));
+                        }
+                    }
                     if has_clap_mcp_serialize_topic(&f.attrs) {
                         serialize_topic_bindings.push((
                             cmd_name.clone(),
@@ -1544,6 +1819,19 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 .fields
                 .iter()
                 .find(|f| field_has_command_subcommand(&f.attrs));
+            if let Some(sf) = subcommand_field
+                && let Some(ref field_ident) = sf.ident
+                && let Some(e) = apply_field_skip(
+                    &mut skip_args,
+                    &mut flatten_skip_entries,
+                    &root_name,
+                    &field_ident.to_string(),
+                    &sf.attrs,
+                    &sf.ty,
+                )
+            {
+                flatten_skip_error = Some(e);
+            }
             for f in &data.fields {
                 if subcommand_field.is_some_and(|sf| std::ptr::eq(sf, f)) {
                     continue;
@@ -1559,14 +1847,16 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 {
                     warn_optional_positional = true;
                 }
-                apply_field_skip_to_skip_args(
+                if let Some(e) = apply_field_skip(
                     &mut skip_args,
-                    &mut flatten_skip_probes,
+                    &mut flatten_skip_entries,
                     &root_name,
                     &arg_id,
                     &f.attrs,
                     &f.ty,
-                );
+                ) {
+                    flatten_skip_error = Some(e);
+                }
                 if let Some(req) = get_clap_mcp_requires(&f.attrs) {
                     let req_id = if req.is_empty() { arg_id } else { req };
                     requires_args
@@ -1606,7 +1896,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     };
                     let merge = !skip_commands.is_empty()
                         || !skip_args.is_empty()
-                        || !flatten_skip_probes.is_empty()
+                        || !flatten_skip_entries.is_empty()
                         || !requires_args.is_empty()
                         || !task_tool_names.is_empty()
                         || !serialize_tools.is_empty()
@@ -1672,8 +1962,19 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                             &serialize_topic_bindings,
                         );
                         let flatten_skip_stmts_local = quote_flatten_skip_stmts(
-                            &flatten_skip_probes,
+                            &flatten_skip_entries,
                             &quote::format_ident!("local"),
+                        );
+                        let flatten_topic_stmts_local = flatten_serialize_topic_cmds.iter().map(
+                            |(cmd, ty)| {
+                                let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
+                                quote! {
+                                    <#ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_serialize_topics(
+                                        #cmd_lit,
+                                        &mut local.serialize_topic_args,
+                                    );
+                                }
+                            },
                         );
                         let warn_block = if warn_optional_positional {
                             optional_positional_warn_block.clone()
@@ -1694,6 +1995,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     #(#requires_args_entries)*
                                     #(#serialize_tools_entries)*
                                     #serialize_topic_entries
+                                    #(#flatten_topic_stmts_local)*
                                     #skip_root_assign_local
                                     #output_schema_assign_local
                                     m.merge_from(local);
@@ -1703,7 +2005,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         };
                     } else {
                         let flatten_skip_stmts_m = quote_flatten_skip_stmts(
-                            &flatten_skip_probes,
+                            &flatten_skip_entries,
                             &quote::format_ident!("m"),
                         );
                         let warn_block = if warn_optional_positional {
@@ -1729,6 +2031,10 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
             }
         }
         _ => {}
+    }
+
+    if let Some(e) = flatten_skip_error {
+        return e.to_compile_error();
     }
 
     let skip_commands_lit = skip_commands.iter().map(|s| {
@@ -1781,7 +2087,16 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let serialize_topic_entries =
         serialize_topic_bindings_quote(&quote::format_ident!("m"), &serialize_topic_bindings);
     let flatten_skip_stmts =
-        quote_flatten_skip_stmts(&flatten_skip_probes, &quote::format_ident!("m"));
+        quote_flatten_skip_stmts(&flatten_skip_entries, &quote::format_ident!("m"));
+    let flatten_topic_stmts = flatten_serialize_topic_cmds.iter().map(|(cmd, ty)| {
+        let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
+        quote! {
+            <#ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_serialize_topics(
+                #cmd_lit,
+                &mut m.serialize_topic_args,
+            );
+        }
+    });
     let task_tool_names_lit = task_tool_names.iter().map(|s| {
         let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
         quote! { #lit.to_string() }
@@ -1817,6 +2132,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 #(#requires_args_entries)*
                 #(#serialize_tools_entries)*
                 #serialize_topic_entries
+                #(#flatten_topic_stmts)*
                 #output_schema_assign
                 m
             }
