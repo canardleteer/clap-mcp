@@ -132,7 +132,7 @@ when each subcommand has predictable inputs and outputs.
 
 **Weaker fits (often still possible with care):**
 
-* **Interactive TUIs** (`lazygit`, `gitui`) — full-screen terminal apps assume a
+* **Interactive TUIs** (`gitui`) — full-screen terminal apps assume a
   human at the keyboard; MCP tool calls are non-interactive unless you expose
   separate non-TUI subcommands.
 * **Long-running dev loops** (`bacon`, `trunk serve`, `cargo watch`) — MCP tools
@@ -149,8 +149,7 @@ your tool's locking, I/O, and global state. Details:
 
 | Rust CLI | Typical role | Suggested starting config | Why |
 | --- | --- | --- | --- |
-| [`ripgrep`](https://github.com/BurntSushi/ripgrep) (`rg`) | Stateless search | `reinvocation_safe`, `parallel_safe = true` | Read-only; no shared process state between calls |
-| [`fd`](https://github.com/sharkdp/fd) | Stateless find | `reinvocation_safe`, `parallel_safe = true` | Same pattern as `rg` |
+| [`fd`](https://github.com/sharkdp/fd) | Stateless find | `reinvocation_safe`, `parallel_safe = true` | Read-only; no shared process state between calls |
 | [`bat`](https://github.com/sharkdp/bat) | Read/pretty-print files | `reinvocation_safe`, `parallel_safe = true` | Read-mostly; safe to overlap |
 | [`tokei`](https://github.com/XAMPPRocky/tokei) | Count lines / stats | `reinvocation_safe`, `parallel_safe = true` | Walks trees read-only |
 | [`xh`](https://github.com/ducaale/xh) | HTTP client (calls remote API) | `reinvocation_safe`, `parallel_safe = true` | Thin CLI over network; backend is separate |
@@ -161,7 +160,7 @@ your tool's locking, I/O, and global state. Details:
 | [`hyperfine`](https://github.com/sharkdp/hyperfine) | Benchmark runner | Default (subprocess) | Spawns arbitrary shell commands per run |
 | In-process session tool (e.g. counter) | Shared MCP session state | `reinvocation_safe`, `stateful` | See [stateful-tools](docs/stateful-tools.md) |
 | Long-running subcommand (sleep, batch job) | Task-augmented `tools/call` | `reinvocation_safe`, `task_augmented_tools` | See [mcp-tasks](docs/mcp-tasks.md) |
-| [`lazygit`](https://github.com/jesseduffield/lazygit) | Full-screen TUI | **Poor fit** as-is | Needs dedicated non-TUI subcommands for MCP |
+| [`gitui`](https://github.com/gitui-org/gitui) | Full-screen TUI | **Poor fit** as-is | Needs dedicated non-TUI subcommands for MCP |
 | [`bacon`](https://github.com/Canop/bacon) | Test/file watcher | **Poor fit** | Long-lived loop, not a one-shot tool |
 | Backend service only (no user-facing bin) | gRPC/HTTP server | **Wrong layer** | Add a CLI (or MCP elsewhere); clap-mcp targets the invoke binary |
 
