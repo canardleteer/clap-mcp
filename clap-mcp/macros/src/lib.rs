@@ -823,6 +823,9 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     match &input.data {
         syn::Data::Enum(data) => {
             for variant in &data.variants {
+                if has_clap_mcp_skip(&variant.attrs) {
+                    continue;
+                }
                 if has_ambiguous_mcp_positionals(variant.fields.iter()) {
                     return TokenStream::from(
                         syn::Error::new_spanned(
