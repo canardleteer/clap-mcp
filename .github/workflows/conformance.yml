@@ -93,7 +93,7 @@ jobs:
       - name: Run MCP conformance (official Action)
         if: steps.gate.outputs.run == 'true'
         id: conformance
-        uses: modelcontextprotocol/conformance@v0.1.11
+        uses: modelcontextprotocol/conformance@v0.1.16
         with:
           mode: server
           url: http://127.0.0.1:${{ env.CONFORMANCE_PORT }}/mcp

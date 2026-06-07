@@ -22,8 +22,10 @@ Builds `clap-mcp-conformance-http`, starts it on an ephemeral port, runs
 
 **GitHub CI** uses
 [`modelcontextprotocol/conformance`](https://github.com/modelcontextprotocol/conformance)
-Action at the same version pin; `cargo xtask conformance-server` starts the
-fixture.
+Action at the same version pin in
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (PR conformance job)
+and [`.github/workflows/conformance.yml`](../.github/workflows/conformance.yml)
+(scheduled/dispatch); `cargo xtask conformance-server` starts the fixture.
 
 The conformance binary is **maintainer-only** (not listed in
 [`examples/README.md`](../examples/README.md)). User-facing HTTP demos remain
@@ -55,7 +57,7 @@ on **weekly cron** (skips when the repo and harness fingerprint are unchanged
 since the last successful run) and on **workflow_dispatch** (always runs). Use
 **Run workflow** for on-demand validation.
 
-## Baseline categories (conformance 0.1.11)
+## Baseline categories (conformance 0.1.16)
 
 ### Permanent — reference harness tools (not our product)
 
@@ -137,4 +139,5 @@ rm -f target/conformance-server.log target/conformance-server.pid
 
 Single source: [`docker/conformance/VERSION`](../docker/conformance/VERSION) —
 used for local Docker image and `modelcontextprotocol/conformance@v…` in
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) and
 [`.github/workflows/conformance.yml`](../.github/workflows/conformance.yml).

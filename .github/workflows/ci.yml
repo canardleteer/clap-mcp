@@ -70,7 +70,7 @@ jobs:
           echo "CONFORMANCE_PORT=$CONFORMANCE_PORT" >> "$GITHUB_ENV"
 
       - name: Run MCP conformance (official Action)
-        uses: modelcontextprotocol/conformance@v0.1.11
+        uses: modelcontextprotocol/conformance@v0.1.16
         with:
           mode: server
           url: http://127.0.0.1:${{ env.CONFORMANCE_PORT }}/mcp
