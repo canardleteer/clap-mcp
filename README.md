@@ -74,7 +74,7 @@ clap-mcp = "0.0.4-rc.1"
   [execution-safety](docs/execution-safety.md#async-tools-and-share_runtime)
 * Opt-in in-process panic catching (`catch_in_process_panics` on
   `#[clap_mcp(...)]`); panics become MCP errors instead of crashing the server;
-  see [Crash and panic behavior](docs/execution-safety.md#crash-and-panic-behavior)
+  see [Crash and panic behavior](docs/execution-safety.md#crash-exit-and-panic-behavior)
 * Logging forwarded to MCP clients as `notifications/message` (`tracing` /
   `log` features); see [logging](docs/logging.md)
 * Structured tool output and optional JSON `outputSchema`; see
@@ -210,12 +210,15 @@ into MCP.
    (stdio) or **`--mcp-http`** ([`http`](docs/http.md) feature). Normal invocations
    never accidentally enter MCP mode.
 
-2. **Non-MCP behavior is unchanged.** Any argv **without** an MCP flag must
-   parse and run the same as before you added clap-mcp: same errors, same
-   success paths, same subcommand rules. Swap `Cli::parse()` for
+2. **Non-MCP behavior is unchanged on success paths.** Any argv **without** a
+   clap-mcp entry flag must parse and run the same as before you added
+   clap-mcp: same success paths and subcommand rules. Swap `Cli::parse()` for
    [`ParseOrServeMcp::parse_or_serve_mcp`] (or [`get_matches_or_serve_mcp`]
    imperatively) — **do not** change subcommand types or `subcommand_required`
-   unless you already planned to.
+   unless you already planned to. When native clap error formatting on invalid
+   argv matters (custom `FromArgMatches`, Usage footers), use
+   [`ParseOrServeMcp::parse_or_serve_mcp_preserve_cli`] instead; see
+   [Usage — Preserve CLI parse](docs/usage.md#preserve-cli-parse).
 
 3. **`--mcp` does not require `Option<Commands>`.** If your CLI already uses a
    required subcommand (`command: Commands` + `subcommand_required = true`),

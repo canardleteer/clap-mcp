@@ -43,10 +43,10 @@ applies:
 
 ### PR self-check
 
-- Run `complex_cli` and `trybuild` when macros change.
-- Run `cargo xtask examples-help` when examples change.
-- Update [supported-cli-shapes.md](supported-cli-shapes.md) when embedder-visible behavior changes.
-- Add an `example_contract` test when an example encodes a shape invariant.
+* Run `complex_cli` and `trybuild` when macros change.
+* Run `cargo xtask examples-help` when examples change.
+* Update [supported-cli-shapes.md](supported-cli-shapes.md) when embedder-visible behavior changes.
+* Add an `example_contract` test when an example encodes a shape invariant.
 
 ## Complex CLI fixture
 
