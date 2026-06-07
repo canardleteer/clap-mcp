@@ -354,8 +354,16 @@ When your CLI has a **struct root** with `#[command(subcommand)]`, derive
 * **`#[clap_mcp(...)]`** on the **root struct** — execution config for
   `Root::parse_or_serve_mcp()` (`Root::clap_mcp_config()`)
 * **`#[clap_mcp_output_from = "run"]`** on the **subcommand enum** — tool bodies
+  when the subcommand enum alone is enough (no root-only fields in `run`)
+* **`#[clap_mcp_output_from = "run_cli"]`** on the **root struct** — when `run`
+  must see global flags or other root fields; pass the full parsed root type.
+  Mark nested subcommand enums with `#[clap_mcp(schema_only)]` when they only
+  contribute schema metadata. See **struct_subcommand_globals** in
+  [examples/README.md](../examples/README.md).
 
-The root delegates MCP tool execution to the subcommand's `run`. Same `Add`
+By default the root delegates MCP tool execution to the subcommand's `run`.
+With `#[clap_mcp_output_from]` on the struct, `run` receives the full root.
+Same `Add`
 tool as [Usage — Derive with attributes](usage.md#derive-with-attributes-recommended),
 with a required subcommand field:
 
