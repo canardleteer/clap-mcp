@@ -431,6 +431,27 @@ cargo run -p clap-mcp-examples --bin task_panic_catch --features tracing -- slee
 cargo run -p clap-mcp-examples --bin task_panic_catch --features tracing -- --mcp
 ```
 
+### topical_serialization
+
+Author-facing demo of `parallel_safe = true` with tool-wide and arg-scoped
+`#[clap_mcp(serialized)]`, including `#[clap_mcp(serialize_topic)]` on the flush
+output field. See [Execution safety — Topical serialization](../docs/execution-safety.md#topical-serialization).
+
+```shell
+cargo run -p clap-mcp-examples --bin topical_serialization -- search --query hello
+cargo run -p clap-mcp-examples --bin topical_serialization -- --mcp
+```
+
+### topical_serial_probe
+
+Topical serialization probe (`parallel_safe = true`, `#[clap_mcp(serialized = "output")]` on
+`flush`). Set `CLAP_MCP_SERIAL_PROBE` to a JSONL path to record probe events (same format as
+`task_serial_probe_*`).
+
+```shell
+cargo run -p clap-mcp-examples --bin topical_serial_probe --features tracing -- --mcp
+```
+
 ### task_parallel_probe_dedicated / task_parallel_probe_shared
 
 Integration-test servers for **concurrent** task-augmented execution
@@ -478,6 +499,8 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **async_sleep_shared** | `servers/async_sleep_shared.rs` | Same, `share_runtime = true` (shares `async_sleep_common`) |
 | **task_tools_dedicated** | `servers/task_tools_dedicated.rs` | Task-augmented `tools/call`, `share_runtime = false` |
 | **task_tools_shared** | `servers/task_tools_shared.rs` | Task-augmented `tools/call`, `share_runtime = true` |
+| **topical_serialization** | `servers/topical_serialization.rs` | Topical serialization author demo (`parallel_safe`, `serialized`, `serialize_topic`) |
+| **topical_serial_probe** | `servers/topical_serial_probe.rs` | Topical serialization probe (`parallel_safe = true`, arg-scoped `serialized`) |
 | **task_serial_probe_dedicated** | `servers/task_serial_probe_dedicated.rs` | Serialized task probe (`parallel_safe = false`, dedicated runtime) |
 | **task_serial_probe_shared** | `servers/task_serial_probe_shared.rs` | Serialized task probe (`parallel_safe = false`, shared runtime) |
 | **task_parallel_probe_dedicated** | `servers/task_parallel_probe_dedicated.rs` | Concurrent task probe (`parallel_safe = true`, dedicated runtime) |

@@ -1,10 +1,10 @@
 //! MCP server transport and handler (rmcp `ServerHandler` + stdio).
 
 use crate::{
-    ClapMcpConfig, ClapMcpError, ClapMcpSchemaMetadata, ClapMcpServeOptions, ClapMcpToolError,
-    ClapMcpToolOutput, InProcessToolHandler, LOG_INTERPRETATION_INSTRUCTIONS,
+    ClapMcpConfig, ClapMcpError, ClapMcpSchemaMetadata, ClapMcpSerializeScope, ClapMcpServeOptions,
+    ClapMcpToolError, ClapMcpToolOutput, InProcessToolHandler, LOG_INTERPRETATION_INSTRUCTIONS,
     LOGGING_GUIDE_CONTENT, MCP_RESOURCE_URI_SCHEMA, PROMPT_LOGGING_GUIDE, content,
-    logging::LoggingMessageNotificationParams,
+    logging::LoggingMessageNotificationParams, serialize_lock_key,
 };
 use rmcp::{
     ErrorData as McpError, Peer, ServerHandler, ServiceExt,
@@ -24,7 +24,7 @@ use rmcp::{
     },
 };
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -42,6 +42,8 @@ pub(crate) struct ServeHandlerInner {
     pub logging_enabled: bool,
     pub task_augmented_tools: bool,
     pub task_tool_filter: Option<HashSet<String>>,
+    pub serialize_tools: HashMap<String, ClapMcpSerializeScope>,
+    pub serialize_topic_args: HashMap<String, HashMap<String, crate::SerializeTopicSegmentFn>>,
     #[cfg(feature = "elicitation")]
     pub elicitation_enabled: bool,
 }
@@ -156,11 +158,68 @@ impl ServeHandlerInner {
     }
 }
 
+/// Per-topic mutexes for topical serialization when `parallel_safe` is true.
+struct TopicLockRegistry {
+    locks: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+impl TopicLockRegistry {
+    fn new() -> Self {
+        Self {
+            locks: tokio::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    async fn acquire(&self, key: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut map = self.locks.lock().await;
+            map.entry(key.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+        lock.lock_owned().await
+    }
+}
+
+struct ExecutionGuardContext<'a> {
+    parallel_safe: bool,
+    global_lock: &'a Option<Arc<tokio::sync::Mutex<()>>>,
+    topic_registry: &'a TopicLockRegistry,
+    serialize_tools: &'a HashMap<String, ClapMcpSerializeScope>,
+    serialize_topic_args: &'a HashMap<String, HashMap<String, crate::SerializeTopicSegmentFn>>,
+}
+
+async fn with_execution_guard<F, Fut, T>(
+    ctx: &ExecutionGuardContext<'_>,
+    tool_name: &str,
+    args: &serde_json::Map<String, serde_json::Value>,
+    f: F,
+) -> T
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    if !ctx.parallel_safe {
+        if let Some(lock) = ctx.global_lock {
+            let _guard = lock.lock().await;
+            return f().await;
+        }
+    } else if let Some(scope) = ctx.serialize_tools.get(tool_name) {
+        let topic_fns = ctx.serialize_topic_args.get(tool_name);
+        let key = serialize_lock_key(tool_name, args, scope, topic_fns);
+        let _guard = ctx.topic_registry.acquire(&key).await;
+        return f().await;
+    }
+    f().await
+}
+
 /// rmcp MCP server: clap schema tools, resources, prompts, optional tasks.
 #[derive(Clone)]
 pub(crate) struct ClapMcpServer {
     pub(crate) inner: Arc<ServeHandlerInner>,
+    parallel_safe: bool,
     tool_execution_lock: Option<Arc<tokio::sync::Mutex<()>>>,
+    topic_lock_registry: Arc<TopicLockRegistry>,
     log_peer: Arc<Mutex<Option<Peer<RoleServer>>>>,
     processor: Arc<tokio::sync::Mutex<OperationProcessor>>,
 }
@@ -289,13 +348,23 @@ impl ServerHandler for ClapMcpServer {
         self.capture_peer(&context);
         let inner = self.inner.clone();
         let lock = self.tool_execution_lock.clone();
+        let parallel_safe = self.parallel_safe;
+        let topic_registry = self.topic_lock_registry.clone();
+        let serialize_tools = self.inner.serialize_tools.clone();
+        let serialize_topic_args = self.inner.serialize_topic_args.clone();
         async move {
-            let _guard = if let Some(ref lock) = lock {
-                Some(lock.lock().await)
-            } else {
-                None
+            let args = params.arguments.clone().unwrap_or_default();
+            let guard_ctx = ExecutionGuardContext {
+                parallel_safe,
+                global_lock: &lock,
+                topic_registry: &topic_registry,
+                serialize_tools: &serialize_tools,
+                serialize_topic_args: &serialize_topic_args,
             };
-            inner.call_tool(&params, &context).await
+            with_execution_guard(&guard_ctx, &params.name, &args, || {
+                inner.call_tool(&params, &context)
+            })
+            .await
         }
     }
 
@@ -307,6 +376,10 @@ impl ServerHandler for ClapMcpServer {
         self.capture_peer(&context);
         let inner = self.inner.clone();
         let lock = self.tool_execution_lock.clone();
+        let parallel_safe = self.parallel_safe;
+        let topic_registry = self.topic_lock_registry.clone();
+        let serialize_tools = self.inner.serialize_tools.clone();
+        let serialize_topic_args = self.inner.serialize_topic_args.clone();
         let processor = self.processor.clone();
         async move {
             if !inner.allows_task_tool(&request.name) {
@@ -324,38 +397,50 @@ impl ServerHandler for ClapMcpServer {
             let future_context = context.clone();
             let future_inner = inner.clone();
             let future_lock = lock.clone();
+            let future_parallel_safe = parallel_safe;
+            let future_topic_registry = topic_registry.clone();
+            let future_serialize_tools = serialize_tools.clone();
+            let future_serialize_topic_args = serialize_topic_args.clone();
             let task_id_for_body = task_id.clone();
+            let task_args = request.arguments.clone().unwrap_or_default();
 
             let catch_panics = future_inner.catch_in_process_panics;
             let task_id_result = task_id_for_body.clone();
+            let tool_name = future_request.name.clone();
             let future = Box::pin(async move {
-                let _guard = if let Some(l) = &future_lock {
-                    Some(l.lock().await)
-                } else {
-                    None
+                let guard_ctx = ExecutionGuardContext {
+                    parallel_safe: future_parallel_safe,
+                    global_lock: &future_lock,
+                    topic_registry: &future_topic_registry,
+                    serialize_tools: &future_serialize_tools,
+                    serialize_topic_args: &future_serialize_topic_args,
                 };
-                let run_body = async move {
-                    crate::logging::run_with_mcp_task_id(task_id_for_body, async move {
-                        future_inner
-                            .call_tool(&future_request, &future_context)
+                let result =
+                    with_execution_guard(&guard_ctx, &tool_name, &task_args, || async move {
+                        let run_body = async move {
+                            crate::logging::run_with_mcp_task_id(task_id_for_body, async move {
+                                future_inner
+                                    .call_tool(&future_request, &future_context)
+                                    .await
+                            })
                             .await
-                    })
-                    .await
-                };
-                let result = if catch_panics {
-                    match tokio::task::spawn(run_body).await {
-                        Ok(r) => r,
-                        Err(join_err) if join_err.is_panic() => {
-                            Ok(call_tool_result_from_panic(join_err.into_panic().as_ref()))
+                        };
+                        if catch_panics {
+                            match tokio::task::spawn(run_body).await {
+                                Ok(r) => r,
+                                Err(join_err) if join_err.is_panic() => {
+                                    Ok(call_tool_result_from_panic(join_err.into_panic().as_ref()))
+                                }
+                                Err(join_err) => Err(McpError::internal_error(
+                                    format!("task body join error: {join_err}"),
+                                    None,
+                                )),
+                            }
+                        } else {
+                            run_body.await
                         }
-                        Err(join_err) => Err(McpError::internal_error(
-                            format!("task body join error: {join_err}"),
-                            None,
-                        )),
-                    }
-                } else {
-                    run_body.await
-                };
+                    })
+                    .await;
                 Ok(Box::new(ToolCallTaskResult::new(task_id_result, result))
                     as Box<dyn rmcp::task_manager::OperationResultTransport>)
             });
@@ -539,13 +624,17 @@ pub(crate) fn build_clap_mcp_server(
         logging_enabled,
         task_augmented_tools: metadata.task_augmented_tools,
         task_tool_filter,
+        serialize_tools: metadata.serialize_tools.clone(),
+        serialize_topic_args: metadata.serialize_topic_args.clone(),
         #[cfg(feature = "elicitation")]
         elicitation_enabled: serve_options.elicitation_enabled,
     });
 
     Ok(ClapMcpServer {
         inner,
+        parallel_safe: config.parallel_safe,
         tool_execution_lock,
+        topic_lock_registry: Arc::new(TopicLockRegistry::new()),
         log_peer: Arc::new(Mutex::new(None)),
         processor: Arc::new(tokio::sync::Mutex::new(OperationProcessor::new())),
     })

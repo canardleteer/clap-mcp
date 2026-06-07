@@ -216,3 +216,28 @@ and [#12](https://github.com/canardleteer/clap-mcp/pull/12)):
 
 Example: `examples/servers/stateful_counter.rs`; integration test:
 `clap-mcp/tests/stateful_server_tests.rs`.
+
+## Topical serialization (next release after 0.0.4-rc.1)
+
+Additive API (no migration required for existing embedders):
+
+* **`#[clap_mcp(serialized)]`** on a subcommand variant — tool-wide lock topic when
+  [`ClapMcpConfig::parallel_safe`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#structfield.parallel_safe)
+  is true
+* **`#[clap_mcp(serialized = "arg1, arg2")]`** — arg-scoped lock topic (clap arg ids)
+* **`ClapMcpSchemaMetadata::serialize_tools`** and
+  [`ClapMcpSerializeScope`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.ClapMcpSerializeScope.html)
+  for imperative metadata
+* **`meta.clapMcp` hints** on `list_tools`: `serialized`, `serializeScope`,
+  `serializeArgs`, optional `serializeTopicArgs`
+* **`#[clap_mcp(serialize_topic)]`** on fields listed in arg-scoped `serialized`,
+  with optional [`ClapMcpSerializeTopic`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.ClapMcpSerializeTopic.html)
+  (`impl_serialize_topic_hash_eq!`, `impl_serialize_topic_serde_eq!`)
+* **`ClapMcpSchemaMetadata::serialize_topic_args`** for imperative typed topics
+
+When `parallel_safe = false`, global serialization is unchanged (topical metadata
+is ignored). See [Execution safety — Topical serialization](execution-safety.md#topical-serialization).
+
+Example: `examples/servers/topical_serialization.rs`,
+`examples/servers/topical_serial_probe.rs`; integration tests:
+`clap-mcp/tests/topical_serialization_tests.rs`.

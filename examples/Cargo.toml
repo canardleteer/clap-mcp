@@ -160,6 +160,15 @@ path = "servers/task_parallel_probe_shared.rs"
 required-features = ["tracing"]
 
 [[bin]]
+name = "topical_serialization"
+path = "servers/topical_serialization.rs"
+
+[[bin]]
+name = "topical_serial_probe"
+path = "servers/topical_serial_probe.rs"
+required-features = ["tracing"]
+
+[[bin]]
 name = "task_panic_catch"
 path = "servers/task_panic_catch.rs"
 required-features = ["tracing"]

@@ -32,6 +32,7 @@ const RELEASE_VALIDATION_BINS: &[&str] = &[
     "task_tools_dedicated",
     "task_tools_shared",
     "task_augmented_client",
+    "topical_serialization",
     "task_serial_probe_dedicated",
     "task_serial_probe_shared",
     "task_parallel_probe_dedicated",
