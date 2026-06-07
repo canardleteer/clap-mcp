@@ -354,9 +354,11 @@ required."`
 
 clap's `#[command(hide = true)]` affects help text only. MCP tool exposure is
 controlled by `#[clap_mcp(skip)]`. Hidden subcommands still appear in
-`tools/list` unless you skip them explicitly. clap-mcp does not map `hide` to
-skip by default so agents are not surprised when a maintainer hides a command
-from `--help` but still wants it callable.
+`tools/list` unless you skip them explicitly. `skip` and clap `hide` are
+different dimensions and are not correlated in clap-mcp: tying them would
+complicate the API and silently change MCP tool lists for embedders who use
+`hide` for operator UX without intending an agent policy change. To omit a
+command from MCP, use `#[clap_mcp(skip)]` explicitly.
 
 ### Optional args that trigger interactive fallback
 
@@ -368,6 +370,15 @@ from `--help` but still wants it callable.
 
 `Option<T>` with `#[arg(long)]` is common for human-friendly CLIs. MCP clients
 send JSON; omitting the key is not the same as omitting a flag in the shell.
+
+### Struct root with globals
+
+When the derive root is a struct with `#[clap_mcp_output_from]` and nested
+`#[clap_mcp(schema_only)]` enums, tool execution receives the full parsed root
+(including global flags). Leaf MCP tool `inputSchema` values also include
+ancestor `#[arg(global)]` properties so clients can pass globals in
+`tools/call` JSON. See [supported CLI shapes](supported-cli-shapes.md) and the
+`struct_subcommand_globals` example.
 
 ### Nested subcommand metadata
 
@@ -542,6 +553,19 @@ forwarders that never return.
   [`ClapMcpConfig::catch_in_process_panics`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#structfield.catch_in_process_panics)
   and the **panic_catch_opt_in** and **subprocess_exit_handling** examples in
   [examples/README.md](../examples/README.md).
+* **In-process `std::process::exit` or `exec`:** The MCP server process
+  terminates. `catch_in_process_panics` only intercepts unwinding panics, not
+  process replacement or explicit exit.
+* **TTY / session tool paths:** Interactive attach, blocking `--wait`, or
+  replace-process flows have the same in-process hazard when
+  `reinvocation_safe` is true.
+
+| Hazard | In-process effect | Typical mitigation |
+| --- | --- | --- |
+| `process::exit` / non-zero exit in tool code | MCP server process ends | `#[clap_mcp(skip)]`, refactor to `Result`, or subprocess mode |
+| `exec` / replace-process | MCP server replaced or ends | `#[clap_mcp(skip)]` or subprocess-only |
+| Blocking interactive / TTY session | Hangs or kills server context | `#[clap_mcp(skip)]`; document shell invocation |
+| Unwinding panic | Server crash (default) or caught error (`catch_in_process_panics`) | Opt-in `catch_in_process_panics`; restart after corruption |
 
 > [!WARNING]
 > `catch_in_process_panics` does **not** intercept `std::process::exit` or
@@ -552,9 +576,11 @@ forwarders that never return.
 ## Arg groups
 
 clap `ArgGroup` rules (exactly one of several flags) are enforced at argv parse
-time. MCP tool JSON Schema lists arguments independently; it does not emit
-`oneOf` shapes for arg groups. Invalid combinations fail when clap parses the
-rebuilt argv. Document exclusivity in tool descriptions when agents need hints.
+time. MCP tool JSON Schema lists arguments independently; clap-mcp does not emit
+JSON Schema shapes derived from ArgGroup graphs. That would require brittle
+introspection of clap internals and would not reliably cover all group semantics
+across clap versions. Invalid combinations fail when clap parses the rebuilt
+argv. Document exclusivity in tool descriptions when agents need hints.
 
 ## Cross-tool serialization
 

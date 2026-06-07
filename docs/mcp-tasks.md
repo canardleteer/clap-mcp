@@ -15,12 +15,14 @@ Requires `reinvocation_safe = true` (in-process execution). Subprocess mode
 
 ## Enable on your CLI
 
-Use `#[clap_mcp(task_augmented_tools)]` on your CLI enum (compile error if
-combined with `reinvocation_safe = false`). Optionally mark individual
-subcommands with `#[clap_mcp(task)]` so only those tools advertise
-`meta.clapMcp.taskAugmented` and accept task-augmented calls. When no variant
-has `#[clap_mcp(task)]`, every tool is eligible while `task_augmented_tools` is
-on.
+Use `#[clap_mcp(task_augmented_tools)]` on your CLI root (enum or struct with
+nested subcommands). Compile error if combined with `reinvocation_safe = false`.
+On a struct root with `#[clap_mcp(schema_only)]` nested enums, the flag on the
+root struct applies without requiring root-field skip or requires attrs to force
+metadata merge. Optionally mark individual subcommands with `#[clap_mcp(task)]`
+so only those tools advertise `meta.clapMcp.taskAugmented` and accept
+task-augmented calls. When no variant has `#[clap_mcp(task)]`, every tool is
+eligible while `task_augmented_tools` is on.
 
 ```rust
 use clap::Parser;
