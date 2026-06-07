@@ -45,10 +45,10 @@ flattened groups you do not want agents to set over MCP.
 ## Known limitations
 
 * Derive metadata (`skip`, `requires`, `serialize_topic`, `serialized = "..."`)
-  uses the Rust **field ident** as the MCP arg id, not `#[arg(id = "...")]`.
-  Rename the field to match the clap id or set
-  [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html)
-  imperatively.
+  keys match clap arg ids (field ident by default; `#[arg(id = "...")]` when set).
+  Use the clap id in `serialized = "..."` and variant `requires = "..."` lists.
+  Imperative [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html)
+  overrides still apply when derive cannot see your types.
 * Flatten skip and nested `serialize_topic` collection require same-crate
   `Args` / `Subcommand` types visible to the proc macro. Opaque or dependency
   types need imperative `skip_commands`, `skip_args`, or `serialize_topic_args`.

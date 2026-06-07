@@ -254,6 +254,31 @@ fn get_clap_mcp_serialized(attrs: &[syn::Attribute]) -> Option<ClapMcpSerialized
     None
 }
 
+/// clap default: field ident; override via `#[arg(id = "...")]`.
+fn clap_arg_id_from_field(ident: &syn::Ident, attrs: &[syn::Attribute]) -> String {
+    for attr in attrs {
+        if !attr.path().is_ident("arg") {
+            continue;
+        }
+        let mut id = None;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("id") {
+                let value: Expr = meta.value()?.parse()?;
+                if let Expr::Lit(lit) = value
+                    && let Lit::Str(s) = &lit.lit
+                {
+                    id = Some(s.value());
+                }
+            }
+            Ok(())
+        });
+        if let Some(id) = id {
+            return id;
+        }
+    }
+    ident.to_string()
+}
+
 fn variant_field_ids(fields: &syn::Fields) -> Vec<String> {
     fields
         .iter()
@@ -261,7 +286,7 @@ fn variant_field_ids(fields: &syn::Fields) -> Vec<String> {
         .map(|(i, f)| {
             f.ident
                 .as_ref()
-                .map(|ident| ident.to_string())
+                .map(|ident| clap_arg_id_from_field(ident, &f.attrs))
                 .unwrap_or_else(|| format!("__f{i}"))
         })
         .collect()
@@ -470,7 +495,7 @@ fn apply_field_skip(
     skip_args: &mut std::collections::HashMap<String, Vec<String>>,
     flatten_skip_entries: &mut Vec<FlattenSkipEntry>,
     root_name: &str,
-    field_ident: &str,
+    arg_id: &str,
     field_attrs: &[syn::Attribute],
     field_ty: &syn::Type,
 ) -> Option<syn::Error> {
@@ -503,7 +528,7 @@ fn apply_field_skip(
                 skip_args
                     .entry(root_name.to_string())
                     .or_default()
-                    .push(field_ident.to_string());
+                    .push(arg_id.to_string());
             }
         }
         ClapMcpSkipMode::Explicit(ids) => {
@@ -558,7 +583,7 @@ fn build_args_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         let arg_id = f
             .ident
             .as_ref()
-            .map(|i| i.to_string())
+            .map(|ident| clap_arg_id_from_field(ident, &f.attrs))
             .unwrap_or_else(|| format!("__f{i}"));
         if field_has_command_flatten(&f.attrs) {
             let flat_ty = inner_type_if_option(&f.ty).unwrap_or(&f.ty).clone();
@@ -1122,7 +1147,7 @@ fn nested_subcommand_type_paths_from_enum(data: &syn::DataEnum) -> Vec<syn::Path
 /// ## `#[clap_mcp(skip)]` / `#[clap_mcp(skip = "id1,id2")]` (on variant or field)
 ///
 /// Exclude the subcommand or argument from MCP exposure. On a normal field, bare
-/// `skip` uses the field's Rust field ident (see arg-id note under `serialize_topic` below).
+/// `skip` uses the field's clap arg id (field ident by default; `#[arg(id = "...")]` when set).
 /// On a `#[command(flatten)]` `Args` field, bare `skip` probes `Args::augment_args` and
 /// excludes every arg id from the flattened type. On a `#[command(subcommand)]` field, bare
 /// `skip` probes `Subcommand::augment_subcommands` and adds subcommand **names** to
@@ -1151,8 +1176,8 @@ fn nested_subcommand_type_paths_from_enum(data: &syn::DataEnum) -> Vec<syn::Path
 /// [`ClapMcpSerializeTopic`] for that arg when you opt into typed topic keys. The attribute may
 /// also appear on fields inside shared `Args` helpers when flattened on a variant: add
 /// `#[clap_mcp(args_metadata)]` on the `Args` struct (same crate). External `Args` types need
-/// imperative [`ClapMcpSchemaMetadata::serialize_topic_args`]. Derive metadata uses the Rust
-/// **field ident** as the arg id, not `#[arg(id = "...")]`. Topical locks do not isolate session
+/// imperative [`ClapMcpSchemaMetadata::serialize_topic_args`]. Derive metadata keys match
+/// clap arg ids (field ident by default; `#[arg(id = "...")]` when set). Topical locks do not isolate session
 /// state. See [execution-safety](https://github.com/canardleteer/clap-mcp/blob/main/docs/execution-safety.md).
 ///
 /// ## `#[clap_mcp(requires = "arg1,arg2")]` (on variant)
@@ -1267,7 +1292,7 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                         let arg_id = f
                             .ident
                             .as_ref()
-                            .map(|i| i.to_string())
+                            .map(|ident| clap_arg_id_from_field(ident, &f.attrs))
                             .unwrap_or_else(|| format!("__f{i}"));
                         let Some(scope_args) = serialized_scope_arg_ids(&serialized) else {
                             return TokenStream::from(
@@ -1768,7 +1793,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     let arg_id = f
                         .ident
                         .as_ref()
-                        .map(|i| i.to_string())
+                        .map(|ident| clap_arg_id_from_field(ident, &f.attrs))
                         .unwrap_or_else(|| format!("__f{i}"));
                     if is_option_type(&f.ty)
                         && field_looks_positional(&f.attrs)
@@ -1823,7 +1848,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     &mut skip_args,
                     &mut flatten_skip_entries,
                     &root_name,
-                    &field_ident.to_string(),
+                    &clap_arg_id_from_field(field_ident, &sf.attrs),
                     &sf.attrs,
                     &sf.ty,
                 )
@@ -1837,7 +1862,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 let Some(ref field_ident) = f.ident else {
                     continue;
                 };
-                let arg_id = field_ident.to_string();
+                let arg_id = clap_arg_id_from_field(field_ident, &f.attrs);
                 if is_option_type(&f.ty)
                     && field_looks_positional(&f.attrs)
                     && !has_clap_mcp_skip(&f.attrs)

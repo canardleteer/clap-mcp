@@ -1070,6 +1070,125 @@ fn test_skip_flattened_args_excludes_all_arg_ids() {
     );
 }
 
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_custom_id_skip"]
+#[command(name = "test-custom-id-skip")]
+struct TestCustomIdSkip {
+    #[clap_mcp(skip)]
+    #[arg(id = "custom-out", long = "custom-out")]
+    output_path: Option<String>,
+    #[arg(long)]
+    visible: Option<String>,
+}
+
+fn run_custom_id_skip(cmd: TestCustomIdSkip) -> String {
+    format!("visible={:?}", cmd.visible)
+}
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_custom_id_requires"]
+#[command(name = "test-custom-id-requires")]
+enum TestCustomIdRequires {
+    Read {
+        #[clap_mcp(requires)]
+        #[arg(id = "custom-path", long = "custom-path")]
+        file_path: Option<String>,
+    },
+}
+
+fn run_custom_id_requires(cmd: TestCustomIdRequires) -> String {
+    match cmd {
+        TestCustomIdRequires::Read { file_path } => file_path.unwrap_or_default(),
+    }
+}
+
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = true)]
+#[clap_mcp_output_from = "run_custom_id_serialized"]
+#[command(name = "test-custom-id-serialized")]
+enum TestCustomIdSerialized {
+    #[clap_mcp(serialized = "custom-out")]
+    Flush {
+        #[clap_mcp(serialize_topic)]
+        #[arg(id = "custom-out", long = "custom-out")]
+        output_path: Option<String>,
+    },
+}
+
+fn run_custom_id_serialized(cmd: TestCustomIdSerialized) -> String {
+    match cmd {
+        TestCustomIdSerialized::Flush { output_path } => format!("{output_path:?}"),
+    }
+}
+
+#[test]
+fn test_skip_custom_clap_arg_id() {
+    let cmd = TestCustomIdSkip::command();
+    let metadata = TestCustomIdSkip::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let root = &schema.root;
+    assert!(
+        root.args.iter().all(|a| a.id != "custom-out"),
+        "skip should use clap arg id custom-out, not field name output_path"
+    );
+    assert!(
+        metadata
+            .skip_args
+            .get("test-custom-id-skip")
+            .is_some_and(|ids| ids.contains(&"custom-out".to_string())),
+        "skip_args should contain custom-out: {:?}",
+        metadata.skip_args
+    );
+}
+
+#[test]
+fn test_requires_custom_clap_arg_id() {
+    let cmd = TestCustomIdRequires::command();
+    let metadata = TestCustomIdRequires::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let read_cmd = schema
+        .root
+        .subcommands
+        .iter()
+        .find(|c| c.name == "read")
+        .expect("read subcommand");
+    let arg = read_cmd
+        .args
+        .iter()
+        .find(|a| a.id == "custom-path")
+        .expect("custom-path arg in schema");
+    assert!(
+        arg.required,
+        "requires on custom-id field should mark custom-path required in MCP schema"
+    );
+    assert!(
+        metadata
+            .requires_args
+            .get("read")
+            .is_some_and(|ids| ids.contains(&"custom-path".to_string()))
+    );
+}
+
+#[test]
+fn test_serialize_topic_custom_clap_arg_id() {
+    let metadata = TestCustomIdSerialized::clap_mcp_schema_metadata();
+    assert_eq!(
+        metadata.serialize_tools.get("flush"),
+        Some(&ClapMcpSerializeScope::Args(vec!["custom-out".into()]))
+    );
+    let topic_args = metadata
+        .serialize_topic_args
+        .get("flush")
+        .expect("serialize_topic_args for flush");
+    assert!(
+        topic_args.contains_key("custom-out"),
+        "serialize_topic key should be clap arg id custom-out, got: {:?}",
+        topic_args.keys().collect::<Vec<_>>()
+    );
+}
+
 #[derive(Debug, Subcommand, ClapMcp)]
 #[clap_mcp(schema_only)]
 enum HiddenSubcommands {

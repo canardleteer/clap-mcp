@@ -242,6 +242,10 @@ Additive API (no migration required for existing embedders):
 When `parallel_safe = false`, global serialization is unchanged (topical metadata
 is ignored). See [Execution safety — Topical serialization](execution-safety.md#topical-serialization).
 
+Derive metadata keys (`skip`, `requires`, `serialized`, `serialize_topic`) now
+resolve clap arg ids from `#[arg(id = "...")]` when present (field ident
+otherwise), matching MCP `inputSchema` property names.
+
 Example: `examples/servers/topical_serialization.rs`,
 `examples/servers/topical_serial_probe.rs`; integration tests:
 `clap-mcp/tests/topical_serialization_tests.rs`.

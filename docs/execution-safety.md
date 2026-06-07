@@ -224,22 +224,17 @@ clap-mcp attributes.
 Runnable examples: **topical_serialization** (author demo) and **topical_serial_probe**
 (integration probe) in [examples/README.md](../examples/README.md).
 
-### Known gap — field ident vs `#[arg(id)]`
+### Arg ids in derive metadata
 
-The derive macro keys `#[clap_mcp(serialize_topic)]`, `serialized = "..."`
-validation, `#[clap_mcp(skip)]` on non-flatten fields, and `#[clap_mcp(requires)]`
-by the Rust **field ident** string. When `#[arg(id = "custom")]` differs from
-the field name, MCP schema uses the clap id (from `arg_to_schema`) but metadata
-may reference the field ident. Topical locks, skip, and requires can miss that
-field.
+Derive metadata (`skip`, `requires`, `serialize_topic`, `serialized = "..."`) keys
+match clap **arg ids**: the field ident by default, or `#[arg(id = "...")]` when
+set. That aligns with MCP `inputSchema` property names from `arg_to_schema`.
+Imperative [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html)
+overrides still use clap arg ids in `skip_args`, `requires_args`, and
+`serialize_topic_args`.
 
-Workarounds: rename the field to match the clap id; use the field name in
-`serialized = "..."`; or set
-[`ClapMcpSchemaMetadata::serialize_topic_args`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.serialize_topic_args),
-`skip_args`, and `requires_args` imperatively with the real clap ids.
-
-Nested `serialize_topic` inside flattened `Args` inherits the same rule. See
-[Supported CLI shapes — Known limitations](supported-cli-shapes.md#known-limitations).
+Nested `serialize_topic` inside flattened `Args` uses the same rule on helper
+fields. See [Supported CLI shapes — Known limitations](supported-cli-shapes.md#known-limitations).
 
 ### Nested `serialize_topic` in flattened `Args`
 
