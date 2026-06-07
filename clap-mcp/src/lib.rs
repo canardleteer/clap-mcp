@@ -878,6 +878,37 @@ pub struct ClapMcpSchemaMetadata {
     >,
 }
 
+impl ClapMcpSchemaMetadata {
+    /// Deep-merges `other` into `self`. Lists and per-command maps are extended; map
+    /// entries from `other` overwrite same keys in `serialize_tools` and
+    /// `serialize_topic_args`. Use when folding nested subcommand metadata into a parent
+    /// or when combining derive output with imperative overrides.
+    pub fn merge_from(&mut self, other: Self) {
+        self.skip_commands.extend(other.skip_commands);
+        for (k, v) in other.skip_args {
+            self.skip_args.entry(k).or_default().extend(v);
+        }
+        for (k, v) in other.requires_args {
+            self.requires_args.entry(k).or_default().extend(v);
+        }
+        self.task_tool_names.extend(other.task_tool_names);
+        self.task_augmented_tools = self.task_augmented_tools || other.task_augmented_tools;
+        self.skip_root_command_when_subcommands |= other.skip_root_command_when_subcommands;
+        for (k, v) in other.serialize_tools {
+            self.serialize_tools.insert(k, v);
+        }
+        for (tool, args) in other.serialize_topic_args {
+            let entry = self.serialize_topic_args.entry(tool).or_default();
+            for (arg, f) in args {
+                entry.insert(arg, f);
+            }
+        }
+        if other.output_schema.is_some() {
+            self.output_schema = other.output_schema;
+        }
+    }
+}
+
 /// Computes one arg's contribution to a topical lock key from MCP JSON.
 pub type SerializeTopicSegmentFn = fn(value: &serde_json::Value) -> Option<String>;
 

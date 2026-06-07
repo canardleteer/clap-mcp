@@ -655,6 +655,26 @@ fn subcommand_field_type_from_enum(data: &syn::DataEnum) -> Option<Type> {
     found
 }
 
+fn nested_subcommand_type_paths_from_enum(data: &syn::DataEnum) -> Vec<syn::Path> {
+    let mut paths = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for variant in &data.variants {
+        for field in variant.fields.iter() {
+            if !field_has_command_subcommand(&field.attrs) {
+                continue;
+            }
+            let sub_ty = inner_type_if_option(&field.ty).unwrap_or(&field.ty);
+            if let syn::Type::Path(tp) = sub_ty {
+                let key = tp.path.to_token_stream().to_string();
+                if seen.insert(key) {
+                    paths.push(tp.path.clone());
+                }
+            }
+        }
+    }
+    paths
+}
+
 /// Derive macro for `ClapMcpConfigProvider` and `ClapMcpToolExecutor`.
 ///
 /// Use on a clap `Parser` enum to expose it over MCP. Implements execution safety
@@ -1206,13 +1226,14 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
 
 /// Builds the ClapMcpSchemaMetadataProvider impl from #[clap_mcp(skip)], #[clap_mcp(requires)], and #[clap_mcp(task)].
 fn serialize_topic_bindings_quote(
+    target: &syn::Ident,
     bindings: &[(String, String, syn::Type)],
 ) -> proc_macro2::TokenStream {
     let entries = bindings.iter().map(|(cmd, arg, ty)| {
         let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
         let arg_lit = syn::LitStr::new(arg, proc_macro2::Span::call_site());
         quote! {
-            m.serialize_topic_args
+            #target.serialize_topic_args
                 .entry(#cmd_lit.to_string())
                 .or_default()
                 .insert(
@@ -1355,6 +1376,25 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 let sub_ty = inner_type_if_option(&sub_field.ty).unwrap_or(&sub_field.ty);
                 if let syn::Type::Path(tp) = sub_ty {
                     let sub_path = &tp.path;
+                    let skip_root_assign_local =
+                        if has_clap_mcp_skip_root_when_subcommands(&input.attrs) {
+                            quote! { local.skip_root_command_when_subcommands = true; }
+                        } else {
+                            quote! {}
+                        };
+                    let output_schema_assign_local: proc_macro2::TokenStream = if let Some(types) =
+                        get_clap_mcp_output_one_of(&input.attrs)
+                    {
+                        if types.is_empty() {
+                            quote! {}
+                        } else {
+                            quote! { local.output_schema = clap_mcp::output_schema_one_of!(#(#types),*); }
+                        }
+                    } else if let Some(ty) = get_clap_mcp_output_type(&input.attrs) {
+                        quote! { local.output_schema = clap_mcp::output_schema_for_type::<#ty>(); }
+                    } else {
+                        quote! {}
+                    };
                     let skip_root_assign = if has_clap_mcp_skip_root_when_subcommands(&input.attrs)
                     {
                         quote! { m.skip_root_command_when_subcommands = true; }
@@ -1385,7 +1425,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     quote! { #lit.to_string() }
                                 });
                             quote! {
-                                m.skip_args.entry(#k_lit.to_string()).or_default().extend([#(#vs),*]);
+                                local.skip_args.entry(#k_lit.to_string()).or_default().extend([#(#vs),*]);
                             }
                         });
                         let requires_args_entries = requires_args.iter().map(|(k, v)| {
@@ -1397,14 +1437,14 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     quote! { #lit.to_string() }
                                 });
                             quote! {
-                                m.requires_args.entry(#k_lit.to_string()).or_default().extend([#(#vs),*]);
+                                local.requires_args.entry(#k_lit.to_string()).or_default().extend([#(#vs),*]);
                             }
                         });
                         let serialize_tools_entries = serialize_tools.iter().map(|(k, scope)| {
                             let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
                             match scope {
                                 ClapMcpSerialized::Tool => quote! {
-                                    m.serialize_tools.insert(
+                                    local.serialize_tools.insert(
                                         #k_lit.to_string(),
                                         clap_mcp::ClapMcpSerializeScope::Tool,
                                     );
@@ -1415,7 +1455,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                         quote! { #lit.to_string() }
                                     });
                                     quote! {
-                                        m.serialize_tools.insert(
+                                        local.serialize_tools.insert(
                                             #k_lit.to_string(),
                                             clap_mcp::ClapMcpSerializeScope::Args(vec![#(#arg_lits),*]),
                                         );
@@ -1423,8 +1463,10 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 }
                             }
                         });
-                        let serialize_topic_entries =
-                            serialize_topic_bindings_quote(&serialize_topic_bindings);
+                        let serialize_topic_entries = serialize_topic_bindings_quote(
+                            &quote::format_ident!("local"),
+                            &serialize_topic_bindings,
+                        );
                         let warn_block = if warn_optional_positional {
                             optional_positional_warn_block.clone()
                         } else {
@@ -1435,15 +1477,17 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
                                     #warn_block
                                     let mut m = <#sub_path as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata();
-                                    m.skip_commands.extend([#(#skip_commands_lit),*]);
-                                    m.task_tool_names.extend([#(#task_tool_names_lit),*]);
-                                    m.task_augmented_tools = m.task_augmented_tools || #task_augmented_tools_expr;
+                                    let mut local = clap_mcp::ClapMcpSchemaMetadata::default();
+                                    local.skip_commands.extend([#(#skip_commands_lit),*]);
+                                    local.task_tool_names.extend([#(#task_tool_names_lit),*]);
+                                    local.task_augmented_tools = #task_augmented_tools_expr;
                                     #(#skip_args_entries)*
                                     #(#requires_args_entries)*
                                     #(#serialize_tools_entries)*
                                     #serialize_topic_entries
-                                    #skip_root_assign
-                                    #output_schema_assign
+                                    #skip_root_assign_local
+                                    #output_schema_assign_local
+                                    m.merge_from(local);
                                     m
                                 }
                             }
@@ -1519,7 +1563,8 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
             }
         }
     });
-    let serialize_topic_entries = serialize_topic_bindings_quote(&serialize_topic_bindings);
+    let serialize_topic_entries =
+        serialize_topic_bindings_quote(&quote::format_ident!("m"), &serialize_topic_bindings);
     let task_tool_names_lit = task_tool_names.iter().map(|s| {
         let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
         quote! { #lit.to_string() }
@@ -1531,14 +1576,25 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         quote! {}
     };
 
+    let nested_merge_stmts = match &input.data {
+        syn::Data::Enum(data) => {
+            let paths = nested_subcommand_type_paths_from_enum(data);
+            paths.iter().map(|p| {
+                quote! { m.merge_from(<#p as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata()); }
+            }).collect::<Vec<_>>()
+        }
+        _ => Vec::new(),
+    };
+
     quote! {
         impl clap_mcp::ClapMcpSchemaMetadataProvider for #name {
             fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
                 #warn_block
                 let mut m = clap_mcp::ClapMcpSchemaMetadata::default();
+                #(#nested_merge_stmts)*
                 m.skip_commands.extend([#(#skip_commands_lit),*]);
                 m.task_tool_names.extend([#(#task_tool_names_lit),*]);
-                m.task_augmented_tools = #task_augmented_tools_expr;
+                m.task_augmented_tools = m.task_augmented_tools || #task_augmented_tools_expr;
                 #(#skip_args_entries)*
                 #(#requires_args_entries)*
                 #(#serialize_tools_entries)*

@@ -863,6 +863,47 @@ fn run_skipped_multi_positional(cmd: TestSkippedMultiPositional) -> String {
 }
 
 #[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[command(name = "test-nested-skip-cli", subcommand_required = true)]
+struct TestNestedSkipCli {
+    #[command(subcommand)]
+    command: TestNestedTopCommands,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp_output_from = "run_nested_top"]
+enum TestNestedTopCommands {
+    Sandbox {
+        #[command(subcommand)]
+        command: TestNestedSandboxCommands,
+    },
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp_output_from = "run_nested_sandbox"]
+enum TestNestedSandboxCommands {
+    Create {
+        #[arg(long)]
+        name: String,
+    },
+    #[clap_mcp(skip)]
+    Connect,
+}
+
+fn run_nested_top(cmd: TestNestedTopCommands) -> String {
+    match cmd {
+        TestNestedTopCommands::Sandbox { command } => run_nested_sandbox(command),
+    }
+}
+
+fn run_nested_sandbox(cmd: TestNestedSandboxCommands) -> String {
+    match cmd {
+        TestNestedSandboxCommands::Create { name } => format!("create:{name}"),
+        TestNestedSandboxCommands::Connect => "connect".to_string(),
+    }
+}
+
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = true)]
 #[clap_mcp_output_from = "run_serialized_metadata"]
 #[command(name = "test-serialized-metadata")]
@@ -958,6 +999,55 @@ fn test_clap_mcp_skip_command() {
     assert!(names.contains(&"exposed"));
     assert!(names.contains(&"read"));
     assert!(!names.contains(&"hidden"));
+}
+
+#[test]
+fn test_nested_subcommand_skip_metadata_merged_at_root() {
+    let cmd = TestNestedSkipCli::command();
+    let metadata = TestNestedSkipCli::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let config = ClapMcpConfig::default();
+    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(names.contains(&"create"));
+    assert!(
+        !names.contains(&"connect"),
+        "nested #[clap_mcp(skip)] on child enum must propagate to root metadata"
+    );
+}
+
+#[test]
+fn test_clap_mcp_schema_metadata_merge_from() {
+    let mut base = ClapMcpSchemaMetadata::default();
+    let mut child = ClapMcpSchemaMetadata::default();
+    child.skip_commands.push("connect".into());
+    child
+        .requires_args
+        .insert("create".into(), vec!["name".into()]);
+    child
+        .serialize_tools
+        .insert("create".into(), ClapMcpSerializeScope::Tool);
+    base.merge_from(child);
+    assert!(base.skip_commands.contains(&"connect".to_string()));
+    assert_eq!(
+        base.requires_args.get("create").map(|v| v.as_slice()),
+        Some(["name".to_string()].as_slice())
+    );
+    assert_eq!(
+        base.serialize_tools.get("create"),
+        Some(&ClapMcpSerializeScope::Tool)
+    );
+
+    let mut override_local = ClapMcpSchemaMetadata::default();
+    override_local.serialize_tools.insert(
+        "create".into(),
+        ClapMcpSerializeScope::Args(vec!["name".into()]),
+    );
+    base.merge_from(override_local);
+    assert_eq!(
+        base.serialize_tools.get("create"),
+        Some(&ClapMcpSerializeScope::Args(vec!["name".into()]))
+    );
 }
 
 #[test]
