@@ -233,6 +233,29 @@ struct TestRootSkipWhenSubcommands {
     command: Option<TestStructOptionalCommands>,
 }
 
+// Struct root with task_augmented_tools and schema_only nested enum (no root field attrs)
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false, task_augmented_tools)]
+#[clap_mcp_output_from = "run_struct_task_augmented"]
+#[command(name = "test-struct-task-augmented", subcommand_required = true)]
+struct TestStructTaskAugmented {
+    #[command(subcommand)]
+    command: TestStructTaskAugmentedCommands,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum TestStructTaskAugmentedCommands {
+    #[clap_mcp(task)]
+    Work,
+}
+
+fn run_struct_task_augmented(cli: TestStructTaskAugmented) -> String {
+    match cli.command {
+        TestStructTaskAugmentedCommands::Work => "work".to_string(),
+    }
+}
+
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(
     reinvocation_safe,
@@ -1003,6 +1026,20 @@ fn test_skip_root_command_when_subcommands() {
     assert!(
         names.contains(&"done"),
         "subcommand 'done' should still be in tool list"
+    );
+}
+
+#[test]
+fn test_struct_root_task_augmented_tools_metadata_delegate() {
+    let metadata = TestStructTaskAugmented::clap_mcp_schema_metadata();
+    assert!(
+        metadata.task_augmented_tools,
+        "struct-root #[clap_mcp(task_augmented_tools)] must apply on metadata delegate path without root field attrs"
+    );
+    assert!(
+        metadata.task_tool_names.contains(&"work".to_string()),
+        "task variant names should merge from nested enum: {:?}",
+        metadata.task_tool_names
     );
 }
 
