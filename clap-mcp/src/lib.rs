@@ -916,6 +916,7 @@ impl ClapMcpSchemaMetadata {
 }
 
 /// Whether a flattened field contributes clap arg ids or subcommand names to MCP skip metadata.
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlattenSkipKind {
     /// `#[command(flatten)]` on a `clap::Args` type.
@@ -932,6 +933,9 @@ fn collect_flatten_subcommand_names(cmd: &clap::Command, out: &mut Vec<String>) 
 }
 
 /// Applies `#[clap_mcp(skip)]` on a flattened `clap::Args` field.
+///
+/// Used by `#[derive(ClapMcp)]`; prefer `#[clap_mcp(skip)]` on the field instead of calling directly.
+#[doc(hidden)]
 pub fn apply_flatten_args_field_skip<T: clap::Args>(
     skip_commands: &mut Vec<String>,
     skip_args: &mut std::collections::HashMap<String, Vec<String>>,
@@ -960,6 +964,9 @@ pub fn apply_flatten_args_field_skip<T: clap::Args>(
 }
 
 /// Applies `#[clap_mcp(skip)]` on a flattened `clap::Subcommand` field.
+///
+/// Used by `#[derive(ClapMcp)]`; prefer `#[clap_mcp(skip)]` on the field instead of calling directly.
+#[doc(hidden)]
 pub fn apply_flatten_subcommand_field_skip<T: clap::Subcommand>(
     skip_commands: &mut Vec<String>,
     skip_args: &mut std::collections::HashMap<String, Vec<String>>,
@@ -983,10 +990,10 @@ pub fn apply_flatten_subcommand_field_skip<T: clap::Subcommand>(
 ///
 /// Implement via `#[derive(ClapMcp)]` with `#[clap_mcp(args_metadata)]` on the shared `Args` struct.
 pub trait ClapMcpFlattenArgsTopics {
-    /// Rust field idents for args in this flattened group (see execution-safety guide for `#[arg(id)]` limits).
+    /// Clap arg ids for args in this flattened group (from derive metadata collection).
     const FIELD_IDS: &'static [&'static str];
 
-    /// Field idents from nested flattened `Args` groups (see [`Self::FIELD_IDS`]).
+    /// Clap arg ids from nested flattened `Args` groups (see [`Self::FIELD_IDS`]).
     const NESTED_FIELD_IDS: &'static [&'static str] = &[];
 
     /// Registers `#[clap_mcp(serialize_topic)]` fields for `tool_name` on the parent variant.
@@ -1027,12 +1034,18 @@ const fn ids_contain(ids: &[&str], arg: &str) -> bool {
     false
 }
 
-/// Returns true when `arg` matches a field ident on flattened `Args` type `T` (including one nested flatten).
+/// Returns true when `arg` matches a clap arg id on flattened `Args` type `T` (including one nested flatten).
+///
+/// Used by `#[derive(ClapMcp)]`; prefer attributes over calling directly.
+#[doc(hidden)]
 pub const fn flatten_args_contains_field<T: ClapMcpFlattenArgsTopics>(arg: &str) -> bool {
     ids_contain(T::FIELD_IDS, arg) || ids_contain(T::NESTED_FIELD_IDS, arg)
 }
 
 /// Compile-time check that `arg` appears on at least one flattened `Args` type in `checks`.
+///
+/// Used by `#[derive(ClapMcp)]`; prefer attributes over calling directly.
+#[doc(hidden)]
 pub const fn assert_serialized_in_any_flatten_args(arg: &str, checks: &[bool]) {
     let mut i = 0usize;
     while i < checks.len() {
