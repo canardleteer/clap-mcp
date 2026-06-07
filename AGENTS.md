@@ -124,6 +124,17 @@ cargo test -p clap-mcp --test trybuild
 The canonical regression tree is
 [`clap-mcp/tests/complex_cli_fixture/`](clap-mcp/tests/complex_cli_fixture/mod.rs).
 
+### Runtime library changes
+
+When touching `clap-mcp/src/` (tool schema, argv build, validation), read
+[docs/maintainer-testing.md](docs/maintainer-testing.md) and
+[`.agents/rules/clap-mcp-lib.md`](.agents/rules/clap-mcp-lib.md). Run:
+
+```shell
+cargo test -p clap-mcp --all-features complex_cli
+cargo test -p clap-mcp --all-features example_contract
+```
+
 ### Examples changes
 
 When adding or changing example binaries, read

@@ -1145,26 +1145,64 @@ pub fn tools_from_schema_with_metadata(
     commands
         .into_iter()
         .map(|cmd| {
-            command_to_tool_with_config(cmd, config, metadata, metadata.output_schema.as_ref())
+            command_to_tool_with_config(
+                schema,
+                cmd,
+                config,
+                metadata,
+                metadata.output_schema.as_ref(),
+            )
         })
         .collect()
 }
 
+/// Args exposed for an MCP tool: leaf command args plus ancestor `#[arg(global)]` args.
+fn effective_args_for_tool(schema: &ClapSchema, command_name: &str) -> Vec<ClapArg> {
+    let Some(path) = command_path(schema, command_name) else {
+        return Vec::new();
+    };
+    let mut by_id: BTreeMap<String, ClapArg> = BTreeMap::new();
+    for depth in 0..path.len() {
+        let subpath = &path[..=depth];
+        let Some(cmd) = command_at_path(&schema.root, subpath) else {
+            continue;
+        };
+        let is_leaf = depth + 1 == path.len();
+        for arg in &cmd.args {
+            if is_builtin_arg(arg.id.as_str()) {
+                continue;
+            }
+            if is_leaf || arg.global {
+                by_id.insert(arg.id.clone(), arg.clone());
+            }
+        }
+    }
+    by_id.into_values().collect()
+}
+
+fn command_at_path<'a>(root: &'a ClapCommand, path: &[String]) -> Option<&'a ClapCommand> {
+    if path.is_empty() || root.name != path[0] {
+        return None;
+    }
+    let mut current = root;
+    for segment in path.iter().skip(1) {
+        current = current.subcommands.iter().find(|c| c.name == *segment)?;
+    }
+    Some(current)
+}
+
 fn command_to_tool_with_config(
+    schema: &ClapSchema,
     cmd: &ClapCommand,
     config: &ClapMcpConfig,
     metadata: &ClapMcpSchemaMetadata,
     output_schema: Option<&serde_json::Value>,
 ) -> Tool {
-    let args: Vec<&ClapArg> = cmd
-        .args
-        .iter()
-        .filter(|a| !is_builtin_arg(a.id.as_str()))
-        .collect();
+    let effective_args = effective_args_for_tool(schema, &cmd.name);
 
     let mut properties: BTreeMap<String, serde_json::Map<String, serde_json::Value>> =
         BTreeMap::new();
-    for arg in &args {
+    for arg in &effective_args {
         let mut prop = serde_json::Map::new();
         let (json_type, items) = mcp_type_for_arg(arg);
         prop.insert("type".to_string(), json_type);
@@ -1186,7 +1224,7 @@ fn command_to_tool_with_config(
         properties.insert(arg.id.clone(), prop);
     }
 
-    let required: Vec<String> = args
+    let required: Vec<String> = effective_args
         .iter()
         .filter(|a| a.required)
         .map(|a| a.id.clone())
@@ -2436,19 +2474,14 @@ pub(crate) fn validate_required_args(
     command_name: &str,
     arguments: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
-    let cmd = schema
-        .root
-        .all_commands()
-        .into_iter()
-        .find(|c| c.name == command_name);
-    let Some(cmd) = cmd else {
+    if command_path(schema, command_name).is_none() {
         return Ok(());
-    };
-    let missing: Vec<_> = cmd
-        .args
+    }
+    let effective_args = effective_args_for_tool(schema, command_name);
+    let missing: Vec<_> = effective_args
         .iter()
         .filter(|a| {
-            if !a.required || is_builtin_arg(a.id.as_str()) {
+            if !a.required {
                 return false;
             }
             let has_value = arguments.get(&a.id).map(|v| {
@@ -2522,33 +2555,21 @@ pub(crate) fn build_tool_argv(
     command_name: &str,
     arguments: serde_json::Map<String, serde_json::Value>,
 ) -> Vec<String> {
-    let cmd = schema
-        .root
-        .all_commands()
-        .into_iter()
-        .find(|c| c.name == command_name);
-    let Some(cmd) = cmd else {
+    if command_path(schema, command_name).is_none() {
         return Vec::new();
-    };
+    }
+    let effective_args = effective_args_for_tool(schema, command_name);
 
-    let args: Vec<&ClapArg> = cmd
-        .args
-        .iter()
-        .filter(|a| !is_builtin_arg(a.id.as_str()))
-        .collect();
-
-    let mut positionals: Vec<&ClapArg> = args
+    let mut positionals: Vec<&ClapArg> = effective_args
         .iter()
         .filter(|a| a.long.is_none() && !a.num_args.as_deref().is_some_and(|n| n.contains("..")))
-        .copied()
         .collect();
     positionals.sort_by_key(|a| a.index.unwrap_or(0));
-    let trailing_positionals: Vec<&ClapArg> = args
+    let trailing_positionals: Vec<&ClapArg> = effective_args
         .iter()
         .filter(|a| a.long.is_none() && a.num_args.as_deref().is_some_and(|n| n.contains("..")))
-        .copied()
         .collect();
-    let optionals: Vec<&ClapArg> = args.iter().filter(|a| a.long.is_some()).copied().collect();
+    let optionals: Vec<&ClapArg> = effective_args.iter().filter(|a| a.long.is_some()).collect();
 
     let mut out = Vec::new();
 
@@ -3252,6 +3273,7 @@ mod tests {
     fn test_command_to_tool_with_config_reflects_arg_shapes() {
         let schema = sample_helper_schema();
         let tool = command_to_tool_with_config(
+            &schema,
             &schema.root,
             &ClapMcpConfig {
                 reinvocation_safe: true,
@@ -4319,8 +4341,10 @@ mod tests {
 
     #[test]
     fn test_validate_tool_argument_names_rejects_unknown_keys() {
+        let schema = sample_helper_schema();
         let tool = command_to_tool_with_config(
-            &sample_helper_schema().root,
+            &schema,
+            &schema.root,
             &ClapMcpConfig::default(),
             &ClapMcpSchemaMetadata::default(),
             None,
