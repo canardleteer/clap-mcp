@@ -13,4 +13,4 @@ Before finishing edits under `examples/`:
 1. Read [docs/maintainer-testing.md](../../docs/maintainer-testing.md) (adding an example).
 2. Add `[[bin]]` in [examples/Cargo.toml](../../examples/Cargo.toml) and document in [examples/README.md](../../examples/README.md).
 3. Run `cargo xtask examples-help`. Do not edit an opt-in bin list; use `RELEASE_VALIDATION_EXCLUDE` only when `--help` smoke is inappropriate.
-4. Add an `example_contract` test when the example encodes MCP shape invariants.
+4. Add an `example_contract` test when the example encodes MCP shape invariants (`preserve_cli_parse`, `flat_struct_root`, `flatten_skip`, and similar shape demos).
