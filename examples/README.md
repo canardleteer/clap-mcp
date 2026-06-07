@@ -5,6 +5,9 @@ This directory contains example CLIs that demonstrate clap-mcp capabilities.
 Run all commands from the **workspace root** (the parent of this `examples/`
 directory). The examples depend on `clap-mcp` via a path dependency.
 
+**Shape reference:** [Supported CLI shapes](../docs/supported-cli-shapes.md)
+maps each pattern to example binaries.
+
 ## Release validation smoke
 
 CI and release prep run each release-validation example with `--help` via:

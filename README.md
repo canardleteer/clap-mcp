@@ -179,6 +179,7 @@ Every guide in [`docs/`](docs/) is listed below. See also
 | Guide | Topics |
 | --- | --- |
 | [Usage patterns](docs/usage.md) | Derive (minimal / with attributes), imperative CLI, struct root |
+| [Supported CLI shapes](docs/supported-cli-shapes.md) | Pattern matrix, example binaries, non-goals |
 | [Custom resources and prompts](docs/custom-content.md) | `ClapMcpServeOptions`, static/dynamic content |
 | [Exporting agent skills](docs/export-skills.md) | `--export-skills`, SKILL.md generation |
 | [Execution safety](docs/execution-safety.md) | `reinvocation_safe`, topical serialization, skip/requires, nested metadata, dual derive, async embedders |

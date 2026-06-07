@@ -192,6 +192,7 @@ Every file below must appear in the README Documentation table.
 | [docs/migration-notes.md](docs/migration-notes.md) | CLI authors / maintainers | 0.0.3-rc.1 → 0.0.4-rc.1 upgrade, breaking renames |
 | [docs/conformance-baseline.md](docs/conformance-baseline.md) | Maintainers | MCP conformance harness, baseline YAML |
 | [docs/maintainer-testing.md](docs/maintainer-testing.md) | Maintainers | Macro checklist, test filters, example contracts |
+| [docs/supported-cli-shapes.md](docs/supported-cli-shapes.md) | CLI authors | Pattern matrix, attributes per shape, non-goals |
 
 ## Documentation style guide
 

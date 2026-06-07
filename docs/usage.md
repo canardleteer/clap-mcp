@@ -123,6 +123,9 @@ Next steps: [Execution safety — runtime config and schema metadata](execution-
 
 ## Struct root with subcommand
 
+See [Supported CLI shapes](supported-cli-shapes.md) for a pattern matrix and
+example binaries.
+
 Common for CLIs that use a struct root and `#[command(subcommand)]`. Derive
 `ClapMcp` on **both** the root struct and the subcommand enum; keep required
 subcommands — do not switch to `Option<Commands>` only for MCP.
