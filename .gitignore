@@ -2,3 +2,5 @@
 **/*.profraw
 Cargo.lock
 .knowledge-graph
+.cursor/
+.agents/skills/

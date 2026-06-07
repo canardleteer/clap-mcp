@@ -196,6 +196,7 @@ Every guide in [`docs/`](docs/) is listed below. See also
 | Guide | Topics |
 | --- | --- |
 | [Conformance baseline](docs/conformance-baseline.md) | `cargo xtask conformance`, baseline YAML |
+| [Maintainer testing](docs/maintainer-testing.md) | Macro checklist, `complex_cli` / `example_contract` filters, `.agents/rules/` |
 
 ## CLI compatibility
 

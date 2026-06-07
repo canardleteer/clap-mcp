@@ -109,6 +109,34 @@ CI runs the gate above on Ubuntu, Windows, and macOS.
   stdio MCP; prefer extending existing helpers in `clap-mcp/tests/common/`.
 * UI tests (`trybuild`) guard macro diagnostics in `clap-mcp/tests/ui/`.
 
+### Macro and complex CLI testing
+
+When touching `clap-mcp/macros/` or derive-generated behavior, read
+[docs/maintainer-testing.md](docs/maintainer-testing.md) and
+[`.agents/rules/clap-mcp-macros.md`](.agents/rules/clap-mcp-macros.md).
+Run:
+
+```shell
+cargo test -p clap-mcp --all-features complex_cli
+cargo test -p clap-mcp --test trybuild
+```
+
+The canonical regression tree is
+[`clap-mcp/tests/complex_cli_fixture/`](clap-mcp/tests/complex_cli_fixture/mod.rs).
+
+### Examples changes
+
+When adding or changing example binaries, read
+[docs/maintainer-testing.md](docs/maintainer-testing.md) and
+[`.agents/rules/clap-mcp-examples.md`](.agents/rules/clap-mcp-examples.md).
+New `[[bin]]` entries are picked up by `cargo xtask examples-help` automatically
+unless listed in `RELEASE_VALIDATION_EXCLUDE`. Run `cargo xtask examples-help`
+after example changes.
+
+Path-scoped rules use [`.agents/rules/`](.agents/rules/) (agent-rules-spec RFC
+draft). Generated `--export-skills` output goes to `.agents/skills/` (gitignored);
+hand-authored rules under `.agents/rules/` are committed.
+
 ## Documentation layout
 
 **Code examples.** If a snippet is long enough to be a full `main.rs`, write it
@@ -163,6 +191,7 @@ Every file below must appear in the README Documentation table.
 | [docs/oauth.md](docs/oauth.md) | CLI authors | OAuth client helpers (scaffolding) |
 | [docs/migration-notes.md](docs/migration-notes.md) | CLI authors / maintainers | 0.0.3-rc.1 → 0.0.4-rc.1 upgrade, breaking renames |
 | [docs/conformance-baseline.md](docs/conformance-baseline.md) | Maintainers | MCP conformance harness, baseline YAML |
+| [docs/maintainer-testing.md](docs/maintainer-testing.md) | Maintainers | Macro checklist, test filters, example contracts |
 
 ## Documentation style guide
 
