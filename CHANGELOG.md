@@ -23,6 +23,26 @@ All notable changes to this project will be documented in this file.
 
 ### Other
 - apply cargo fmt to args_metadata attribute guard- flat CLI shapes, flatten skip, and embedder parse patterns- add usage guide, style guide, and documentation cleanup
+## `clap-mcp` - [0.0.4-rc.2](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.0.4-rc.1...clap-mcp-v0.0.4-rc.2) - 2026-06-07
+
+### Added
+- export ArgGroup membership as meta.clapMcp.argGroups hints- add preserve-cli parse helpers for native shell error UX- skip flattened subcommands and collect serialize_topic in nested Args- include root global args in leaf MCP tool schemas- support #[clap_mcp_output_from] on struct roots- add #[clap_mcp(schema_only)] for nested subcommand enums- deep-merge nested subcommand schema metadata- add topical serialization for parallel-safe MCP tools
+
+### Fixed
+- align derive metadata keys with clap arg ids- skip all arg ids when a flattened field is skipped from MCP- apply task_augmented_tools on struct-root metadata delegate- skip positional guard for #[clap_mcp(skip)] variants
+
+### Other
+- Add flatten subcommand skip examples and conformance-stop lifecycle- add example contracts and preserve-cli argv checks- hide imperative flatten helpers from public rustdoc- apply cargo fmt to args_metadata attribute guard- flatten limits, state warnings in rustdoc, and security boundaries- flat CLI shapes, flatten skip, and embedder parse patterns- update "when and when not" section- add example-driven MCP contract tests- add supported CLI shapes matrix- add maintainer testing guide and agent rules- add canonical complex_cli fixture and contract tests- roundup for nested CLIs, MCP skip policy, and tool output- add usage guide, style guide, and documentation cleanup- better first glance Usage
+## `clap-mcp-macros` - [0.0.4-rc.2](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-macros-v0.0.4-rc.1...clap-mcp-macros-v0.0.4-rc.2) - 2026-06-07
+
+### Added
+- skip flattened subcommands and collect serialize_topic in nested Args- support #[clap_mcp_output_from] on struct roots- add #[clap_mcp(schema_only)] for nested subcommand enums- deep-merge nested subcommand schema metadata- add topical serialization for parallel-safe MCP tools
+
+### Fixed
+- align derive metadata keys with clap arg ids- skip all arg ids when a flattened field is skipped from MCP- apply task_augmented_tools on struct-root metadata delegate- skip positional guard for #[clap_mcp(skip)] variants
+
+### Other
+- apply cargo fmt to args_metadata attribute guard- flat CLI shapes, flatten skip, and embedder parse patterns- add usage guide, style guide, and documentation cleanup
 ## `clap-mcp` - [0.0.4-rc.1](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.0.3-rc.1...clap-mcp-v0.0.4-rc.1) - 2026-06-06
 
 ### Added
