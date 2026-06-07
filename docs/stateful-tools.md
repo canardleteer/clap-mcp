@@ -71,3 +71,7 @@ Entrypoints: [`ParseOrServeMcpWithState::parse_or_serve_mcp_with_state`],
 Example binary:
 [stateful_counter](../examples/servers/stateful_counter.rs) (ported from
 [PR #11](https://github.com/canardleteer/clap-mcp/pull/11) by Eddy Stefes / fneddy).
+
+Session state is shared for the MCP server process lifetime, not per client or OS
+user. See [Security — In-process execution and shared state](security.md#in-process-execution-and-shared-state)
+before exposing a stateful server beyond localhost or a single trusted operator.

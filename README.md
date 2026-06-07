@@ -184,7 +184,7 @@ Every guide in [`docs/`](docs/) is listed below. See also
 | [Execution safety](docs/execution-safety.md) | `reinvocation_safe`, topical serialization, skip/requires, nested metadata, dual derive, async embedders |
 | [MCP tasks support](docs/mcp-tasks.md) | Task-augmented `tools/call`, examples, support matrix |
 | [Stateful MCP tools](docs/stateful-tools.md) | Shared session state, `parse_or_serve_mcp_with_state` |
-| [Security](docs/security.md) | Schema validation, subprocess model, trust boundaries |
+| [Security](docs/security.md) | Schema validation, localhost/single-user model, subprocess and HTTP trust boundaries |
 | [Tool output](docs/tool-output.md) | `run` return types, structured output, `output-schema` |
 | [Logging](docs/logging.md) | `tracing` / `log` bridges, MCP notifications |
 | [Streamable HTTP](docs/http.md) | `--mcp-http`, listen env vars |
