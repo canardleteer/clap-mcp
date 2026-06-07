@@ -37,6 +37,7 @@ applies:
 | `#[clap_mcp(skip)]` on `#[command(flatten)]` | `Args::augment_args` probe skips every flattened arg id | `test_skip_flattened_args_excludes_all_arg_ids`, `test_skip_explicit_arg_id_list`, `tests/ui/pass/skip_arg_list.rs` |
 | `#[clap_mcp(skip)]` on `#[command(subcommand)]` | `Subcommand::augment_subcommands` probe → `skip_commands` | `test_skip_flattened_subcommands_*`, `test_skip_explicit_subcommand_name_list`, `tests/ui/pass/skip_flatten_subcommands.rs` |
 | Nested `serialize_topic` in flattened `Args` | `#[clap_mcp(args_metadata)]` + merge into `serialize_topic_args` | `test_nested_flatten_args_serialize_topic_*`, `tests/ui/pass/serialize_topic_flattened_args.rs` |
+| Derive metadata clap arg ids | `clap_arg_id_from_field` for skip/requires/serialize keys | `test_skip_custom_clap_arg_id`, `test_requires_custom_clap_arg_id`, `test_serialize_topic_custom_clap_arg_id`, `tests/ui/pass/custom_arg_id_metadata.rs` |
 | Macro/runtime coverage after new tests | `cargo llvm-cov` on `clap-mcp` + `clap-mcp-macros` | Quick filters above |
 | New `#[clap_mcp(...)]` config flag | Documented in supported-shapes matrix if embedder-visible | [supported-cli-shapes.md](supported-cli-shapes.md) |
 | New `[[bin]]` in examples | Auto-included in `cargo xtask examples-help` unless on exclude list | [examples/Cargo.toml](../examples/Cargo.toml), [examples/README.md](../examples/README.md); add contract test if MCP semantics matter |
@@ -68,6 +69,9 @@ Documented in [`example_contract_tests.rs`](../clap-mcp/tests/example_contract_t
 | `optional_commands_and_args` | `internal` not in tools; `read` schema requires `path` |
 | `struct_subcommand_required` | CLI argv parity (see `cli_compat_tests.rs`) |
 | `arg_group_hints` | `search` exposes `meta.clapMcp.argGroups`; exec-only round-trip; both exec flags → `is_error` |
+| `preserve_cli_parse` | Invalid argv → non-zero exit + `Usage` in stderr (`cli_compat_tests.rs`); MCP `--mcp` via `launch_example` |
+| `flat_struct_root` | Exactly one tool (`flat-struct-root`); schema includes root + flattened arg ids |
+| `flatten_skip` | Skipped connection args absent; `reindex`/`repair` not in tools; `flush` has `serialized` meta |
 
 ## Adding an example
 
