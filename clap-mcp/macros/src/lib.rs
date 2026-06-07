@@ -1593,6 +1593,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
                                     #warn_block
                                     let mut m = <#sub_path as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata();
+                                    m.task_augmented_tools = m.task_augmented_tools || #task_augmented_tools_expr;
                                     #skip_root_assign
                                     #output_schema_assign
                                     m
