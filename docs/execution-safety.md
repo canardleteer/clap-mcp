@@ -5,6 +5,9 @@
 
 [← Documentation index](../README.md#documentation)
 
+For a CLI layout reference (flat enum, struct root, nesting, skip), see
+[Supported CLI shapes](supported-cli-shapes.md).
+
 CLIs differ in how safely they can be invoked over MCP. Three layers control
 concurrency and process reuse:
 
