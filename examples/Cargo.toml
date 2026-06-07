@@ -60,6 +60,10 @@ name = "struct_subcommand_required"
 path = "servers/struct_subcommand_required.rs"
 
 [[bin]]
+name = "struct_subcommand_globals"
+path = "servers/struct_subcommand_globals.rs"
+
+[[bin]]
 name = "passthrough_args"
 path = "servers/passthrough_args.rs"
 

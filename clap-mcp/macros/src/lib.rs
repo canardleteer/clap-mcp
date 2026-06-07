@@ -1179,58 +1179,78 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
             }
         }
         syn::Data::Struct(data) => {
+            let struct_run_path = get_clap_mcp_output_from(&input.attrs);
             let subcommand_field = data
                 .fields
                 .iter()
                 .find(|f| field_has_command_subcommand(&f.attrs));
             match subcommand_field {
                 Some(field) => {
-                    let field_ident = match &field.ident {
-                        Some(id) => id.clone(),
-                        None => {
+                    if let Some(run) = struct_run_path {
+                        if stateful_effective || output_from_with_state.is_some() {
                             let err = syn::Error::new_spanned(
-                                field,
-                                "clap_mcp: subcommand field must be named",
+                                &input.ident,
+                                "clap_mcp: #[clap_mcp_output_from] on a struct root cannot be \
+                                 combined with #[clap_mcp(stateful)] or \
+                                 #[clap_mcp_output_from_with_state]; use subcommand delegation \
+                                 or a manual ClapMcpToolExecutor instead",
                             );
                             return TokenStream::from(err.to_compile_error());
                         }
-                    };
-                    let body = if is_option_type(&field.ty) {
                         quote! {
-                            self.#field_ident.map_or_else(
-                                || Ok(clap_mcp::ClapMcpToolOutput::Text(String::new())),
-                                |c| c.execute_for_mcp(),
-                            )
+                            impl clap_mcp::ClapMcpToolExecutor for #name {
+                                fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+                                    clap_mcp::IntoClapMcpResult::into_tool_result(#run(self))
+                                }
+                            }
                         }
                     } else {
-                        quote! {
-                            self.#field_ident.execute_for_mcp()
-                        }
-                    };
-                    let state_body = if is_option_type(&field.ty) {
-                        quote! {
-                            self.#field_ident.map_or_else(
-                                || Ok(clap_mcp::ClapMcpToolOutput::Text(String::new())),
-                                |c| c.execute_for_mcp_with_state(state),
-                            )
-                        }
-                    } else {
-                        quote! {
-                            self.#field_ident.execute_for_mcp_with_state(state)
-                        }
-                    };
-                    let mut impls = proc_macro2::TokenStream::new();
-                    if !stateful_effective {
-                        impls.extend(quote! {
+                        let field_ident = match &field.ident {
+                            Some(id) => id.clone(),
+                            None => {
+                                let err = syn::Error::new_spanned(
+                                    field,
+                                    "clap_mcp: subcommand field must be named",
+                                );
+                                return TokenStream::from(err.to_compile_error());
+                            }
+                        };
+                        let body = if is_option_type(&field.ty) {
+                            quote! {
+                                self.#field_ident.map_or_else(
+                                    || Ok(clap_mcp::ClapMcpToolOutput::Text(String::new())),
+                                    |c| c.execute_for_mcp(),
+                                )
+                            }
+                        } else {
+                            quote! {
+                                self.#field_ident.execute_for_mcp()
+                            }
+                        };
+                        let state_body = if is_option_type(&field.ty) {
+                            quote! {
+                                self.#field_ident.map_or_else(
+                                    || Ok(clap_mcp::ClapMcpToolOutput::Text(String::new())),
+                                    |c| c.execute_for_mcp_with_state(state),
+                                )
+                            }
+                        } else {
+                            quote! {
+                                self.#field_ident.execute_for_mcp_with_state(state)
+                            }
+                        };
+                        let mut impls = proc_macro2::TokenStream::new();
+                        if !stateful_effective {
+                            impls.extend(quote! {
                             impl clap_mcp::ClapMcpToolExecutor for #name {
                                 fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
                                     #body
                                 }
                             }
                         });
-                    } else {
-                        let sub_ty = strip_option_type(&field.ty);
-                        impls.extend(quote! {
+                        } else {
+                            let sub_ty = strip_option_type(&field.ty);
+                            impls.extend(quote! {
                             impl clap_mcp::ClapMcpToolExecutorWithState for #name {
                                 type State = <#sub_ty as clap_mcp::ClapMcpToolExecutorWithState>::State;
                                 fn execute_for_mcp_with_state(
@@ -1241,8 +1261,9 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                                 }
                             }
                         });
+                        }
+                        impls
                     }
-                    impls
                 }
                 None => {
                     if output_from_with_state.is_some() || stateful_effective {
@@ -1253,10 +1274,20 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
                         );
                         return TokenStream::from(err.to_compile_error());
                     }
-                    quote! {
-                        impl clap_mcp::ClapMcpToolExecutor for #name {
-                            fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
-                                Ok(clap_mcp::ClapMcpToolOutput::Text(format!("{:?}", self)))
+                    if let Some(run) = struct_run_path {
+                        quote! {
+                            impl clap_mcp::ClapMcpToolExecutor for #name {
+                                fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+                                    clap_mcp::IntoClapMcpResult::into_tool_result(#run(self))
+                                }
+                            }
+                        }
+                    } else {
+                        quote! {
+                            impl clap_mcp::ClapMcpToolExecutor for #name {
+                                fn execute_for_mcp(self) -> std::result::Result<clap_mcp::ClapMcpToolOutput, clap_mcp::ClapMcpToolError> {
+                                    Ok(clap_mcp::ClapMcpToolOutput::Text(format!("{:?}", self)))
+                                }
                             }
                         }
                     }

@@ -904,6 +904,27 @@ fn run_nested_sandbox(cmd: TestNestedSandboxCommands) -> String {
 }
 
 #[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_struct_globals"]
+#[command(name = "test-struct-globals")]
+struct TestStructGlobalsCli {
+    #[arg(long, global = true)]
+    verbose: bool,
+    #[command(subcommand)]
+    command: TestStructGlobalsCommands,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum TestStructGlobalsCommands {
+    Ping,
+}
+
+fn run_struct_globals(cli: TestStructGlobalsCli) -> String {
+    format!("verbose={} ping", cli.verbose)
+}
+
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = true)]
 #[clap_mcp_output_from = "run_serialized_metadata"]
 #[command(name = "test-serialized-metadata")]
@@ -999,6 +1020,21 @@ fn test_clap_mcp_skip_command() {
     assert!(names.contains(&"exposed"));
     assert!(names.contains(&"read"));
     assert!(!names.contains(&"hidden"));
+}
+
+#[test]
+fn test_struct_root_output_from_sees_global_fields() {
+    let cli = TestStructGlobalsCli {
+        verbose: true,
+        command: TestStructGlobalsCommands::Ping,
+    };
+    let out = cli
+        .execute_for_mcp()
+        .expect("struct-root output_from should execute");
+    match out {
+        ClapMcpToolOutput::Text(s) => assert_eq!(s, "verbose=true ping"),
+        other => panic!("expected text output, got {other:?}"),
+    }
 }
 
 #[test]
