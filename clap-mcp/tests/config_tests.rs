@@ -841,6 +841,28 @@ fn run_skip_requires(cmd: TestSkipRequires) -> String {
 }
 
 #[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp_output_from = "run_skipped_multi_positional"]
+#[command(name = "test-skipped-multi-positional")]
+enum TestSkippedMultiPositional {
+    List,
+    #[clap_mcp(skip)]
+    Upload {
+        name: String,
+        local_path: String,
+    },
+}
+
+fn run_skipped_multi_positional(cmd: TestSkippedMultiPositional) -> String {
+    match cmd {
+        TestSkippedMultiPositional::List => "list".to_string(),
+        TestSkippedMultiPositional::Upload { name, local_path } => {
+            format!("{name}:{local_path}")
+        }
+    }
+}
+
+#[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = true)]
 #[clap_mcp_output_from = "run_serialized_metadata"]
 #[command(name = "test-serialized-metadata")]
@@ -936,6 +958,21 @@ fn test_clap_mcp_skip_command() {
     assert!(names.contains(&"exposed"));
     assert!(names.contains(&"read"));
     assert!(!names.contains(&"hidden"));
+}
+
+#[test]
+fn test_skipped_variant_with_ambiguous_positionals_excluded_from_tools() {
+    let cmd = TestSkippedMultiPositional::command();
+    let metadata = TestSkippedMultiPositional::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let config = ClapMcpConfig::default();
+    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(names.contains(&"list"));
+    assert!(
+        !names.contains(&"upload"),
+        "skipped variant with multiple positionals must not appear as an MCP tool"
+    );
 }
 
 #[test]
