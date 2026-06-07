@@ -3,7 +3,7 @@
 //! | Example binary | Contract |
 //! | --- | --- |
 //! | `nested_subcommands` | `child` in tools; `internal` not in tools |
-//! | `struct_subcommand_globals` | `greet` MCP round-trip (globals + `output_from` in `complex_cli_*`) |
+//! | `struct_subcommand_globals` | `greet` + `verbose: true` → `verbose:` in output; global on leaf schema |
 //! | `optional_commands_and_args` | `internal` not in tools; `read` schema requires `path` |
 //! | `struct_subcommand_required` | CLI argv parity (`cli_compat_tests.rs`) |
 
@@ -75,13 +75,32 @@ async fn example_contract_struct_subcommand_globals_greet_round_trip() {
         "struct root with schema_only nested enum should expose leaf tools"
     );
 
-    let greet =
-        client
-            .call_tool(CallToolRequestParams::new("greet").with_arguments(
-                serde_json::Map::from_iter([("name".to_string(), serde_json::json!("Ada"))]),
-            ))
-            .await
-            .expect("greet should succeed");
+    let greet_tool = tools
+        .iter()
+        .find(|t| t.name == "greet")
+        .expect("greet tool should exist");
+    assert!(
+        greet_tool
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.get("verbose"))
+            .is_some(),
+        "root global verbose should appear on greet tool inputSchema"
+    );
+
+    let greet = client
+        .call_tool(
+            CallToolRequestParams::new("greet").with_arguments(serde_json::Map::from_iter([
+                ("name".to_string(), serde_json::json!("Ada")),
+                ("verbose".to_string(), serde_json::json!(true)),
+            ])),
+        )
+        .await
+        .expect("greet should succeed");
+    assert!(
+        tool_text(&greet).contains("verbose:"),
+        "struct_subcommand_globals greet with verbose should round-trip over MCP"
+    );
     assert!(
         tool_text(&greet).contains("Hello, Ada!"),
         "struct_subcommand_globals greet should round-trip over MCP"

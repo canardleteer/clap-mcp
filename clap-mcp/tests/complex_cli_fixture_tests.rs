@@ -58,6 +58,23 @@ fn complex_cli_skipped_multi_positional_compiles() {
 }
 
 #[test]
+fn complex_cli_leaf_tool_schema_includes_root_global() {
+    let cmd = TestComplexCli::command();
+    let metadata = TestComplexCli::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let config = ClapMcpConfig::default();
+    let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+    let leaf = tools.iter().find(|t| t.name == "leaf").expect("leaf tool");
+    assert!(
+        leaf.input_schema
+            .get("properties")
+            .and_then(|v| v.get("verbose"))
+            .is_some(),
+        "root global verbose should appear on nested leaf tool inputSchema"
+    );
+}
+
+#[test]
 fn complex_cli_requires_in_schema() {
     let cmd = TestComplexCli::command();
     let metadata = TestComplexCli::clap_mcp_schema_metadata();
