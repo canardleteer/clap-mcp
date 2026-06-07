@@ -19,3 +19,4 @@ Before finishing edits under `clap-mcp/src/` (excluding `macros/`):
 5. Preserve-cli entrypoints (`parse_or_serve_mcp_preserve_cli*`, `get_matches_preserve_cli_or_serve_mcp*`, `argv_contains_clap_mcp_flags`): document in [docs/usage.md](../../docs/usage.md); native `Parser::parse` when argv has no clap-mcp flags.
 6. ArgGroup hints (`extract_arg_groups`, `meta.clapMcp.argGroups`, description suffix): keep `mcp_visible_arg_ids_on_command` as the single visibility filter for schema args and group members; do not add inputSchema `oneOf`; update `ClapArgGroup` rustdoc risks when behavior changes.
 7. Never weaken `example_contract` tests to hide embedder-visible bugs; fix product behavior instead.
+8. Flatten probe helpers (`apply_flatten_*`, `flatten_args_contains_field`, `assert_serialized_in_any_flatten_args`, `FlattenSkipKind`) stay public for macro expansion but are `#[doc(hidden)]`; do not showcase in README.
