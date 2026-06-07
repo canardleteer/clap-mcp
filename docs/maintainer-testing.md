@@ -29,6 +29,8 @@ applies:
 | New `ClapMcpSchemaMetadata` field | Deep-merge in `build_schema_metadata_impl` for nested `#[command(subcommand)]` | `complex_cli_nested_skip_*`, `test_clap_mcp_schema_metadata_merge_from` |
 | New enum derive requirement | `#[clap_mcp(schema_only)]` escape hatch still works | `tests/ui/pass/schema_only_nested.rs` |
 | Struct executor path change | Struct `output_from` receives full root; default still delegates | `complex_cli_struct_output_from_*`, `struct_subcommand_globals` example |
+| Struct-root metadata delegate (light path) | Root flags OR onto nested metadata (`task_augmented_tools`, `skip_root_when_subcommands`, `output_schema`) | `test_struct_root_task_augmented_tools_metadata_delegate` |
+| Leaf tool schema / argv / validation | Root `#[arg(global)]` on struct roots appear on nested leaf tools | `complex_cli_leaf_tool_schema_includes_root_global`, `example_contract_struct_subcommand_globals_*` |
 | New `#[clap_mcp(...)]` config flag | Documented in supported-shapes matrix if embedder-visible | [supported-cli-shapes.md](supported-cli-shapes.md) |
 | New `[[bin]]` in examples | Auto-included in `cargo xtask examples-help` unless on exclude list | [examples/Cargo.toml](../examples/Cargo.toml), [examples/README.md](../examples/README.md); add contract test if MCP semantics matter |
 
@@ -54,7 +56,7 @@ Documented in [`example_contract_tests.rs`](../clap-mcp/tests/example_contract_t
 | Example binary | Contract |
 | --- | --- |
 | `nested_subcommands` | `child` in tools; `internal` not in tools |
-| `struct_subcommand_globals` | `greet` MCP round-trip; struct `output_from` + globals in `complex_cli_struct_output_from_*` |
+| `struct_subcommand_globals` | `greet` in tools; `verbose` on greet `inputSchema`; `greet` + `verbose: true` → output contains `verbose:` |
 | `optional_commands_and_args` | `internal` not in tools; `read` schema requires `path` |
 | `struct_subcommand_required` | CLI argv parity (see `cli_compat_tests.rs`) |
 

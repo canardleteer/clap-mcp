@@ -14,7 +14,7 @@ and shapes that are intentionally out of scope. Runnable binaries are listed in
 | --- | --- | --- | --- |
 | Flat enum root | `output_from` on enum | `subcommands` | Default happy path |
 | Struct root, subcommand only in `run` | Dual derive; delegate | `struct_subcommand_required` | Root globals not in `run` unless struct `output_from` |
-| Struct root + globals in `run` | `output_from` on struct; `schema_only` on nested enums | `struct_subcommand_globals` | Tool execution receives full parsed root |
+| Struct root + globals in `run` | `output_from` on struct; `schema_only` on nested enums | `struct_subcommand_globals` | Tool execution receives full parsed root; root `#[arg(global)]` appear on leaf tool `inputSchema` |
 | Multi-level subcommands | `schema_only` on intermediates; auto metadata merge | `nested_subcommands` | Manual `merge_from` rarely needed |
 | Skipped shell-only tools | `#[clap_mcp(skip)]`; positionals OK on skipped variants | `optional_commands_and_args` | Skipped variants exempt from multi-positional guard |
 | Interactive / TTY / exec | `skip` | [Execution safety — Interactive](execution-safety.md#interactive-and-session-commands) | Not an MCP tool |
