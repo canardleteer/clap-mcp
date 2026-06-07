@@ -54,7 +54,7 @@ Documented in [`example_contract_tests.rs`](../clap-mcp/tests/example_contract_t
 | Example binary | Contract |
 | --- | --- |
 | `nested_subcommands` | `child` in tools; `internal` not in tools |
-| `struct_subcommand_globals` | stdio MCP: `greet` + `verbose: true` → output contains `verbose:` |
+| `struct_subcommand_globals` | `greet` MCP round-trip; struct `output_from` + globals in `complex_cli_struct_output_from_*` |
 | `optional_commands_and_args` | `internal` not in tools; `read` schema requires `path` |
 | `struct_subcommand_required` | CLI argv parity (see `cli_compat_tests.rs`) |
 
