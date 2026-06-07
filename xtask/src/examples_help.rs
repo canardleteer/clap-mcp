@@ -6,38 +6,14 @@ use std::{
     process::{Command, Stdio},
 };
 
-/// Examples exercised in CI release validation (`--help` smoke after `--all-features` build).
-///
-/// When adding a release-critical example, append its `[[bin]]` name here and in
-/// [`examples/README.md`](../examples/README.md).
-const RELEASE_VALIDATION_BINS: &[&str] = &[
-    "subcommands",
-    "subcommands_http",
-    "structured",
-    "tracing_bridge",
-    "log_bridge",
-    "async_sleep",
-    "async_sleep_shared",
-    "async_embedder_serve",
-    "struct_subcommand",
-    "struct_subcommand_required",
-    "optional_commands_and_args",
-    "result_output",
-    "subprocess_exit_handling",
-    "panic_catch_opt_in",
-    "passthrough_args",
-    "passthrough_args_subprocess",
-    "custom_mcp_flags",
-    "client",
-    "task_tools_dedicated",
-    "task_tools_shared",
-    "task_augmented_client",
-    "topical_serialization",
-    "task_serial_probe_dedicated",
-    "task_serial_probe_shared",
-    "task_parallel_probe_dedicated",
-    "task_parallel_probe_shared",
-    "task_panic_catch",
+/// Examples excluded from CI release `--help` smoke (all other `[[bin]]` names run).
+const RELEASE_VALIDATION_EXCLUDE: &[&str] = &[
+    // Maintainer conformance fixture; not a user-facing demo.
+    "clap-mcp-conformance-http",
+    // Imperative `Command::new` only; no clap `Parser` `--help`.
+    "placeholder_server",
+    // Test fixture for bad executable paths; same.
+    "invalid_executable_server",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,19 +99,7 @@ pub fn run_examples_help(args: ExamplesHelpArgs) -> Result<()> {
 fn resolve_bins(root: &Path, profile: ExamplesProfile) -> Result<Vec<String>> {
     let manifest_bins = load_example_bins(root)?;
     match profile {
-        ExamplesProfile::Release => {
-            for name in RELEASE_VALIDATION_BINS {
-                if !manifest_bins.iter().any(|bin| bin.name == *name) {
-                    bail!(
-                        "release profile lists `{name}` but examples/Cargo.toml has no such [[bin]]"
-                    );
-                }
-            }
-            Ok(RELEASE_VALIDATION_BINS
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect())
-        }
+        ExamplesProfile::Release => release_validation_bins(&manifest_bins),
         ExamplesProfile::Http => Ok(manifest_bins
             .into_iter()
             .filter(|bin| bin.required_features.iter().any(|f| f == "http"))
@@ -143,6 +107,28 @@ fn resolve_bins(root: &Path, profile: ExamplesProfile) -> Result<Vec<String>> {
             .collect()),
         ExamplesProfile::All => Ok(manifest_bins.into_iter().map(|bin| bin.name).collect()),
     }
+}
+
+fn release_validation_bins(manifest_bins: &[ExampleBin]) -> Result<Vec<String>> {
+    validate_release_excludes(manifest_bins)?;
+    Ok(manifest_bins
+        .iter()
+        .filter(|bin| !RELEASE_VALIDATION_EXCLUDE.contains(&bin.name.as_str()))
+        .map(|bin| bin.name.clone())
+        .collect())
+}
+
+fn validate_release_excludes(manifest_bins: &[ExampleBin]) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for name in RELEASE_VALIDATION_EXCLUDE {
+        if !seen.insert(*name) {
+            bail!("duplicate release validation exclude `{name}`");
+        }
+        if !manifest_bins.iter().any(|bin| bin.name == *name) {
+            bail!("release exclude lists `{name}` but examples/Cargo.toml has no such [[bin]]");
+        }
+    }
+    Ok(())
 }
 
 fn load_example_bins(root: &Path) -> Result<Vec<ExampleBin>> {
@@ -300,10 +286,38 @@ required-features = ["http", "tracing"]
     }
 
     #[test]
-    fn release_profile_matches_manifest() {
+    fn release_profile_includes_manifest_bins_unless_excluded() {
+        let sample = r#"
+[[bin]]
+name = "demo"
+
+[[bin]]
+name = "clap-mcp-conformance-http"
+
+[[bin]]
+name = "placeholder_server"
+
+[[bin]]
+name = "invalid_executable_server"
+"#;
+        let manifest = parse_example_bins(sample).expect("parse");
+        let bins = release_validation_bins(&manifest).expect("release");
+        assert_eq!(bins, vec!["demo".to_string()]);
+    }
+
+    #[test]
+    fn release_exclude_names_exist_in_manifest() {
+        let root = workspace_root().expect("root");
+        let manifest = load_example_bins(&root).expect("manifest");
+        validate_release_excludes(&manifest).expect("excludes valid");
+    }
+
+    #[test]
+    fn release_profile_includes_new_examples() {
         let root = workspace_root().expect("root");
         let bins = resolve_bins(&root, ExamplesProfile::Release).expect("release bins");
-        assert!(bins.iter().any(|name| name == "subcommands_http"));
-        assert!(!bins.iter().any(|name| name == "oauth_http_client"));
+        assert!(bins.iter().any(|name| name == "nested_subcommands"));
+        assert!(bins.iter().any(|name| name == "struct_subcommand_globals"));
+        assert!(!bins.iter().any(|name| name == "clap-mcp-conformance-http"));
     }
 }
