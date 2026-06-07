@@ -27,6 +27,8 @@ enum ParentCommand {
         #[arg(long)]
         value: String,
     },
+    #[clap_mcp(skip)]
+    Internal { token: String, secret: String },
 }
 
 fn run_top_level(cmd: TopLevel) -> String {
@@ -38,6 +40,7 @@ fn run_top_level(cmd: TopLevel) -> String {
 fn run_parent(cmd: ParentCommand) -> String {
     match cmd {
         ParentCommand::Child { value } => format!("child={value}"),
+        ParentCommand::Internal { token, secret } => format!("{token}:{secret}"),
     }
 }
 
