@@ -106,6 +106,33 @@ On failed or manual workflow runs: **Actions → run → Artifacts →
 `conformance-debug-*`** (server log, port file, baseline yml). Action output
 remains in the job log (`verbose: true`).
 
+## Local safety (`conformance-server`)
+
+Prefer **`cargo xtask conformance`** for local runs. It starts the fixture, runs
+the harness, and stops the server when the harness exits.
+
+`cargo xtask conformance-server` exists for CI and advanced debugging. It
+redirects fixture stdout/stderr to `target/conformance-server.log` (default) and
+keeps the process alive until the parent exits. Do not background it and forget
+it; an orphaned server can fill disk if stderr tracing is verbose.
+
+Safeguards:
+
+* Fixture stderr tracing uses a default `EnvFilter` of `warn,clap_mcp=info`
+  (override with `RUST_LOG` when debugging).
+* On Linux and macOS, `--log-max-mb` (default `10`) sets `RLIMIT_FSIZE` on the
+  server child so the capture file cannot grow without bound.
+* The server child pid is written to `target/conformance-server.pid` and removed
+  when `conformance-server` exits; the child is sent `SIGTERM` if the parent
+  dies (`PR_SET_PDEATHSIG` on Unix).
+
+If a server is still running after a crashed session:
+
+```shell
+kill "$(cat target/conformance-server.pid)" 2>/dev/null || true
+rm -f target/conformance-server.log target/conformance-server.pid
+```
+
 ## Version pin
 
 Single source: [`docker/conformance/VERSION`](../docker/conformance/VERSION) —

@@ -23,6 +23,10 @@ use rmcp::model::{LoggingLevel, PromptArgument, PromptMessage, PromptMessageRole
 #[cfg(all(feature = "tracing", feature = "http"))]
 use std::{sync::OnceLock, time::Duration};
 #[cfg(all(feature = "tracing", feature = "http"))]
+use tracing_subscriber::EnvFilter;
+#[cfg(all(feature = "tracing", feature = "http"))]
+use tracing_subscriber::Layer;
+#[cfg(all(feature = "tracing", feature = "http"))]
 use tracing_subscriber::layer::SubscriberExt;
 #[cfg(all(feature = "tracing", feature = "http"))]
 use tracing_subscriber::util::SubscriberInitExt;
@@ -124,9 +128,15 @@ fn conformance_serve_options() -> clap_mcp::ClapMcpServeOptions {
     let (log_tx, log_rx) = log_channel(32);
     let _ = LOG_TX.set(log_tx.clone());
     let layer = ClapMcpTracingLayer::new(log_tx).with_logger_name("clap-mcp-conformance-http");
+    let stderr_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn,clap_mcp=info"));
     tracing_subscriber::registry()
         .with(layer)
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(stderr_filter),
+        )
         .init();
 
     let mut serve_options = clap_mcp::ClapMcpServeOptions {

@@ -14,7 +14,9 @@ use std::{
 
 const CONFORMANCE_BIN: &str = "clap-mcp-conformance-http";
 const DOCKER_IMAGE: &str = "clap-mcp-conformance:local";
+const DEFAULT_LOG_MAX_MB: u64 = 10;
 const INITIALIZE_BODY: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0"}}}"#;
+const SERVER_PID_FILE: &str = "target/conformance-server.pid";
 
 #[derive(Parser)]
 pub struct ConformanceArgs {
@@ -38,6 +40,9 @@ pub struct ConformanceServerArgs {
     pub port: Option<u16>,
     #[arg(long, default_value = "target/conformance-server.log")]
     pub log_file: PathBuf,
+    /// Cap server stdout/stderr capture size (Linux/macOS: `RLIMIT_FSIZE` on the child).
+    #[arg(long, default_value_t = DEFAULT_LOG_MAX_MB)]
+    pub log_max_mb: u64,
 }
 
 pub fn run_conformance(args: ConformanceArgs) -> Result<()> {
@@ -60,7 +65,7 @@ pub fn run_conformance(args: ConformanceArgs) -> Result<()> {
         );
     }
 
-    let mut server = spawn_server(&binary, &addr, None)?;
+    let mut server = spawn_server(&binary, &addr, None, 0)?;
     let exit = match wait_ready(&format!("http://{addr}/mcp")) {
         Ok(()) => run_conformance_docker(&root, port, &args.suite, &args.baseline, args.verbose),
         Err(e) => Err(e),
@@ -82,15 +87,23 @@ pub fn run_conformance_server(args: ConformanceServerArgs) -> Result<()> {
     let log = File::create(&args.log_file)
         .with_context(|| format!("create log file {}", args.log_file.display()))?;
     let log_err = log.try_clone().context("clone log file handle")?;
+    let log_max_bytes = args.log_max_mb.saturating_mul(1024 * 1024);
 
-    let mut server = spawn_server(&server_binary_path(&root), &addr, Some((log, log_err)))?;
+    let mut server = spawn_server(
+        &server_binary_path(&root),
+        &addr,
+        Some((log, log_err)),
+        log_max_bytes,
+    )?;
+    write_server_pid(&root, server.child.id())?;
     wait_ready(&format!("http://{addr}/mcp"))
         .with_context(|| format!("MCP server not ready at http://{addr}/mcp"))?;
 
     export_conformance_port(port)?;
     eprintln!(
-        "conformance server listening on http://{addr}/mcp (pid {})",
-        server.child.id()
+        "conformance server listening on http://{addr}/mcp (pid {}, log max {} MiB, pid file {SERVER_PID_FILE})",
+        server.child.id(),
+        args.log_max_mb,
     );
 
     // CI: keep process alive until workflow job ends; local: block on server exit.
@@ -214,7 +227,35 @@ struct ServerHandle {
     child: Child,
 }
 
-fn spawn_server(binary: &Path, addr: &str, log: Option<(File, File)>) -> Result<ServerHandle> {
+impl Drop for ServerHandle {
+    fn drop(&mut self) {
+        stop_server(self);
+        if let Ok(root) = workspace_root() {
+            remove_server_pid(&root);
+        }
+    }
+}
+
+fn write_server_pid(root: &Path, pid: u32) -> Result<()> {
+    let pid_file = root.join(SERVER_PID_FILE);
+    if let Some(parent) = pid_file.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&pid_file, format!("{pid}\n"))
+        .with_context(|| format!("write {}", pid_file.display()))
+}
+
+fn remove_server_pid(root: &Path) {
+    let pid_file = root.join(SERVER_PID_FILE);
+    let _ = fs::remove_file(pid_file);
+}
+
+fn spawn_server(
+    binary: &Path,
+    addr: &str,
+    log: Option<(File, File)>,
+    log_max_bytes: u64,
+) -> Result<ServerHandle> {
     eprintln!("Starting MCP HTTP server on {addr}...");
     let mut cmd = Command::new(binary);
     cmd.arg("--mcp-http").arg(addr);
@@ -226,11 +267,40 @@ fn spawn_server(binary: &Path, addr: &str, log: Option<(File, File)>) -> Result<
             cmd.stdout(Stdio::null()).stderr(Stdio::null());
         }
     }
+    configure_child_process(&mut cmd, log_max_bytes);
     let child = cmd
         .spawn()
         .with_context(|| format!("spawn {}", binary.display()))?;
     Ok(ServerHandle { child })
 }
+
+#[cfg(unix)]
+fn configure_child_process(cmd: &mut Command, log_max_bytes: u64) {
+    use std::os::unix::process::CommandExt;
+
+    // SAFETY: `pre_exec` runs in the child between fork and exec. Only async-signal-safe
+    // calls are used (`prctl`, `setrlimit`). Failures propagate to `spawn()` as errors.
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if log_max_bytes > 0 {
+                let rlim = libc::rlimit {
+                    rlim_cur: log_max_bytes,
+                    rlim_max: log_max_bytes,
+                };
+                if libc::setrlimit(libc::RLIMIT_FSIZE, &rlim) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_child_process(_cmd: &mut Command, _log_max_bytes: u64) {}
 
 fn stop_server(handle: &mut ServerHandle) {
     let _ = handle.child.kill();
