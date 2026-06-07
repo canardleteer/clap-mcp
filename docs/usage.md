@@ -121,16 +121,55 @@ fn main() {
 Next steps: [Execution safety — runtime config and schema metadata](execution-safety.md);
 [`ServeMcpBuilder` for async embedders](execution-safety.md#async-embedders).
 
-## Split parse for CLI error UX
+## Preserve CLI parse
 
 `parse_or_serve_mcp` and `parse_or_serve_mcp_with` use clap-mcp's argv
 preflight and MCP entry detection before your normal `Parser` path runs. That
 is required for `--mcp`, `--mcp-http`, and `--export-skills`, but the error
 text on invalid **human CLI** argv can differ from `Cli::parse()` alone (clap's
-native Usage formatting).
+native Usage formatting), especially when `FromArgMatches` adds custom validation.
 
-When native CLI error UX matters, branch on whether MCP mode is active, then
-parse with the path your users expect:
+When native CLI error UX matters, use a preserve-cli entrypoint. It runs
+`Cli::parse()` on normal argv and clap-mcp's augmented path only when argv
+(before `--`) contains a builtin MCP, HTTP, or export-skills flag:
+
+```rust
+use clap::Parser;
+use clap_mcp::{ClapMcp, ParseOrServeMcp};
+
+#[derive(Parser, ClapMcp)]
+#[clap_mcp_output_from = "run"]
+#[command(name = "myapp")]
+enum Cli {
+    Ping,
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Ping => "pong".to_string(),
+    }
+}
+
+fn main() {
+    let cli = Cli::parse_or_serve_mcp_preserve_cli();
+    println!("{}", run(cli));
+}
+```
+
+Derive: [`ParseOrServeMcp::parse_or_serve_mcp_preserve_cli`],
+[`parse_or_serve_mcp_preserve_cli_with`]. Imperative:
+[`get_matches_preserve_cli_or_serve_mcp`]. Detection only:
+[`argv_contains_clap_mcp_flags`], [`argv_before_end_of_opts`].
+
+Integrator policy: use a preserve-cli parse helper when shell UX matters; use
+`skip` / `requires` when agent policy matters; do not expect clap help metadata
+to drive MCP visibility unless you opt into that explicitly.
+
+## Split parse (manual)
+
+If you need custom branching (for example renamed builtin flags combined with
+other argv logic), detect clap-mcp entry with [`argv_contains_clap_mcp_flags`]
+and [`ClapMcpConfig::builtin_flags`] from your derive config:
 
 ```rust
 use clap::Parser;
@@ -149,23 +188,10 @@ fn run(cmd: Cli) -> String {
     }
 }
 
-fn argv_prefix_before_end_of_opts(args: &[String]) -> &[String] {
-    match args.iter().position(|a| a == "--") {
-        Some(i) => &args[..i],
-        None => args,
-    }
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flags = Cli::clap_mcp_config().builtin_flags;
-    let prefix = argv_prefix_before_end_of_opts(&args);
-    let mcp_flag = format!("--{}", flags.stdio_long);
-    let serving_mcp = prefix
-        .iter()
-        .any(|a| *a == mcp_flag || a.starts_with(&format!("{mcp_flag}=")));
-
-    if serving_mcp {
+    if clap_mcp::argv_contains_clap_mcp_flags(&args, &flags) {
         let cli = Cli::parse_or_serve_mcp();
         println!("{}", run(cli));
     } else {
@@ -175,10 +201,9 @@ fn main() {
 }
 ```
 
-Apply the same prefix rule for `--mcp-http` and `--export-skills` when you use
-those entrypoints. Imperative CLIs can branch the same way and call
-[`get_matches_or_serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.get_matches_or_serve_mcp.html)
-only on MCP argv.
+Imperative CLIs can call
+[`get_matches_preserve_cli_or_serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.get_matches_preserve_cli_or_serve_mcp.html)
+instead of hand-rolling the branch.
 
 ## Struct root with subcommand
 

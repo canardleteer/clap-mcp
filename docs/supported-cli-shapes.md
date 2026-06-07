@@ -8,6 +8,13 @@ Reference for CLI layouts clap-mcp supports, attributes needed for each pattern,
 and shapes that are intentionally out of scope. Runnable binaries are listed in
 [examples/README.md](../examples/README.md).
 
+> [!NOTE]
+> Integrator policy: use a preserve-cli parse helper when shell UX matters; use
+> `skip` / `requires` when agent policy matters; do not expect clap help metadata
+> to drive MCP visibility unless you opt into that explicitly. See
+> [Usage — Preserve CLI parse](usage.md#preserve-cli-parse) and
+> [Execution safety — hide vs skip](execution-safety.md#hide-vs-clap_mcpskip).
+
 ## Shape matrix
 
 | CLI shape | MCP pattern | Example | Notes |
@@ -36,26 +43,29 @@ flattened groups you do not want agents to set over MCP.
 
 ## Known limitations
 
-* Derive metadata (`skip`, `requires`, `serialize_topic`, `serialized = "..."`) uses the Rust
-  **field ident** as the MCP arg id, not `#[arg(id = "...")]`. Rename the field to match the
-  clap id or set [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html)
+* Derive metadata (`skip`, `requires`, `serialize_topic`, `serialized = "..."`)
+  uses the Rust **field ident** as the MCP arg id, not `#[arg(id = "...")]`.
+  Rename the field to match the clap id or set
+  [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html)
   imperatively.
-* Flatten skip and nested `serialize_topic` collection require same-crate `Args` / `Subcommand`
-  types visible to the proc macro. Opaque or dependency types need imperative `skip_commands`,
-  `skip_args`, or `serialize_topic_args`.
+* Flatten skip and nested `serialize_topic` collection require same-crate
+  `Args` / `Subcommand` types visible to the proc macro. Opaque or dependency
+  types need imperative `skip_commands`, `skip_args`, or `serialize_topic_args`.
 * `skip_commands` entries are global by subcommand name across the schema tree.
-* Topical serialization (`serialized`, `serialize_topic`) gates concurrent tool entry only; it
-  does not isolate [`ClapMcpToolExecutorWithState`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.ClapMcpToolExecutorWithState.html)
-  session state. See [Stateful MCP tools](stateful-tools.md) and [Security](security.md).
+* Topical serialization (`serialized`, `serialize_topic`) gates concurrent tool
+  entry only; it does not isolate
+  [`ClapMcpToolExecutorWithState`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.ClapMcpToolExecutorWithState.html)
+  session state. See [Stateful MCP tools](stateful-tools.md) and
+  [Security](security.md).
 
 ## Explicit non-goals
 
 clap-mcp does not currently provide first-class support for:
 
-- Mapping `hide` to MCP tool visibility (use `#[clap_mcp(skip)]` explicitly).
-- ArgGroup-aware JSON Schema generation.
-- In-process `exit` trapping for subprocess mode.
-- Bidirectional interactive MCP sessions over stdio.
+* Mapping `hide` to MCP tool visibility (use `#[clap_mcp(skip)]` explicitly).
+* ArgGroup-aware JSON Schema generation.
+* In-process `exit` trapping for subprocess mode.
+* Bidirectional interactive MCP sessions over stdio.
 
 ## Maintainer regression
 

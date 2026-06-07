@@ -15,8 +15,11 @@ execution options, and stateful in-process tools.
 Public API surface after `0.0.4-rc.1`:
 
 * **Derive entry:** `ParseOrServeMcp::parse_or_serve_mcp()` /
-  `parse_or_serve_mcp_with(ClapMcpRunOptions { .. })`
-* **Imperative entry:** unchanged `get_matches_or_serve_mcp*` ladder
+  `parse_or_serve_mcp_with(ClapMcpRunOptions { .. })`; preserve native CLI
+  error UX with `parse_or_serve_mcp_preserve_cli()` /
+  `parse_or_serve_mcp_preserve_cli_with`
+* **Imperative entry:** `get_matches_or_serve_mcp*` ladder; preserve native CLI
+  parse with `get_matches_preserve_cli_or_serve_mcp*`
 * **Low-level serve:** [`ServeMcpBuilder`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html)
   (recommended; `.serve().await` or `.serve_blocking()`) with
   [`ServeMcpBuilder::for_cli`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.for_cli)
@@ -224,7 +227,8 @@ Additive API (no migration required for existing embedders):
 * **`#[clap_mcp(serialized)]`** on a subcommand variant — tool-wide lock topic when
   [`ClapMcpConfig::parallel_safe`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#structfield.parallel_safe)
   is true
-* **`#[clap_mcp(serialized = "arg1, arg2")]`** — arg-scoped lock topic (clap arg ids)
+* **`#[clap_mcp(serialized = "arg1, arg2")]`** — arg-scoped lock topic
+  (clap arg ids)
 * **`ClapMcpSchemaMetadata::serialize_tools`** and
   [`ClapMcpSerializeScope`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.ClapMcpSerializeScope.html)
   for imperative metadata

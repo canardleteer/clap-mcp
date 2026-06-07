@@ -1200,11 +1200,33 @@ impl ClapCommand {
 }
 
 /// Arg prefix before the first standalone `--` (clap end-of-options). Passthrough tokens after `--` are excluded.
-pub(crate) fn argv_before_end_of_opts(args: &[String]) -> &[String] {
+pub fn argv_before_end_of_opts(args: &[String]) -> &[String] {
     match args.iter().position(|a| a == "--") {
         Some(i) => &args[..i],
         None => args,
     }
+}
+
+/// Returns true when argv (before `--`) contains a clap-mcp builtin entry flag:
+/// stdio MCP (`--mcp`), export-skills, or HTTP MCP when the `http` feature is enabled.
+///
+/// Used by [`parse_or_serve_mcp_preserve_cli_with`] and
+/// [`get_matches_preserve_cli_or_serve_mcp_with_config_and_metadata`] to decide
+/// whether to use clap-mcp's augmented parse path or the application's native
+/// clap parse path.
+pub fn argv_contains_clap_mcp_flags(args: &[String], flags: &ClapMcpBuiltinFlags) -> bool {
+    let prefix = argv_before_end_of_opts(args);
+    if argv_has_long_flag(prefix, flags.stdio_long) {
+        return true;
+    }
+    if argv_export_skills_dir_from_args(args, flags).is_some() {
+        return true;
+    }
+    #[cfg(feature = "http")]
+    if argv_has_long_flag(prefix, flags.http_long) {
+        return true;
+    }
+    false
 }
 
 fn argv_has_long_flag(prefix: &[String], long: &str) -> bool {
@@ -2223,6 +2245,38 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
     matches
 }
 
+/// Imperative entrypoint like [`get_matches_or_serve_mcp_with_config_and_metadata`], but uses
+/// un-augmented `cmd.get_matches()` when argv does not request clap-mcp entry.
+pub fn get_matches_preserve_cli_or_serve_mcp_with_config_and_metadata(
+    cmd: Command,
+    config: ClapMcpConfig,
+    metadata: &ClapMcpSchemaMetadata,
+) -> clap::ArgMatches {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if argv_contains_clap_mcp_flags(&args, &config.builtin_flags) {
+        get_matches_or_serve_mcp_with_config_and_metadata(cmd, config, metadata)
+    } else {
+        cmd.get_matches()
+    }
+}
+
+/// Like [`get_matches_or_serve_mcp_with_config`] with native CLI parse when argv has no clap-mcp flags.
+pub fn get_matches_preserve_cli_or_serve_mcp_with_config(
+    cmd: Command,
+    config: ClapMcpConfig,
+) -> clap::ArgMatches {
+    get_matches_preserve_cli_or_serve_mcp_with_config_and_metadata(
+        cmd,
+        config,
+        &ClapMcpSchemaMetadata::default(),
+    )
+}
+
+/// Like [`get_matches_or_serve_mcp`] with native CLI parse when argv has no clap-mcp flags.
+pub fn get_matches_preserve_cli_or_serve_mcp(cmd: Command) -> clap::ArgMatches {
+    get_matches_preserve_cli_or_serve_mcp_with_config(cmd, ClapMcpConfig::default())
+}
+
 /// Canonical entrypoint for derive-based CLIs: parse (or serve if `--mcp`) and return self.
 ///
 /// With the trait in scope, use `Args::parse_or_serve_mcp()`.
@@ -2244,6 +2298,11 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
 /// ```
 pub trait ParseOrServeMcp {
     fn parse_or_serve_mcp() -> Self;
+
+    /// Like [`parse_or_serve_mcp`](Self::parse_or_serve_mcp) but uses [`clap::Parser::parse`]
+    /// when argv does not request clap-mcp entry, preserving native clap error formatting
+    /// for normal shell invocations.
+    fn parse_or_serve_mcp_preserve_cli() -> Self;
 }
 
 impl<T> ParseOrServeMcp for T
@@ -2258,6 +2317,13 @@ where
 {
     fn parse_or_serve_mcp() -> Self {
         parse_or_serve_mcp_with(ClapMcpRunOptions {
+            config: T::clap_mcp_config(),
+            serve: ClapMcpServeOptions::default(),
+        })
+    }
+
+    fn parse_or_serve_mcp_preserve_cli() -> Self {
+        parse_or_serve_mcp_preserve_cli_with(ClapMcpRunOptions {
             config: T::clap_mcp_config(),
             serve: ClapMcpServeOptions::default(),
         })
@@ -2540,6 +2606,25 @@ where
     })
 }
 
+/// Like [`parse_or_serve_mcp_with`] but uses [`clap::Parser::parse`] when argv does not request
+/// clap-mcp entry, preserving native clap error formatting for normal shell invocations.
+pub fn parse_or_serve_mcp_preserve_cli_with<T>(options: ClapMcpRunOptions) -> T
+where
+    T: ClapMcpSchemaMetadataProvider
+        + ClapMcpToolExecutor
+        + clap::Parser
+        + clap::CommandFactory
+        + clap::FromArgMatches
+        + 'static,
+{
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if argv_contains_clap_mcp_flags(&args, &options.config.builtin_flags) {
+        parse_or_serve_mcp_with(options)
+    } else {
+        T::parse()
+    }
+}
+
 /// Stateful derive entrypoint: like [`parse_or_serve_mcp_with`] but captures `state` in the
 /// in-process tool handler for the MCP server lifetime.
 ///
@@ -2560,6 +2645,28 @@ where
     parse_or_serve_mcp_common::<T>(options, |config, serve_options| {
         prepare_derive_mcp_serve_with_state::<T>(config, serve_options, Arc::clone(&state))
     })
+}
+
+/// Like [`parse_or_serve_mcp_with_state`] but uses [`clap::Parser::parse`] when argv does not
+/// request clap-mcp entry.
+pub fn parse_or_serve_mcp_with_state_preserve_cli<T>(
+    options: ClapMcpRunOptions,
+    state: Arc<T::State>,
+) -> T
+where
+    T: ClapMcpSchemaMetadataProvider
+        + ClapMcpToolExecutorWithState
+        + clap::Parser
+        + clap::CommandFactory
+        + clap::FromArgMatches
+        + 'static,
+{
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if argv_contains_clap_mcp_flags(&args, &options.config.builtin_flags) {
+        parse_or_serve_mcp_with_state(options, state)
+    } else {
+        T::parse()
+    }
 }
 
 /// Parse CLI or serve MCP with shared session state when `--mcp` is present.
@@ -3891,6 +3998,49 @@ mod tests {
             argv_before_end_of_opts(&args),
             &["run".to_string()] as &[String]
         );
+    }
+
+    #[test]
+    fn test_argv_contains_clap_mcp_flags() {
+        let flags = ClapMcpBuiltinFlags::default();
+        assert!(!argv_contains_clap_mcp_flags(&[], &flags));
+        assert!(!argv_contains_clap_mcp_flags(
+            &["run".to_string(), "hello".to_string()],
+            &flags
+        ));
+        assert!(argv_contains_clap_mcp_flags(&["--mcp".to_string()], &flags));
+        assert!(argv_contains_clap_mcp_flags(
+            &["--export-skills".to_string()],
+            &flags
+        ));
+        assert!(argv_contains_clap_mcp_flags(
+            &["run".to_string(), "--mcp".to_string()],
+            &flags
+        ));
+        assert!(!argv_contains_clap_mcp_flags(
+            &["run".to_string(), "--".to_string(), "--mcp".to_string()],
+            &flags
+        ));
+        let custom = ClapMcpBuiltinFlags::default().with_stdio_long("modelcontextprotocol");
+        assert!(argv_contains_clap_mcp_flags(
+            &["--modelcontextprotocol".to_string()],
+            &custom
+        ));
+        assert!(!argv_contains_clap_mcp_flags(
+            &["--mcp".to_string()],
+            &custom
+        ));
+        #[cfg(feature = "http")]
+        {
+            assert!(argv_contains_clap_mcp_flags(
+                &["--mcp-http".to_string()],
+                &flags
+            ));
+            assert!(argv_contains_clap_mcp_flags(
+                &["--mcp-http".to_string(), "127.0.0.1:8080".to_string()],
+                &flags
+            ));
+        }
     }
 
     #[test]

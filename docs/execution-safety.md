@@ -226,14 +226,16 @@ Runnable examples: **topical_serialization** (author demo) and **topical_serial_
 
 ### Known gap — field ident vs `#[arg(id)]`
 
-The derive macro keys `#[clap_mcp(serialize_topic)]`, `serialized = "..."` validation,
-`#[clap_mcp(skip)]` on non-flatten fields, and `#[clap_mcp(requires)]` by the Rust **field
-ident** string. When `#[arg(id = "custom")]` differs from the field name, MCP schema uses the
-clap id (from `arg_to_schema`) but metadata may reference the field ident. Topical locks, skip,
-and requires can miss that field.
+The derive macro keys `#[clap_mcp(serialize_topic)]`, `serialized = "..."`
+validation, `#[clap_mcp(skip)]` on non-flatten fields, and `#[clap_mcp(requires)]`
+by the Rust **field ident** string. When `#[arg(id = "custom")]` differs from
+the field name, MCP schema uses the clap id (from `arg_to_schema`) but metadata
+may reference the field ident. Topical locks, skip, and requires can miss that
+field.
 
-Workarounds: rename the field to match the clap id; use the field name in `serialized = "..."`;
-or set [`ClapMcpSchemaMetadata::serialize_topic_args`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.serialize_topic_args),
+Workarounds: rename the field to match the clap id; use the field name in
+`serialized = "..."`; or set
+[`ClapMcpSchemaMetadata::serialize_topic_args`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.serialize_topic_args),
 `skip_args`, and `requires_args` imperatively with the real clap ids.
 
 Nested `serialize_topic` inside flattened `Args` inherits the same rule. See
@@ -241,11 +243,11 @@ Nested `serialize_topic` inside flattened `Args` inherits the same rule. See
 
 ### Nested `serialize_topic` in flattened `Args`
 
-Mark shared `Args` helpers with `#[clap_mcp(args_metadata)]` (same crate) and place
-`#[clap_mcp(serialize_topic)]` on fields inside the helper. Parent variants with
-`#[clap_mcp(serialized = "...")]` list arg ids from the flattened group. External `Args`
-crates need imperative `serialize_topic_args`. Skipped flattened groups stay CLI-only for
-MCP exposure.
+Mark shared `Args` helpers with `#[clap_mcp(args_metadata)]` (same crate) and
+place `#[clap_mcp(serialize_topic)]` on fields inside the helper. Parent variants
+with `#[clap_mcp(serialized = "...")]` list arg ids from the flattened group.
+External `Args` crates need imperative `serialize_topic_args`. Skipped flattened
+groups stay CLI-only for MCP exposure.
 
 ## Schema metadata (skip and requires)
 
@@ -389,6 +391,11 @@ different dimensions and are not correlated in clap-mcp: tying them would
 complicate the API and silently change MCP tool lists for embedders who use
 `hide` for operator UX without intending an agent policy change. To omit a
 command from MCP, use `#[clap_mcp(skip)]` explicitly.
+
+Integrator policy: use a preserve-cli parse helper when shell UX matters; use
+`skip` / `requires` when agent policy matters; do not expect clap help metadata
+to drive MCP visibility unless you opt into that explicitly. Preserve-cli parse:
+[Usage — Preserve CLI parse](usage.md#preserve-cli-parse).
 
 ### Optional args that trigger interactive fallback
 
