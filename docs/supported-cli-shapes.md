@@ -9,22 +9,19 @@ and shapes that are intentionally out of scope. Runnable binaries are listed in
 [examples/README.md](../examples/README.md).
 
 > [!NOTE]
-> Integrator policy: use a preserve-cli parse helper when shell UX matters; use
-> `skip` / `requires` when agent policy matters; do not expect clap help metadata
-> to drive MCP visibility unless you opt into that explicitly. See
-> [Usage — Preserve CLI parse](usage.md#preserve-cli-parse) and
-> [Execution safety — hide vs skip](execution-safety.md#hide-vs-clap_mcpskip).
+> Integrator policy: see [Execution safety — Integrator policy](execution-safety.md#integrator-policy).
 
 ## Shape matrix
 
 | CLI shape | MCP pattern | Example | Notes |
 | --- | --- | --- | --- |
 | Flat enum root | `output_from` on enum | `subcommands` | Default happy path |
-| Flat struct root (no subcommand) | `output_from` on struct | — | One MCP tool with a wide `inputSchema` (all root fields and flattened `Args` groups) |
-| Skipped flattened `Args` | `#[command(flatten)]` + `#[clap_mcp(skip)]` on field | — | Every clap arg id from the flattened type is excluded, not only the Rust field name |
-| Skipped subcommand group | `#[command(subcommand)]` + `#[clap_mcp(skip)]` on field | — | `Subcommand::augment_subcommands` probe adds subcommand names to `skip_commands` (recursive) |
-| Explicit arg-id skip list | `#[clap_mcp(skip = "id1,id2")]` on field | — | Comma-separated clap arg ids on flatten; subcommand names on `#[command(subcommand)]` |
-| Nested `serialize_topic` in flattened `Args` | `#[clap_mcp(args_metadata)]` on shared `Args` + flatten on variant | — | `#[clap_mcp(serialize_topic)]` inside the helper; same-crate `Args` source required |
+| Flat struct root (no subcommand) | `output_from` on struct | `flat_struct_root` | One MCP tool with a wide `inputSchema` (all root fields and flattened `Args` groups) |
+| Skipped flattened `Args` | `#[command(flatten)]` + `#[clap_mcp(skip)]` on field | `flatten_skip` | Every clap arg id from the flattened type is excluded, not only the Rust field name |
+| Skipped subcommand group | `#[command(subcommand)]` + `#[clap_mcp(skip)]` on field | `config_tests` (`test_skip_flattened_subcommands_*`) | `Subcommand::augment_subcommands` probe adds subcommand names to `skip_commands` (recursive) |
+| Explicit arg-id skip list | `#[clap_mcp(skip = "id1,id2")]` on field | `optional_commands_and_args` | Comma-separated clap arg ids on flatten; subcommand names on `#[command(subcommand)]` |
+| Nested `serialize_topic` in flattened `Args` | `#[clap_mcp(args_metadata)]` on shared `Args` + flatten on variant | `flatten_skip` | `#[clap_mcp(serialize_topic)]` inside the helper; same-crate `Args` source required |
+| Preserve-cli parse | `parse_or_serve_mcp_preserve_cli*` / `get_matches_preserve_cli_or_serve_mcp*` | `preserve_cli_parse` | Native `Parser::parse` when argv has no clap-mcp entry flags |
 | Struct root, subcommand only in `run` | Dual derive; delegate | `struct_subcommand_required` | Root globals not in `run` unless struct `output_from` |
 | Struct root + globals in `run` | `output_from` on struct; `schema_only` on nested enums | `struct_subcommand_globals` | Tool execution receives full parsed root; root `#[arg(global)]` appear on leaf tool `inputSchema` |
 | Multi-level subcommands | `schema_only` on intermediates; auto metadata merge | `nested_subcommands` | Manual `merge_from` rarely needed |
@@ -40,7 +37,8 @@ exposes a **single** MCP tool whose `inputSchema` includes every non-skipped
 argument on the root command. That matches a flat CLI layout but produces a
 large schema when many flags and flattened `Args` groups are present. Prefer
 subcommands when you want smaller per-tool schemas; use `#[clap_mcp(skip)]` on
-flattened groups you do not want agents to set over MCP.
+flattened groups you do not want agents to set over MCP. Runnable demo:
+**flat_struct_root** in [examples/README.md](../examples/README.md).
 
 ## Known limitations
 

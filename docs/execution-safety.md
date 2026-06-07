@@ -30,6 +30,16 @@ concurrency and process reuse:
 
 For shared in-process session state, see [Stateful MCP tools](stateful-tools.md).
 
+## Integrator policy
+
+Use a [preserve-cli parse helper](usage.md#preserve-cli-parse) when native clap
+error formatting on invalid human argv matters (custom `FromArgMatches`, Usage
+footers). Use `#[clap_mcp(skip)]` and `#[clap_mcp(requires)]` when **agent
+policy** matters (hide tools or args from MCP, or require args that are optional
+in the shell). Do not expect clap help metadata (`hide`, `visible`, and similar)
+to drive MCP tool visibility unless you opt into that explicitly — see
+[`hide` vs `#[clap_mcp(skip)]`](#hide-vs-clap_mcpskip).
+
 ## CLI compatibility details
 
 These rules preserve normal CLI behavior when MCP is added. See also
@@ -385,12 +395,8 @@ controlled by `#[clap_mcp(skip)]`. Hidden subcommands still appear in
 different dimensions and are not correlated in clap-mcp: tying them would
 complicate the API and silently change MCP tool lists for embedders who use
 `hide` for operator UX without intending an agent policy change. To omit a
-command from MCP, use `#[clap_mcp(skip)]` explicitly.
-
-Integrator policy: use a preserve-cli parse helper when shell UX matters; use
-`skip` / `requires` when agent policy matters; do not expect clap help metadata
-to drive MCP visibility unless you opt into that explicitly. Preserve-cli parse:
-[Usage — Preserve CLI parse](usage.md#preserve-cli-parse).
+command from MCP, use `#[clap_mcp(skip)]` explicitly. See
+[Integrator policy](#integrator-policy).
 
 ### Optional args that trigger interactive fallback
 

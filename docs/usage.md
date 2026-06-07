@@ -161,9 +161,10 @@ Derive: [`ParseOrServeMcp::parse_or_serve_mcp_preserve_cli`],
 [`get_matches_preserve_cli_or_serve_mcp`]. Detection only:
 [`argv_contains_clap_mcp_flags`], [`argv_before_end_of_opts`].
 
-Integrator policy: use a preserve-cli parse helper when shell UX matters; use
-`skip` / `requires` when agent policy matters; do not expect clap help metadata
-to drive MCP visibility unless you opt into that explicitly.
+> [!NOTE]
+> Integrator policy: see [Execution safety — Integrator policy](execution-safety.md#integrator-policy).
+
+Runnable demo: **preserve_cli_parse** in [examples/README.md](../examples/README.md).
 
 ## Split parse (manual)
 
@@ -223,8 +224,9 @@ struct (default).
 Full pattern and compilable example:
 [Execution safety — Dual derive](execution-safety.md#dual-derive--root-and-subcommand).
 Runnable binaries: **struct_subcommand_required** (subcommand `run`),
-**struct_subcommand_globals** (struct `run` with globals) in
-[examples/README.md](../examples/README.md).
+**struct_subcommand_globals** (struct `run` with globals), **flat_struct_root**
+(single wide tool, no subcommand), **flatten_skip** (skip flatten + serialize_topic)
+in [examples/README.md](../examples/README.md).
 
 ## Related guides
 
