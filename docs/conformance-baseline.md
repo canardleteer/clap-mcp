@@ -14,8 +14,6 @@ conformance fixture (`clap-mcp-conformance-http`).
 cargo xtask conformance
 ```
 
-Or run `./scripts/run-conformance.sh`.
-
 Builds `clap-mcp-conformance-http`, starts it on an ephemeral port, runs
 `@modelcontextprotocol/conformance` from the pinned Docker image
 ([`docker/conformance/VERSION`](../docker/conformance/VERSION)).
@@ -110,17 +108,15 @@ remains in the job log (`verbose: true`).
 
 ## Local safety (`conformance-server`)
 
-Prefer **`cargo xtask conformance`** (or `./scripts/run-conformance.sh`) for local
-runs. It starts the fixture, runs the harness, stops stale servers first, and
-tears down the server when the harness exits.
+Prefer **`cargo xtask conformance`** for local runs. It starts the fixture, runs
+the harness, stops stale servers first, and tears down the server when the
+harness exits.
 
 Stop/cleanup:
 
 ```shell
 cargo xtask conformance-stop
 ```
-
-Or `./scripts/stop-conformance-server.sh` (same command).
 
 `cargo xtask conformance-server` exists for CI and advanced debugging only. It
 redirects fixture stdout/stderr to `target/conformance-server.log` (default) and
