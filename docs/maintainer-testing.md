@@ -98,7 +98,7 @@ Current excludes:
 
 ## MCP conformance (local)
 
-Prefer `cargo xtask conformance` (or `./scripts/run-conformance.sh`). It stops stale
+Prefer `cargo xtask conformance`. It stops stale
 `clap-mcp-conformance-http` processes before running the pinned Docker harness.
 
 | Command | Use |
