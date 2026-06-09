@@ -113,8 +113,10 @@ fn main() -> Result<(), clap_mcp::ClapMcpError> {
 ## OAuth (server vs client)
 
 HTTP server auth is out of scope for clap-mcp. Use a reverse proxy or
-middleware. OAuth client helpers for calling remote MCP servers live under the
-`http-oauth` feature; see [oauth.md](oauth.md).
+middleware. clap-mcp does not ship OAuth client helpers. For an MCP **client**
+calling a remote OAuth-protected MCP server, use
+[rmcp's OAuth support](https://github.com/modelcontextprotocol/rust-sdk/blob/main/docs/OAUTH_SUPPORT.md)
+directly.
 
 ## Conformance
 

@@ -106,7 +106,6 @@ Cargo features and their maturity:
 | `log` | Shipped | `ClapMcpLogBridge` — a `log::Log` implementation that forwards `log` crate messages to MCP clients. |
 | `output-schema` | Shipped | `schemars`-based JSON schema generation for structured tool output. Enables [`output_schema_for_type`], [`output_schema_one_of!`], and `#[clap_mcp_output_type]` / `#[clap_mcp_output_one_of]` to set each tool's `output_schema` for MCP clients. |
 | `http` | Shipped | Streamable HTTP MCP server (`--mcp-http`); see [http.md](docs/http.md). |
-| `http-oauth` | Scaffolding | OAuth client helpers for calling remote MCP servers; see [oauth.md](docs/oauth.md). |
 | `elicitation` | Scaffolding | Server-side elicitation during tool execution (`confirm-echo` intercept only). |
 
 Enable features in `Cargo.toml`:
@@ -192,7 +191,6 @@ Every guide in [`docs/`](docs/) is listed below. See also
 | [Tool output](docs/tool-output.md) | `run` return types, structured output, `output-schema` |
 | [Logging](docs/logging.md) | `tracing` / `log` bridges, MCP notifications |
 | [Streamable HTTP](docs/http.md) | `--mcp-http`, listen env vars |
-| [OAuth (scaffolding)](docs/oauth.md) | Remote MCP client helpers |
 | [Migration notes (0.0.3 → 0.0.4)](docs/migration-notes.md) | Breaking changes, rmcp port, API renames |
 
 ### Maintainer notes

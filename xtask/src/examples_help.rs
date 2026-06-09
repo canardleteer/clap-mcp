@@ -14,8 +14,6 @@ const RELEASE_VALIDATION_EXCLUDE: &[&str] = &[
     "placeholder_server",
     // Test fixture for bad executable paths; same.
     "invalid_executable_server",
-    // Exits before clap `--help` when OAuth env vars are unset.
-    "oauth_http_client",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,9 +312,6 @@ name = "placeholder_server"
 
 [[bin]]
 name = "invalid_executable_server"
-
-[[bin]]
-name = "oauth_http_client"
 "#;
         let manifest = parse_example_bins(sample).expect("parse");
         let bins = release_validation_bins(&manifest).expect("release");

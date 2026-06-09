@@ -283,3 +283,28 @@ Additive API for deeply nested CLIs:
 
 Examples: `nested_subcommands`, `struct_subcommand_globals`; see
 [Execution safety](execution-safety.md).
+
+## Removed scaffolding: http-oauth {#removed-scaffolding-http-oauth}
+
+The `http-oauth` Cargo feature shipped briefly as scaffolding on the `0.0.4`
+pre-release line and was dropped when no concrete clap-mcp-shaped integrator need
+materialized.
+
+**Removed:**
+
+* Cargo feature `http-oauth`
+* Module `clap_mcp::oauth`
+* Types `EnvConfig`, `FromEnvError`
+* Environment constants `CLAP_MCP_OAUTH_*` (`OAUTH_ISSUER_ENV`,
+  `OAUTH_CLIENT_ID_ENV`, …)
+* Re-exports `AuthClient`, `StreamableHttpClientTransport` from
+  `clap_mcp::oauth`
+
+**Migration:** depend on `rmcp` with `auth` and
+`transport-streamable-http-client-reqwest` features; load OAuth config in your
+binary or follow examples under
+[`rust-sdk/examples/clients/`](https://github.com/modelcontextprotocol/rust-sdk/tree/main/examples/clients).
+See [OAuth in rmcp](https://github.com/modelcontextprotocol/rust-sdk/blob/main/docs/OAUTH_SUPPORT.md).
+
+**Unaffected:** `--mcp` / `--mcp-http` server serving; tool code calling
+arbitrary OAuth APIs via `oauth2`, `reqwest`, or similar.
