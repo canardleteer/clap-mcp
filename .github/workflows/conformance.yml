@@ -8,6 +8,9 @@ on:
 jobs:
   conformance:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -17,17 +20,19 @@ jobs:
         with:
           shared-key: ci-conformance
 
+      - name: Restore conformance gate state
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v4
+        id: gate-cache
+        with:
+          path: ${{ runner.temp }}/conformance-gate
+          key: conformance-gate-${{ github.repository }}-${{ github.ref_name }}
+
       - name: Gate scheduled runs
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "Manual run: always execute conformance."
-            exit 0
-          fi
-
           FINGERPRINT=$(
             {
               sha256sum .github/workflows/conformance.yml
@@ -39,11 +44,17 @@ jobs:
           )
           echo "fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
 
-          CACHE_KEY="conformance-gate-${{ github.repository }}-${{ github.ref_name }}"
-          if [ -d "$RUNNER_TEMP/conformance-gate" ]; then
-            rm -rf "$RUNNER_TEMP/conformance-gate"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Manual run: always execute conformance."
+            exit 0
           fi
-          mkdir -p "$RUNNER_TEMP/conformance-gate"
+
+          LAST_FP=""
+          if [ -f "$RUNNER_TEMP/conformance-gate/state.env" ]; then
+            # shellcheck disable=SC1091
+            source "$RUNNER_TEMP/conformance-gate/state.env"
+          fi
 
           echo "Looking up last successful conformance run..."
           LAST_SHA=$(gh run list \
@@ -54,22 +65,10 @@ jobs:
             --json headSha \
             --jq '.[0].headSha // empty')
 
-          LAST_FP=""
-          CACHE_HIT=false
-          if gh cache list --key "$CACHE_KEY" --limit 1 --json id --jq '.[0].id' 2>/dev/null | grep -q .; then
-            if gh cache restore --key "$CACHE_KEY" "$RUNNER_TEMP/conformance-gate" 2>/dev/null; then
-              CACHE_HIT=true
-              if [ -f "$RUNNER_TEMP/conformance-gate/state.env" ]; then
-                # shellcheck disable=SC1091
-                source "$RUNNER_TEMP/conformance-gate/state.env"
-              fi
-            fi
-          fi
-
           REASON=""
           if [ -z "$LAST_SHA" ] || [ "$LAST_SHA" != "${{ github.sha }}" ]; then
             REASON="repo changed since last successful run (last=${LAST_SHA:-none}, head=${{ github.sha }})"
-          elif [ "$CACHE_HIT" != true ] || [ "$LAST_FP" != "$FINGERPRINT" ]; then
+          elif [ "${{ steps.gate-cache.outputs.cache-hit }}" != "true" ] || [ "$LAST_FP" != "$FINGERPRINT" ]; then
             REASON="harness fingerprint changed (stored=${LAST_FP:-none}, current=$FINGERPRINT)"
           fi
 
@@ -101,19 +100,21 @@ jobs:
           expected-failures: ./conformance-baseline.yml
           verbose: true
 
-      - name: Persist conformance gate state
+      - name: Write conformance gate state
         if: success() && steps.gate.outputs.run == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "$RUNNER_TEMP/conformance-gate"
           {
             echo "LAST_SHA=${{ github.sha }}"
             echo "LAST_FP=${{ steps.gate.outputs.fingerprint }}"
           } > "$RUNNER_TEMP/conformance-gate/state.env"
-          CACHE_KEY="conformance-gate-${{ github.repository }}-${{ github.ref_name }}"
-          gh cache delete "$CACHE_KEY" -y 2>/dev/null || true
-          gh cache save "$CACHE_KEY" "$RUNNER_TEMP/conformance-gate"
+
+      - name: Save conformance gate state
+        if: success() && steps.gate.outputs.run == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/conformance-gate
+          key: conformance-gate-${{ github.repository }}-${{ github.ref_name }}
 
       - name: Upload conformance debug bundle
         if: always() && steps.gate.outputs.run == 'true'
