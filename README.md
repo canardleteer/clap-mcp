@@ -106,7 +106,6 @@ Cargo features and their maturity:
 | `log` | Shipped | `ClapMcpLogBridge` — a `log::Log` implementation that forwards `log` crate messages to MCP clients. |
 | `output-schema` | Shipped | `schemars`-based JSON schema generation for structured tool output. Enables [`output_schema_for_type`], [`output_schema_one_of!`], and `#[clap_mcp_output_type]` / `#[clap_mcp_output_one_of]` to set each tool's `output_schema` for MCP clients. |
 | `http` | Shipped | Streamable HTTP MCP server (`--mcp-http`); see [http.md](docs/http.md). |
-| `elicitation` | Scaffolding | Server-side elicitation during tool execution (`confirm-echo` intercept only). |
 
 Enable features in `Cargo.toml`:
 

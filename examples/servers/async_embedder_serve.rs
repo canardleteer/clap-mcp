@@ -58,7 +58,6 @@ async fn main() -> Result<(), clap_mcp::ClapMcpError> {
         capture_stdout: false,
         custom_resources: vec![],
         custom_prompts: vec![],
-        elicitation_enabled: false,
     };
 
     let cmd = command_with_mcp_flag(Cli::command());

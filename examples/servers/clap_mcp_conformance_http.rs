@@ -4,7 +4,7 @@
 //! Combines HTTP serving, MCP logging, harness-aligned resources/prompts, and
 //! reference tool names required by `@modelcontextprotocol/conformance` scenarios
 //! that exercise clap-mcp's shipped capabilities (logging, text resources/prompts,
-//! tool errors). Elicitation is intentionally disabled.
+//! tool errors).
 
 #[cfg(all(feature = "tracing", feature = "http"))]
 use async_trait::async_trait;
@@ -145,7 +145,6 @@ fn conformance_serve_options() -> clap_mcp::ClapMcpServeOptions {
         capture_stdout: false,
         custom_resources: vec![],
         custom_prompts: vec![],
-        elicitation_enabled: false,
     };
 
     serve_options.custom_resources.push(CustomResource {

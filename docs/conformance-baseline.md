@@ -77,16 +77,11 @@ only. We do not implement the full reference tool catalog or rich media shapes
 * `resources-read-binary`, `resources-templates-read`,
   `prompts-get-embedded-resource`, `prompts-get-with-image`
 
-### Permanent — SCAFFOLDING (elicitation)
-
-Elicitation is scaffolding (`confirm-echo` spike only), not a shipped public
-API. Covered by in-process integration tests, not harness shrink.
-
-* `tools-call-elicitation`, `elicitation-sep1034-defaults`,
-  `elicitation-sep1330-enums`
-
 ### Permanent — not implemented
 
+* `tools-call-elicitation`, `elicitation-sep1034-defaults`,
+  `elicitation-sep1330-enums` — elicitation scaffolding was removed; see
+  [migration-notes](migration-notes.md#removed-scaffolding-elicitation)
 * `resources-subscribe`, `resources-unsubscribe`
 
 ### Passing with the conformance fixture (not baselined)

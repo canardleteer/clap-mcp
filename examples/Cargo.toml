@@ -210,7 +210,6 @@ default = ["tracing", "log"]
 tracing = []
 log = []
 http = ["clap-mcp/http"]
-elicitation = ["clap-mcp/elicitation"]
 
 [[bin]]
 name = "subcommands_http"
@@ -226,8 +225,3 @@ required-features = ["http", "tracing"]
 name = "task_tools_http"
 path = "servers/task_tools_http.rs"
 required-features = ["http", "tracing"]
-
-[[bin]]
-name = "elicitation_confirm"
-path = "servers/elicitation_confirm.rs"
-required-features = ["elicitation"]

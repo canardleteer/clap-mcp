@@ -792,9 +792,6 @@ pub struct ClapMcpServeOptions {
 
     /// Custom MCP prompts (static or async dynamic). Merged with the built-in logging guide when logging is enabled.
     pub custom_prompts: Vec<content::CustomPrompt>,
-
-    /// When true (requires `elicitation` feature), tools named `confirm-echo` may call `peer.elicit` during execution.
-    pub elicitation_enabled: bool,
 }
 
 /// Log interpretation hint for MCP clients (included in `instructions` when logging is enabled).

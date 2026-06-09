@@ -30,14 +30,23 @@ attach to tool servers today.
 > local.
 
 An earlier `http-oauth` Cargo feature offered OAuth **client** helpers for
-calling remote MCP servers. It was scaffolding only, not a release parity target,
-and was removed after no concrete clap-mcp-shaped use case emerged. That feature
-never protected **your** MCP server from incoming clients. For remote MCP client
-OAuth, use
+calling remote MCP servers. It was scaffolding only, not a release parity
+target, and was removed while no simple clap-mcp-shaped integrator pattern has
+emerged. The feature is not on the roadmap for now; that is a prioritization
+choice, not a permanent decision. It never protected **your** MCP server from
+incoming clients. For remote MCP client OAuth, use
 [rmcp's OAuth support](https://github.com/modelcontextprotocol/rust-sdk/blob/main/docs/OAUTH_SUPPORT.md)
 directly. See
 [migration-notes.md](migration-notes.md#removed-scaffolding-http-oauth) for
 removed types and env vars.
+
+An earlier `elicitation` Cargo feature offered a `confirm-echo` conformance
+spike for server-side user prompts during tool execution. It was scaffolding
+only and was removed for the same reason: no simple clap-mcp-shaped integrator
+pattern has emerged yet. Agent policy today is covered by `#[clap_mcp(requires)]`
+and `#[clap_mcp(skip)]`. See
+[migration-notes.md](migration-notes.md#removed-scaffolding-elicitation) for
+details.
 
 ## Schema validation (tool calls)
 
