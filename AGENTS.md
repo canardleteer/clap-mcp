@@ -325,3 +325,19 @@ stateful derive → `docs/stateful-tools.md`; tool output / schemas →
 
 * Do not commit unless the user asks.
 * Do not bump the crate version unless explicitly requested.
+
+### CHANGELOG (`release-plz`)
+
+[`CHANGELOG.md`](CHANGELOG.md) is **not** hand-edited by agents or contributors.
+[release-plz](https://release-plz.dev/) owns it via
+[`release-plz.toml`](release-plz.toml) and
+[`.github/workflows/release-plz.yml`](.github/workflows/release-plz.yml).
+
+On pushes to `main`, the `release-plz` workflow opens or updates a release PR
+that bumps crate versions and rewrites `CHANGELOG.md` from conventional commit
+messages since the last release.
+
+**Agent rule:** do not add or edit `CHANGELOG.md` in task PRs. Document user-facing
+changes in `docs/` (and README when needed). Write commit messages release-plz can
+parse (for example `fix(server): …`, `feat(derive): …`). release-plz groups entries
+by commit type when the release PR lands.
