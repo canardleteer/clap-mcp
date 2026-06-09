@@ -33,8 +33,9 @@ priorities below.
   embedders. Do not remove thin delegators without an explicit breaking-change
   decision.
 
-Early-stage warning: the crate is pre-stable API (`0.0.4-rc.1`). See
-[migration notes](docs/migration-notes.md) for recent API slimming.
+Early-stage warning: the crate is on the pre-stable `0.0.4` release line (see
+workspace `Cargo.toml`). See [migration notes](docs/migration-notes.md) for
+recent API slimming.
 
 ## Repository layout
 
@@ -307,8 +308,21 @@ execution flags → `docs/execution-safety.md`; MCP tasks → `docs/mcp-tasks.md
 stateful derive → `docs/stateful-tools.md`; tool output / schemas →
 `docs/tool-output.md`.
 
+### Version strings in documentation
+
+* **Single source of truth:** workspace version in root [`Cargo.toml`](Cargo.toml)
+  only.
+* **Copy-paste examples** in README, `docs/*.md`, and hand-authored skills under
+  `.agents/skills/`: use `version = "0.0.4"` (major.minor), not pinned
+  `0.0.4-rc.N`, unless documenting a specific historical release.
+* **Exempt from bump sweeps:** [`CHANGELOG.md`](CHANGELOG.md),
+  [`docs/migration-notes.md`](docs/migration-notes.md) — historical semver
+  literals stay as release boundaries.
+* **After a workspace version bump:** run  
+  `rg '0\.0\.4-rc\.' README.md docs/*.md AGENTS.md examples/README.md`  
+  and fix any matches outside migration-notes / CHANGELOG.
+
 ## Git
 
 * Do not commit unless the user asks.
-* Do not bump the crate version unless explicitly requested (branch may stay on
-  `0.0.4-rc.1` during API polish).
+* Do not bump the crate version unless explicitly requested.

@@ -43,7 +43,7 @@ Serving MCP and calling external OAuth-gated APIs in tool code is a normal
 pattern; you do not need `http-oauth` for the latter.
 
 ```toml
-clap-mcp = { version = "0.0.4-rc.1", features = ["derive", "http-oauth"] }
+clap-mcp = { version = "0.0.4", features = ["derive", "http-oauth"] }
 ```
 
 (`http-oauth` implies `http` and rmcp's auth + streamable HTTP client
