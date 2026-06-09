@@ -10,7 +10,7 @@ instead of stdio.
 ## Enable the feature
 
 ```toml
-clap-mcp = { version = "0.0.4-rc.1", features = ["derive", "http"] }
+clap-mcp = { version = "0.0.4", features = ["derive", "http"] }
 ```
 
 Derive `ClapMcp` on your CLI type and call

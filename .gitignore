@@ -3,4 +3,8 @@
 Cargo.lock
 .knowledge-graph
 .cursor/
-.agents/skills/
+# .agents/skills/ — ignore by default. Most entries are generated when testing
+# `--export-skills`; un-ignore only hand-authored skills we commit (see below).
+.agents/skills/*
+!.agents/skills/clap-mcp-integration/
+!.agents/skills/clap-mcp-integration/**

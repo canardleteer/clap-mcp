@@ -28,7 +28,7 @@ See [Maintainer testing](../docs/maintainer-testing.md#adding-an-example).
 
 ## 0.0.4 API (derive path)
 
-Since **0.0.4-rc.1**, examples use the slim derive entrypoints and
+Since the **0.0.4** release line, examples use the slim derive entrypoints and
 [`ServeMcpBuilder`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html)
 for imperative embedders. Start with [Usage patterns](../docs/usage.md).
 

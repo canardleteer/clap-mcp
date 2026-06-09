@@ -61,8 +61,12 @@ macro):
 
 ```toml
 [dependencies]
-clap-mcp = "0.0.4-rc.1"
+clap-mcp = "0.0.4"
 ```
+
+Until `0.0.4` stable ships on [crates.io](https://crates.io/crates/clap-mcp),
+Cargo resolves the latest `0.0.4-rc.*` pre-release when you use
+`version = "0.0.4"`.
 
 * Opt-in MCP server on existing `clap` CLIs (`--mcp` stdio, `--mcp-http` with
   `http` feature)
@@ -109,7 +113,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-clap-mcp = { version = "0.0.4-rc.1", features = ["tracing"] }
+clap-mcp = { version = "0.0.4", features = ["tracing"] }
 ```
 
 ## When and when not to use `clap-mcp`
