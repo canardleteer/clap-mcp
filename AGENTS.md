@@ -107,6 +107,28 @@ cargo xtask conformance-stop          # stop conformance-server / orphan fixture
 
 CI runs the gate above on Ubuntu, Windows, and macOS.
 
+### When bumping workspace `rmcp`
+
+After changing the workspace `rmcp` version or feature flags in root
+[`Cargo.toml`](Cargo.toml), vet known touchpoints (not exhaustive; add rows as
+you discover more):
+
+* [rmcp CHANGELOG](https://github.com/modelcontextprotocol/rust-sdk/blob/main/crates/rmcp/CHANGELOG.md)
+  — breaking renames, transport, and task API changes
+* [docs/migration-notes.md](docs/migration-notes.md) — port notes and confirmed
+  rmcp feature names
+* [docs/mcp-tasks.md](docs/mcp-tasks.md#task-support-matrix) — task support
+  matrix and **Upcoming** rows (for example [rust-sdk PR #816](https://github.com/modelcontextprotocol/rust-sdk/pull/816))
+* [`clap-mcp/Cargo.toml`](clap-mcp/Cargo.toml) `http` feature → rmcp transport
+  sub-features
+* HTTP and stdio integration tests under `clap-mcp/tests/` (`http_inprocess`,
+  `task_augmented`, `example_contract`, conformance fixture tests)
+* rmcp client examples under `examples/` (`client`, `task_augmented_client`)
+* [docs/http.md](docs/http.md) and [docs/conformance-baseline.md](docs/conformance-baseline.md)
+  if streamable HTTP or harness expectations shift
+
+Run the full gate after the bump.
+
 ## Testing expectations
 
 * Do not disable, ignore, or delete tests to make CI pass — fix behavior or

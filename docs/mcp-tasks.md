@@ -13,6 +13,49 @@ immediately, and poll `tasks/get` / `tasks/result` for completion. See the
 Requires `reinvocation_safe = true` (in-process execution). Subprocess mode
 (`reinvocation_safe = false`) does not support task-augmented calls.
 
+## Task support matrix
+
+Workspace [`rmcp`](https://docs.rs/rmcp) is pinned at **1.7.x** (root
+[`Cargo.toml`](../Cargo.toml)). Protocol baseline: [MCP tasks
+(2025-11-25)](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks).
+
+Tasks are **bidirectional** in the spec: either peer can issue a
+task-augmented request and the other peer answers `tasks/*` polls. clap-mcp
+targets **CLI binaries as MCP servers**; the matrix below uses MCP method names
+and initiator → receiver flow. Implementation detail (derive attrs, examples,
+transports) is in [clap-mcp task implementation](#clap-mcp-task-implementation).
+
+| MCP method / concept | Initiator → receiver | clap-mcp | rmcp (workspace) | Upstream |
+| --- | --- | --- | --- | --- |
+| Task-augmented `tools/call` (`task` on params → `CreateTaskResult`) | Client → server (your CLI) | Shipped (server) | **1.7.0+** ([#536](https://github.com/modelcontextprotocol/rust-sdk/pull/536)) | — |
+| `tasks/get` | Client → server | Shipped (server answers) | **1.7.0+** | — |
+| `tasks/result` | Client → server | Shipped (server answers) | **1.7.0+** | — |
+| `tasks/cancel` | Client → server | Shipped (rmcp handler; no clap-mcp override) | **1.7.0+** | — |
+| `tasks/list` | Client → server | Shipped (rmcp default `list_tasks`) | **1.7.0+** | — |
+| `Tool.execution.taskSupport` (`optional` / `required` / `forbidden`) | Server advertises per tool | Optional only via derive; `required` not exposed | **1.7.0+** (`required` via rmcp `#[tool]` macros) | — |
+| `capabilities.tasks` on server | Server capability negotiation | Shipped when `task_augmented_tools` is on | **1.7.0+** | — |
+| Client task poll sequence (`tools/call` + `tasks/get` + `tasks/result`) | MCP client → your CLI server | Examples only (not a clap-mcp crate feature) | **1.7.0+** ([#839](https://github.com/modelcontextprotocol/rust-sdk/pull/839) examples) | [rmcp `task_stdio` client](https://github.com/modelcontextprotocol/rust-sdk/blob/main/examples/clients/src/task_stdio.rs) |
+| Task-augmented `sampling/createMessage` | Server → client | Not offered | Not in **1.7.0** | [PR #816](https://github.com/modelcontextprotocol/rust-sdk/pull/816) — **next rmcp release after merge** (TBD) |
+| Task-augmented `elicitation/create` | Server → client | Not offered | Not in **1.7.0** | Same as #816 |
+| `tasks/get` / `tasks/result` / `tasks/cancel` / `tasks/list` on **client** | Server → client | Not offered (CLI server role) | Not in **1.7.0** | #816 adds `ClientHandler` receive path |
+
+### clap-mcp task implementation
+
+| Area | Status | Execution constraints | Surface |
+| --- | --- | --- | --- |
+| Enable server task-augmented `tools/call` | Shipped | [`reinvocation_safe`](execution-safety.md) required (`task_augmented_tools` compile error otherwise) | `#[clap_mcp(task_augmented_tools)]`; optional `#[clap_mcp(task)]` per subcommand |
+| `TaskSupport::Optional` in `list_tools` | Shipped | Same as above | Set on eligible tools; see derive attrs above |
+| `TaskSupport::Required` | Not offered | — | Use [rmcp `task_demo`](https://github.com/modelcontextprotocol/rust-sdk/blob/main/examples/servers/src/common/task_demo.rs) outside the clap derive path |
+| Subprocess MCP + tasks | Not supported | `reinvocation_safe = false` | Compile error without `reinvocation_safe` |
+| stdio transport (`--mcp`) | Shipped | `reinvocation_safe` required | `parse_or_serve_mcp*`; **task_tools_*** examples |
+| HTTP transport (`--mcp-http`) | Shipped | `reinvocation_safe` required | `http` feature; **task_tools_http** |
+| Concurrent task + plain `tools/call` | Shipped | [`parallel_safe`](execution-safety.md) false serializes all tools; true allows overlap | See probes **task_serial_probe_***, **task_parallel_probe_*** |
+| Async task tool bodies | Shipped | [`share_runtime`](execution-safety.md#async-tools-and-share_runtime) false (default) or true; use [`run_async_tool`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.run_async_tool.html) for async `run` | **task_tools_dedicated** vs **task_tools_shared** |
+| `meta.taskId` on log notifications during task bodies | Shipped | `reinvocation_safe`; with `share_runtime = true`, call bodies via `run_async_tool` so task id propagates under `block_on` | `ClapMcpServeOptions::log_rx` + `tracing`/`log`; [logging](logging.md#task-augmented-tools-and-metataskid) |
+| Panics in task-scheduled work | Shipped | `reinvocation_safe`; opt-in [`catch_in_process_panics`](execution-safety.md#crash-exit-and-panic-behavior) | **task_panic_catch** |
+| MCP client calling your task tools | Shipped (examples/tests) | Server side must enable tasks (in-process) | **task_augmented_client**; `clap-mcp/tests/task_augmented_tests.rs` |
+| Server→client task routing on `ClientHandler` | Not planned | — | Full MCP client apps use rmcp directly after #816 |
+
 ## Enable on your CLI
 
 Use `#[clap_mcp(task_augmented_tools)]` on your CLI root (enum or struct with
@@ -67,20 +110,6 @@ Async tool bodies use `clap_mcp::run_async_tool` (see
 `share_runtime` defaults to `false` (dedicated runtime per call); set
 `share_runtime = true` to reuse the MCP server runtime when appropriate.
 
-## Supported matrix (this release)
-
-| Configuration | Task-augmented `tools/call` |
-| --- | --- |
-| `reinvocation_safe = true` | Supported |
-| `share_runtime = false` or `true` | Supported |
-| `parallel_safe = false` or `true` | Supported |
-| `catch_in_process_panics = true` | Supported (panics map to task error payloads; server stays up) |
-| `reinvocation_safe = false` (subprocess) | Not supported |
-
-When `parallel_safe = false`, task-augmented and plain `tools/call` share one
-serialization queue. When `parallel_safe = true`, tool bodies may overlap;
-logging uses per-task context so `meta.taskId` stays correct.
-
 When `ClapMcpServeOptions::log_rx` is set and you use the `tracing` or `log`
 bridges, log notifications emitted during a task-augmented tool body include
 `meta.taskId` in notification extensions, matching
@@ -119,23 +148,9 @@ Additional examples: [task_panic_catch](../examples/servers/task_panic_catch.rs)
 
 ## Stack and migration
 
-Pinned stack (review on bump): workspace [`rmcp`](https://docs.rs/rmcp) 1.7.x
-(see root `Cargo.toml`; features `server`, `client`, `macros`, `transport-io`,
-`transport-child-process`). Protocol 2025-11-25 (tasks). Migration notes:
-[migration-notes.md](migration-notes.md).
+Workspace `rmcp` features: `server`, `client`, `macros`, `transport-io`,
+`transport-child-process` (see root [`Cargo.toml`](../Cargo.toml)). Broader API
+renames and rmcp port notes: [migration-notes.md](migration-notes.md).
 
-## Client-side task routing (not yet supported)
-
-> [!NOTE]
-> Server-side task-augmented `tools/call` is shipped in clap-mcp on rmcp 1.7.x.
-> That is distinct from client-side task routing, where the MCP server polls the
-> client via `tasks/*` on `ClientHandler`. Client-side routing is not in rmcp
-> 1.7.0; track [rust-sdk PR #816](https://github.com/modelcontextprotocol/rust-sdk/pull/816).
-
-When #816 lands in a released rmcp version:
-
-* Implement `ClientHandler::{list_tasks, get_task_info, get_task_result,
-  delete_task}` in test/client utilities
-* Add an example pairing task-augmented server requests with async client
-  completion
-* Document `capabilities.tasks` negotiation on the client
+Maintainers: when bumping workspace `rmcp`, see
+[AGENTS.md — When bumping workspace rmcp](../AGENTS.md#when-bumping-workspace-rmcp).
