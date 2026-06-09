@@ -39,8 +39,7 @@ fn run(cmd: Cli) -> String {
 
 #[cfg(all(feature = "tracing", feature = "http"))]
 fn main() {
-    let mut serve_options = task_tools_common::serve_options_with_logging();
-    serve_options.elicitation_enabled = false;
+    let serve_options = task_tools_common::serve_options_with_logging();
     let _cli = clap_mcp::parse_or_serve_mcp_with::<Cli>(clap_mcp::ClapMcpRunOptions {
         config: Cli::clap_mcp_config(),
         serve: serve_options,

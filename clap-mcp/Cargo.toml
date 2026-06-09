@@ -19,7 +19,6 @@ output-schema = ["dep:schemars"]
 tracing = ["dep:tracing", "dep:tracing-subscriber"]
 log = ["dep:log"]
 http = ["dep:axum", "rmcp/transport-streamable-http-server", "rmcp/transport-streamable-http-client-reqwest", "tokio/net"]
-elicitation = ["rmcp/elicitation"]
 
 [dependencies]
 async-trait = "0.1"

@@ -44,8 +44,6 @@ pub(crate) struct ServeHandlerInner {
     pub task_tool_filter: Option<HashSet<String>>,
     pub serialize_tools: HashMap<String, ClapMcpSerializeScope>,
     pub serialize_topic_args: HashMap<String, HashMap<String, crate::SerializeTopicSegmentFn>>,
-    #[cfg(feature = "elicitation")]
-    pub elicitation_enabled: bool,
 }
 
 impl ServeHandlerInner {
@@ -74,46 +72,6 @@ impl ServeHandlerInner {
 
         let args_map = params.arguments.clone().unwrap_or_default();
         validate_tool_argument_names(tool, &params.name, &args_map)?;
-
-        #[cfg(feature = "elicitation")]
-        if self.elicitation_enabled && params.name == "confirm-echo" {
-            use rmcp::model::{
-                CreateElicitationRequestParams, ElicitationAction, ElicitationSchemaBuilder,
-            };
-            let prompt = format!(
-                "Confirm running confirm-echo with arguments: {}",
-                serde_json::to_string(&args_map).unwrap_or_else(|_| "{}".into())
-            );
-            let schema = ElicitationSchemaBuilder::new()
-                .required_string_property("value", |s| s)
-                .build_unchecked();
-            let response = context
-                .peer
-                .create_elicitation_with_timeout(
-                    CreateElicitationRequestParams::FormElicitationParams {
-                        meta: None,
-                        message: prompt,
-                        requested_schema: schema,
-                    },
-                    None,
-                )
-                .await
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-            return match response.action {
-                ElicitationAction::Accept => {
-                    let answer = response
-                        .content
-                        .and_then(|v| v.get("value").and_then(|x| x.as_str()).map(str::to_string))
-                        .unwrap_or_else(|| "accepted".into());
-                    Ok(CallToolResult::success(vec![Content::text(format!(
-                        "confirmed: {answer}"
-                    ))]))
-                }
-                ElicitationAction::Decline | ElicitationAction::Cancel => Ok(
-                    CallToolResult::success(vec![Content::text("elicitation declined")]),
-                ),
-            };
-        }
 
         if let Some(ref handler) = self.in_process_handler {
             let name = params.name.to_string();
@@ -626,8 +584,6 @@ pub(crate) fn build_clap_mcp_server(
         task_tool_filter,
         serialize_tools: metadata.serialize_tools.clone(),
         serialize_topic_args: metadata.serialize_topic_args.clone(),
-        #[cfg(feature = "elicitation")]
-        elicitation_enabled: serve_options.elicitation_enabled,
     });
 
     Ok(ClapMcpServer {

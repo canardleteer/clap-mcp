@@ -287,8 +287,8 @@ Examples: `nested_subcommands`, `struct_subcommand_globals`; see
 ## Removed scaffolding: http-oauth {#removed-scaffolding-http-oauth}
 
 The `http-oauth` Cargo feature shipped briefly as scaffolding on the `0.0.4`
-pre-release line and was dropped when no concrete clap-mcp-shaped integrator need
-materialized.
+pre-release line and was dropped while no simple, clap-mcp-shaped integrator
+pattern has emerged.
 
 **Removed:**
 
@@ -308,3 +308,38 @@ See [OAuth in rmcp](https://github.com/modelcontextprotocol/rust-sdk/blob/main/d
 
 **Unaffected:** `--mcp` / `--mcp-http` server serving; tool code calling
 arbitrary OAuth APIs via `oauth2`, `reqwest`, or similar.
+
+**Roadmap:** This feature is not on the clap-mcp roadmap until a simple,
+clap-mcp-shaped client OAuth pattern emerges (for example env-driven config for
+calling remote MCP servers from a `clap` binary). That is a prioritization
+choice, not a permanent rejection of OAuth in MCP.
+
+## Removed scaffolding: elicitation {#removed-scaffolding-elicitation}
+
+The `elicitation` Cargo feature shipped as scaffolding on the `0.0.4`
+pre-release line. It was a hardcoded `confirm-echo` server intercept, not a
+pattern derived from `clap` CLI structure. clap-mcp already covers most agent
+policy via `#[clap_mcp(requires)]` and `#[clap_mcp(skip)]`; MCP elicitation
+targets runtime user input that does not map cleanly onto argv-shaped tools,
+especially in subprocess mode.
+
+**Removed:**
+
+* Cargo feature `elicitation`
+* `ClapMcpServeOptions::elicitation_enabled`
+* Server-side `confirm-echo` intercept in tool dispatch
+* Example binary `elicitation_confirm`
+
+**Migration:**
+
+* Agent policy: use `#[clap_mcp(requires)]` and `#[clap_mcp(skip)]` per
+  [Execution safety](execution-safety.md).
+* Interactive or TTY subcommands: keep `#[clap_mcp(skip)]` and document shell
+  invocation for operators.
+* Full MCP elicitation: depend on `rmcp` with its `elicitation` feature and
+  implement elicitation in custom server code outside clap-mcp's derive path.
+
+**Roadmap:** This feature is not on the clap-mcp roadmap until a simple,
+clap-mcp-shaped integrator pattern emerges (for example declarative per-tool
+confirm policy derived from CLI metadata). That is a prioritization choice, not
+a permanent decision against elicitation in MCP.
