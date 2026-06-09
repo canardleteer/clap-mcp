@@ -44,9 +44,6 @@ mod http;
 
 mod serve;
 
-#[cfg(feature = "http-oauth")]
-pub mod oauth;
-
 pub use rmcp::model::ErrorData as ClapMcpErrorData;
 
 pub mod logging;

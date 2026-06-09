@@ -205,7 +205,6 @@ Every file below must appear in the README Documentation table.
 | [docs/tool-output.md](docs/tool-output.md) | CLI authors | `run` return types, structured output, `output-schema` |
 | [docs/logging.md](docs/logging.md) | CLI authors | `tracing` / `log` bridges, MCP notifications |
 | [docs/http.md](docs/http.md) | CLI authors | Streamable HTTP listen (`--mcp-http`) |
-| [docs/oauth.md](docs/oauth.md) | CLI authors | OAuth client helpers (scaffolding) |
 | [docs/migration-notes.md](docs/migration-notes.md) | CLI authors / maintainers | 0.0.3-rc.1 → 0.0.4-rc.1 upgrade, breaking renames |
 | [docs/conformance-baseline.md](docs/conformance-baseline.md) | Maintainers | MCP conformance harness, baseline YAML |
 | [docs/maintainer-testing.md](docs/maintainer-testing.md) | Maintainers | Macro checklist, test filters, example contracts |

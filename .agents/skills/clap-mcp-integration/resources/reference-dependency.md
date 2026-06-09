@@ -39,7 +39,6 @@ Use only when crates.io lacks a fix you need. Pick branch or tag at integration 
 | `http` | Shipped | Ship `--mcp-http` |
 | `tracing` | Shipped | Phase 6 tracing bridge |
 | `log` | Shipped | Phase 6 log bridge (replaces global logger) |
-| `http-oauth` | Scaffolding | OAuth client helpers only |
 | `elicitation` | Scaffolding | Server-side elicitation spike |
 
 Default `derive` works without extra features beyond what you import. See [README feature flags](../../../../README.md#feature-flags).

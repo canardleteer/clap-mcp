@@ -29,9 +29,15 @@ attach to tool servers today.
 > auth layer in front if you must expose MCP beyond localhost, or keep the server
 > local.
 
-For OAuth on **outbound** MCP client calls (scaffolding only), see
-[oauth.md](oauth.md). That feature does not protect **your** MCP server from
-incoming clients.
+An earlier `http-oauth` Cargo feature offered OAuth **client** helpers for
+calling remote MCP servers. It was scaffolding only, not a release parity target,
+and was removed after no concrete clap-mcp-shaped use case emerged. That feature
+never protected **your** MCP server from incoming clients. For remote MCP client
+OAuth, use
+[rmcp's OAuth support](https://github.com/modelcontextprotocol/rust-sdk/blob/main/docs/OAUTH_SUPPORT.md)
+directly. See
+[migration-notes.md](migration-notes.md#removed-scaffolding-http-oauth) for
+removed types and env vars.
 
 ## Schema validation (tool calls)
 
@@ -125,6 +131,5 @@ If you must expose MCP outside a single-user loopback setup:
 | Topic | Guide |
 | --- | --- |
 | Loopback HTTP, env vars, `allowed_hosts` | [http.md](http.md) |
-| OAuth client scaffolding (not server auth) | [oauth.md](oauth.md) |
 | Stateful session tools | [stateful-tools.md](stateful-tools.md) |
 | `parallel_safe`, cwd, skip, exit hazards | [execution-safety.md](execution-safety.md) |
