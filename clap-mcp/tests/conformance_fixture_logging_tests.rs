@@ -62,11 +62,14 @@ fn spawn_conformance_server(port: u16) -> Child {
 
 async fn shutdown_child(mut child: Child) {
     let _ = child.kill();
-    tokio::time::timeout(Duration::from_secs(10), tokio::task::spawn_blocking(move || child.wait()))
-        .await
-        .expect("conformance server did not exit within 10s")
-        .expect("conformance server wait join failed")
-        .expect("conformance server wait failed");
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio::task::spawn_blocking(move || child.wait()),
+    )
+    .await
+    .expect("conformance server did not exit within 10s")
+    .expect("conformance server wait join failed")
+    .expect("conformance server wait failed");
 }
 
 async fn wait_for_http(port: u16) {
