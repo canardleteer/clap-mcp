@@ -47,40 +47,49 @@ recent API slimming.
 | `docs/` | CLI author guides and maintainer notes; see [Documentation layout](#documentation-layout) |
 | `xtask/` | Maintainer tasks (e.g. MCP conformance harness) |
 
+## Agent rules (required)
+
+Hand-authored, path-scoped checklists live in
+[`.agents/rules/`](.agents/rules/) ([agent-rules-spec RFC](https://github.com/rameshsunkara/agent-rules-spec)
+draft). Generated `--export-skills` output is separate under `.agents/skills/`
+(gitignored).
+
+**Agents must use the rules, not duplicated prose in this file.**
+
+1. After editing, read every rule with `trigger: auto` whose `paths` globs match
+   a file you touched (or `trigger: always` rules). You do not need to parse the
+   full schema — read the markdown body and run the commands it lists.
+2. Treat rule bodies as mandatory when their paths match; they override summary
+   bullets here.
+3. Before finish, commit, or push on Rust / workflow / test changes, follow
+   [`.agents/rules/clap-mcp-ci-gate.md`](.agents/rules/clap-mcp-ci-gate.md).
+
+| Rule | Paths (summary) | When |
+| --- | --- | --- |
+| [`clap-mcp-ci-gate.md`](.agents/rules/clap-mcp-ci-gate.md) | `.github/workflows/**`, `clap-mcp/**`, `examples/**`, `xtask/**` | Full local CI gate before finish |
+| [`clap-mcp-macros.md`](.agents/rules/clap-mcp-macros.md) | `clap-mcp/macros/**` | Proc-macro / derive edits |
+| [`clap-mcp-lib.md`](.agents/rules/clap-mcp-lib.md) | `clap-mcp/src/**` | Runtime library edits |
+| [`clap-mcp-examples.md`](.agents/rules/clap-mcp-examples.md) | `examples/**` | Example binary edits |
+
+Human-oriented detail and tables: [docs/maintainer-testing.md](docs/maintainer-testing.md).
+
 ## Development workflow
 
 ### When to run the full gate
 
-Run the checks below **after completing a plan or any heavy agent-driven change**
-(API refactors, new public types, example migrations, broad test/doc updates).
-They are **required before every release**, with no exceptions.
+Run the gate in
+[`.agents/rules/clap-mcp-ci-gate.md`](.agents/rules/clap-mcp-ci-gate.md)
+**after completing a plan or any heavy agent-driven change** (API refactors, new
+public types, example migrations, broad test/doc updates, CI workflow edits).
+Required before every release, with no exceptions.
 
 For day-to-day edits, match the same bar when the change touches public API,
-build graphs, or cross-crate behavior; smaller fixes should still pass fmt and
-the tests that cover the touched code.
+build graphs, or cross-crate behavior. Smaller fixes still require fmt and the
+tests that cover touched code; the ci-gate rule lists the full CI order.
 
-The authoritative checklist is
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml). Its steps generally
-encapsulate everything needed before merge or release; local runs may add extras
-(e.g. coverage, client smoke) but should not skip what CI enforces.
-
-### CI-equivalent commands
-
-Contributors and agents should be able to reproduce CI locally:
-
-* **Format:** `cargo fmt --all -- --check`
-* **Test:** `cargo test --all-features`
-* **Clippy:** `cargo clippy --all-targets --all-features -- -D warnings` (includes
-  examples and tests; no warnings allowed)
-* **Audit:** CI uses [rustsec/audit-check](https://github.com/rustsec/audit-check)
-  (`rustsec/audit-check@v2.0.0` on Ubuntu); locally `cargo audit` is equivalent
-* **Examples:** `cargo xtask examples-help` (builds `clap-mcp-examples` with
-  `--all-features`, runs `--help` on each release-validation binary; use
-  `cargo xtask examples-help --list` to print the list, `--profile http` or
-  `--profile all` for other smoke sets)
-* **Rustdoc:** `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p clap-mcp --all-features`
-* **Markdown (optional):** `rumdl check README.md AGENTS.md docs/*.md` — see
-  [Documentation style guide](#documentation-style-guide)
+The authoritative workflow definition is
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml). Local runs may add extras
+(e.g. coverage, client smoke) but must not skip what CI enforces.
 
 Also when adding or changing public API:
 
@@ -101,11 +110,11 @@ cargo xtask code-coverage-html --open   # same, then open in browser
 
 # MCP conformance harness (maintainer)
 cargo xtask conformance                 # local Docker harness; stops stale servers first
-cargo xtask conformance-stop          # stop conformance-server / orphan fixture
+cargo xtask conformance-stop            # stop conformance-server / orphan fixture
 # conformance-server is CI/debug-only — see docs/conformance-baseline.md#local-safety-conformance-server
 ```
 
-CI runs the gate above on Ubuntu, Windows, and macOS.
+CI runs the ci-gate commands on Ubuntu, Windows, and macOS.
 
 ### When bumping workspace `rmcp`
 
@@ -127,7 +136,7 @@ you discover more):
 * [docs/http.md](docs/http.md) and [docs/conformance-baseline.md](docs/conformance-baseline.md)
   if streamable HTTP or harness expectations shift
 
-Run the full gate after the bump.
+Run [`.agents/rules/clap-mcp-ci-gate.md`](.agents/rules/clap-mcp-ci-gate.md) after the bump.
 
 ## Testing expectations
 
@@ -139,42 +148,20 @@ Run the full gate after the bump.
 
 ### Macro and complex CLI testing
 
-When touching `clap-mcp/macros/` or derive-generated behavior, read
-[docs/maintainer-testing.md](docs/maintainer-testing.md) and
-[`.agents/rules/clap-mcp-macros.md`](.agents/rules/clap-mcp-macros.md).
-Run:
-
-```shell
-cargo test -p clap-mcp --all-features complex_cli
-cargo test -p clap-mcp --test trybuild
-```
-
-The canonical regression tree is
+Follow [`.agents/rules/clap-mcp-macros.md`](.agents/rules/clap-mcp-macros.md).
+See [docs/maintainer-testing.md](docs/maintainer-testing.md) for the macro
+checklist table. Canonical regression tree:
 [`clap-mcp/tests/complex_cli_fixture/`](clap-mcp/tests/complex_cli_fixture/mod.rs).
 
 ### Runtime library changes
 
-When touching `clap-mcp/src/` (tool schema, argv build, validation), read
-[docs/maintainer-testing.md](docs/maintainer-testing.md) and
-[`.agents/rules/clap-mcp-lib.md`](.agents/rules/clap-mcp-lib.md). Run:
-
-```shell
-cargo test -p clap-mcp --all-features complex_cli
-cargo test -p clap-mcp --all-features example_contract
-```
+Follow [`.agents/rules/clap-mcp-lib.md`](.agents/rules/clap-mcp-lib.md) and
+[docs/maintainer-testing.md](docs/maintainer-testing.md).
 
 ### Examples changes
 
-When adding or changing example binaries, read
-[docs/maintainer-testing.md](docs/maintainer-testing.md) and
-[`.agents/rules/clap-mcp-examples.md`](.agents/rules/clap-mcp-examples.md).
-New `[[bin]]` entries are picked up by `cargo xtask examples-help` automatically
-unless listed in `RELEASE_VALIDATION_EXCLUDE`. Run `cargo xtask examples-help`
-after example changes.
-
-Path-scoped rules use [`.agents/rules/`](.agents/rules/) (agent-rules-spec RFC
-draft). Generated `--export-skills` output goes to `.agents/skills/` (gitignored);
-hand-authored rules under `.agents/rules/` are committed.
+Follow [`.agents/rules/clap-mcp-examples.md`](.agents/rules/clap-mcp-examples.md)
+and [docs/maintainer-testing.md](docs/maintainer-testing.md) (adding an example).
 
 ## Documentation layout
 

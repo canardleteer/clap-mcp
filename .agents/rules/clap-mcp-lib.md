@@ -1,7 +1,7 @@
 ---
 name: clap-mcp-lib
 description: Checklist when editing clap-mcp runtime schema and tool execution
-activation: paths
+trigger: auto
 paths:
   - clap-mcp/src/**
 ---

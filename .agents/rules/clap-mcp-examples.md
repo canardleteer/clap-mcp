@@ -1,7 +1,7 @@
 ---
 name: clap-mcp-examples
 description: Checklist when adding or changing clap-mcp example binaries
-activation: paths
+trigger: auto
 paths:
   - examples/**
 ---
