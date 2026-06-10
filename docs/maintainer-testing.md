@@ -19,7 +19,9 @@ cargo llvm-cov test -p clap-mcp -p clap-mcp-macros --all-features --summary-only
 cargo xtask examples-help
 ```
 
-Run the full gate in [AGENTS.md](../AGENTS.md) before merge or release.
+Run the full gate in
+[`.agents/rules/clap-mcp-ci-gate.md`](../.agents/rules/clap-mcp-ci-gate.md)
+before merge or release.
 
 ## Macro change checklist
 

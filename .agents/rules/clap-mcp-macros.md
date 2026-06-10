@@ -1,7 +1,7 @@
 ---
 name: clap-mcp-macros
 description: Checklist when editing the clap-mcp proc-macro crate
-activation: paths
+trigger: auto
 paths:
   - clap-mcp/macros/**
 ---

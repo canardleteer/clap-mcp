@@ -294,5 +294,8 @@ Release prep runs example smoke via `cargo xtask examples-help` (builds with
 
 Path-scoped agent rules live in [`.agents/rules/`](.agents/rules/) per the
 [agent-rules-spec RFC](https://github.com/rameshsunkara/agent-rules-spec)
-(draft). See [Maintainer testing](docs/maintainer-testing.md) for checklists,
-test filters, and how those rules relate to this repo.
+(draft). Agents must follow
+[`.agents/rules/clap-mcp-ci-gate.md`](.agents/rules/clap-mcp-ci-gate.md) and
+any other matching rule before finish; see [AGENTS.md](AGENTS.md#agent-rules-required).
+See [Maintainer testing](docs/maintainer-testing.md) for checklists and test
+filters.
