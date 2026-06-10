@@ -291,3 +291,8 @@ crate is excluded from coverage targets.
 Release prep runs example smoke via `cargo xtask examples-help` (builds with
 `--all-features`, runs `--help` on each release-validation binary); see
 [examples/README.md](examples/README.md).
+
+Path-scoped agent rules live in [`.agents/rules/`](.agents/rules/) per the
+[agent-rules-spec RFC](https://github.com/rameshsunkara/agent-rules-spec)
+(draft). See [Maintainer testing](docs/maintainer-testing.md) for checklists,
+test filters, and how those rules relate to this repo.
