@@ -1,6 +1,7 @@
 //! Smoke test: conformance HTTP fixture forwards log notifications during tool calls.
 
 #![cfg(all(feature = "http", feature = "tracing"))]
+#![allow(clippy::await_holding_lock)]
 
 mod common;
 
@@ -12,13 +13,31 @@ use rmcp::service::NotificationContext;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{ClientHandler, ServiceExt};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+/// Both tests spawn subprocess HTTP servers; serialize to avoid macOS CI hangs when
+/// they run in parallel within this integration test binary.
+static CONFORMANCE_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
+
+fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
+    CONFORMANCE_FIXTURE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+const STEP_TIMEOUT: Duration = Duration::from_secs(30);
+
+async fn step_timeout<T>(label: &str, fut: impl std::future::Future<Output = T>) -> T {
+    match tokio::time::timeout(STEP_TIMEOUT, fut).await {
+        Ok(value) => value,
+        Err(_) => panic!("conformance fixture step timed out after {STEP_TIMEOUT:?}: {label}"),
+    }
+}
 
 #[derive(Clone, Default)]
 struct LogCounter {
-    count: Arc<Mutex<usize>>,
+    count: std::sync::Arc<Mutex<usize>>,
 }
 
 impl ClientHandler for LogCounter {
@@ -31,10 +50,10 @@ impl ClientHandler for LogCounter {
     }
 }
 
-fn spawn_conformance_server(port: u16) -> Child {
+async fn spawn_conformance_server(port: u16) -> tokio::process::Child {
     {
         let _guard = common::BUILD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let status = Command::new("cargo")
+        let status = std::process::Command::new("cargo")
             .args([
                 "build",
                 "-p",
@@ -51,66 +70,79 @@ fn spawn_conformance_server(port: u16) -> Child {
     }
 
     let exe = workspace_root().join("target/debug/clap-mcp-conformance-http");
-    Command::new(exe)
+    tokio::process::Command::new(exe)
         .arg("--mcp-http")
         .arg(format!("127.0.0.1:{port}"))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .expect("spawn conformance server")
 }
 
-async fn shutdown_child(mut child: Child) {
-    let _ = child.kill();
-    tokio::time::timeout(
-        Duration::from_secs(10),
-        tokio::task::spawn_blocking(move || child.wait()),
-    )
-    .await
-    .expect("conformance server did not exit within 10s")
-    .expect("conformance server wait join failed")
-    .expect("conformance server wait failed");
+async fn shutdown_child(mut child: tokio::process::Child) {
+    let _ = child.start_kill();
+    step_timeout("conformance server exit", child.wait())
+        .await
+        .expect("conformance server wait failed");
 }
 
 async fn wait_for_http(port: u16) {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    for _ in 0..80 {
-        if tokio::net::TcpStream::connect(addr).await.is_ok() {
-            return;
+    step_timeout("HTTP listen ready", async {
+        for _ in 0..80 {
+            if tokio::net::TcpStream::connect(addr).await.is_ok() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("conformance server not ready on {port}");
+        panic!("conformance server not ready on {port}");
+    })
+    .await;
+}
+
+async fn shutdown_http_client<H: ClientHandler>(
+    client: rmcp::service::RunningService<rmcp::RoleClient, H>,
+) {
+    step_timeout("client cancel", shutdown(client)).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn conformance_fixture_emits_logs_during_tool_call() {
+    let _guard = serial_guard();
+
     let listener = tokio::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
         .await
         .unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
 
-    let child = spawn_conformance_server(port);
+    let child = spawn_conformance_server(port).await;
     wait_for_http(port).await;
 
     let counter = LogCounter::default();
     let uri = format!("http://127.0.0.1:{port}/mcp");
-    let client = counter
-        .clone()
-        .serve(StreamableHttpClientTransport::from_uri(uri))
-        .await
-        .expect("connect");
+    let client = step_timeout(
+        "connect logging client",
+        counter
+            .clone()
+            .serve(StreamableHttpClientTransport::from_uri(uri)),
+    )
+    .await
+    .expect("connect");
 
-    client
-        .set_level(SetLevelRequestParams::new(LoggingLevel::Debug))
-        .await
-        .expect("set level");
+    step_timeout(
+        "set debug level",
+        client.set_level(SetLevelRequestParams::new(LoggingLevel::Debug)),
+    )
+    .await
+    .expect("set level");
 
-    client
-        .call_tool(CallToolRequestParams::new("test_tool_with_logging"))
-        .await
-        .expect("call tool");
+    step_timeout(
+        "call test_tool_with_logging",
+        client.call_tool(CallToolRequestParams::new("test_tool_with_logging")),
+    )
+    .await
+    .expect("call tool");
 
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
@@ -124,52 +156,65 @@ async fn conformance_fixture_emits_logs_during_tool_call() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 
-    shutdown(client).await;
+    shutdown_http_client(client).await;
     shutdown_child(child).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn conformance_fixture_logs_after_prior_set_level_session() {
+    let _guard = serial_guard();
+
     let listener = tokio::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
         .await
         .unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
 
-    let child = spawn_conformance_server(port);
+    let child = spawn_conformance_server(port).await;
     wait_for_http(port).await;
 
     let uri = format!("http://127.0.0.1:{port}/mcp");
 
     // Mimic harness order: logging-set-level closes, then tools-call-with-logging connects.
     {
-        let client = LogCounter::default()
-            .serve(StreamableHttpClientTransport::from_uri(uri.clone()))
-            .await
-            .expect("connect set-level client");
-        client
-            .set_level(SetLevelRequestParams::new(LoggingLevel::Info))
-            .await
-            .expect("set level");
-        shutdown(client).await;
+        let client = step_timeout(
+            "connect set-level client",
+            LogCounter::default().serve(StreamableHttpClientTransport::from_uri(uri.clone())),
+        )
+        .await
+        .expect("connect set-level client");
+        step_timeout(
+            "set info level",
+            client.set_level(SetLevelRequestParams::new(LoggingLevel::Info)),
+        )
+        .await
+        .expect("set level");
+        shutdown_http_client(client).await;
     }
 
     let counter = LogCounter::default();
-    let client = counter
-        .clone()
-        .serve(StreamableHttpClientTransport::from_uri(uri))
-        .await
-        .expect("connect logging tool client");
+    let client = step_timeout(
+        "connect logging tool client",
+        counter
+            .clone()
+            .serve(StreamableHttpClientTransport::from_uri(uri)),
+    )
+    .await
+    .expect("connect logging tool client");
 
-    client
-        .set_level(SetLevelRequestParams::new(LoggingLevel::Debug))
-        .await
-        .expect("set debug level");
+    step_timeout(
+        "set debug level",
+        client.set_level(SetLevelRequestParams::new(LoggingLevel::Debug)),
+    )
+    .await
+    .expect("set debug level");
 
-    client
-        .call_tool(CallToolRequestParams::new("test_tool_with_logging"))
-        .await
-        .expect("call tool");
+    step_timeout(
+        "call test_tool_with_logging",
+        client.call_tool(CallToolRequestParams::new("test_tool_with_logging")),
+    )
+    .await
+    .expect("call tool");
 
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
@@ -183,6 +228,6 @@ async fn conformance_fixture_logs_after_prior_set_level_session() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 
-    shutdown(client).await;
+    shutdown_http_client(client).await;
     shutdown_child(child).await;
 }
