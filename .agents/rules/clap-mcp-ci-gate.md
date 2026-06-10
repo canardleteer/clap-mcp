@@ -12,21 +12,21 @@ paths:
 # Pre-merge CI gate
 
 Run this gate **before** marking the task complete, committing, or pushing when
-you changed any matched path above. Do not stop after `cargo test` alone — CI
-runs additional steps that fail independently (fmt, clippy, examples smoke,
-rustdoc).
+you changed any matched path above. Static checks run before tests in CI; do not
+stop after `cargo test` alone — fmt, clippy, rustdoc, and examples smoke fail
+independently.
 
 Mirror [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) in order:
 
 ```shell
 cargo fmt --all -- --check
-cargo test --all-features
 cargo clippy --all-targets --all-features -- -D warnings
-cargo xtask examples-help
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p clap-mcp --all-features
+cargo test --all-features
+cargo xtask examples-help
 ```
 
-On Ubuntu CI only (optional locally): `cargo audit`.
+On Ubuntu CI only (optional locally): `cargo audit` (after rustdoc, before tests).
 
 ## Integration test and workflow edits
 
