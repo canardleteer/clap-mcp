@@ -50,12 +50,18 @@ async fn launch_inprocess_http_server(builder: ServeMcpBuilder) -> tokio::task::
 async fn connect_http_client(
     connect: SocketAddr,
 ) -> rmcp::service::RunningService<RoleClient, NoOpHandler> {
+    let mut connected = false;
     for _ in 0..100 {
         if tokio::net::TcpStream::connect(connect).await.is_ok() {
+            connected = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    assert!(
+        connected,
+        "in-process HTTP server not listening on {connect}"
+    );
     let uri = format!("http://{connect}/mcp");
     NoOpHandler
         .serve(StreamableHttpClientTransport::from_uri(uri))

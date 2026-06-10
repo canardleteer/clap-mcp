@@ -14,7 +14,7 @@ use rmcp::{
 };
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub fn workspace_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -187,10 +187,21 @@ pub async fn get_task_payload(
     }
 }
 
+const TASK_POLL_TIMEOUT: Duration = Duration::from_secs(120);
+
 pub async fn poll_until_completed(
     peer: &ExamplePeer,
     task_id: &str,
 ) -> Result<(), rmcp::ServiceError> {
+    poll_until_completed_within(peer, task_id, TASK_POLL_TIMEOUT).await
+}
+
+pub async fn poll_until_completed_within(
+    peer: &ExamplePeer,
+    task_id: &str,
+    timeout: Duration,
+) -> Result<(), rmcp::ServiceError> {
+    let deadline = Instant::now() + timeout;
     let mut poll_ms = 50u64;
     loop {
         let st = get_task_info(peer, task_id).await?;
@@ -200,6 +211,12 @@ pub async fn poll_until_completed(
                 panic!("unexpected task status {:?}", st.task.status);
             }
             TaskStatus::Working | TaskStatus::InputRequired => {
+                if Instant::now() >= deadline {
+                    panic!(
+                        "task {task_id} did not complete within {timeout:?} (last status {:?})",
+                        st.task.status
+                    );
+                }
                 if let Some(p) = st.task.poll_interval {
                     poll_ms = p.clamp(5, 500);
                 }
@@ -259,12 +276,18 @@ pub async fn launch_http_example_with_addr(
         .spawn()
         .expect("spawn http server");
 
+    let mut connected = false;
     for _ in 0..100 {
         if tokio::net::TcpStream::connect(listen).await.is_ok() {
+            connected = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    assert!(
+        connected,
+        "HTTP example server {bin} not listening on {listen}"
+    );
 
     let uri = format!("http://{listen}/mcp");
     let transport = StreamableHttpClientTransport::from_uri(uri);
