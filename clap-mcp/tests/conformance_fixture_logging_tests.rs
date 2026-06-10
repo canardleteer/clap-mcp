@@ -91,7 +91,7 @@ async fn conformance_fixture_emits_logs_during_tool_call() {
     let port = listener.local_addr().unwrap().port();
     drop(listener);
 
-    let mut child = spawn_conformance_server(port);
+    let child = spawn_conformance_server(port);
     wait_for_http(port).await;
 
     let counter = LogCounter::default();
@@ -136,7 +136,7 @@ async fn conformance_fixture_logs_after_prior_set_level_session() {
     let port = listener.local_addr().unwrap().port();
     drop(listener);
 
-    let mut child = spawn_conformance_server(port);
+    let child = spawn_conformance_server(port);
     wait_for_http(port).await;
 
     let uri = format!("http://127.0.0.1:{port}/mcp");
