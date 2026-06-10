@@ -32,20 +32,23 @@ impl ClientHandler for LogCounter {
 }
 
 fn spawn_conformance_server(port: u16) -> Child {
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "-p",
-            "clap-mcp-examples",
-            "--bin",
-            "clap-mcp-conformance-http",
-            "--features",
-            "http,tracing",
-        ])
-        .current_dir(workspace_root())
-        .status()
-        .expect("build conformance fixture");
-    assert!(status.success());
+    {
+        let _guard = common::BUILD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let status = Command::new("cargo")
+            .args([
+                "build",
+                "-p",
+                "clap-mcp-examples",
+                "--bin",
+                "clap-mcp-conformance-http",
+                "--features",
+                "http,tracing",
+            ])
+            .current_dir(workspace_root())
+            .status()
+            .expect("build conformance fixture");
+        assert!(status.success());
+    }
 
     let exe = workspace_root().join("target/debug/clap-mcp-conformance-http");
     Command::new(exe)
@@ -55,6 +58,15 @@ fn spawn_conformance_server(port: u16) -> Child {
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn conformance server")
+}
+
+async fn shutdown_child(mut child: Child) {
+    let _ = child.kill();
+    tokio::time::timeout(Duration::from_secs(10), tokio::task::spawn_blocking(move || child.wait()))
+        .await
+        .expect("conformance server did not exit within 10s")
+        .expect("conformance server wait join failed")
+        .expect("conformance server wait failed");
 }
 
 async fn wait_for_http(port: u16) {
@@ -110,8 +122,7 @@ async fn conformance_fixture_emits_logs_during_tool_call() {
     }
 
     shutdown(client).await;
-    let _ = child.kill();
-    let _ = child.wait();
+    shutdown_child(child).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -170,6 +181,5 @@ async fn conformance_fixture_logs_after_prior_set_level_session() {
     }
 
     shutdown(client).await;
-    let _ = child.kill();
-    let _ = child.wait();
+    shutdown_child(child).await;
 }

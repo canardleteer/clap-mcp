@@ -10,6 +10,7 @@ jobs:
   ci:
     name: CI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -29,6 +30,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run tests (all features)
+        timeout-minutes: 25
         run: cargo test --all-features
 
       - name: Run clippy
@@ -51,6 +53,7 @@ jobs:
   conformance:
     name: MCP conformance (ubuntu)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v6
