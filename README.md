@@ -64,10 +64,6 @@ macro):
 clap-mcp = "0.0.4"
 ```
 
-Until `0.0.4` stable ships on [crates.io](https://crates.io/crates/clap-mcp),
-Cargo resolves the latest `0.0.4-rc.*` pre-release when you use
-`version = "0.0.4"`.
-
 * Opt-in MCP server on existing `clap` CLIs (`--mcp` stdio, `--mcp-http` with
   `http` feature)
 * `#[derive(ClapMcp)]` — subcommands exposed as MCP tools with shared `run`

@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+## `clap-mcp` - [0.0.4](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.0.4-rc.2...clap-mcp-v0.0.4) - 2026-06-10
+
+### Added
+- integration skill + small docs true up
+
+### Fixed
+- *(tests)* bound conformance HTTP fixture tests on macOS CI- *(tests)* drop unused mut after conformance child shutdown refactor- *(ci)* cap hung macOS test runs with job and poll timeouts
+
+### Other
+- *(agents)* add ci-gate rule and align with agent-rules-spec- rustfmt conformance fixture shutdown helper- note on agent rules spec- *(elicitation)* drop scaffolding feature and document rationale- *(http-oauth)* drop scaffolding OAuth client feature
 ## `clap-mcp` - [0.0.4-rc.2](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.0.4-rc.1...clap-mcp-v0.0.4-rc.2) - 2026-06-07
 
 ### Added
