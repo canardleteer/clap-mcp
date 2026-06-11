@@ -35,6 +35,13 @@ Public API surface after `0.0.4-rc.1`:
   `#[clap_mcp(task_augmented_tools)]`)
 * **Errors alias:** `ClapMcpErrorData` = `rmcp::model::ErrorData`
 
+Additive (embedder serve, no break to `parse_or_serve_mcp*`):
+
+| Added | Role |
+| --- | --- |
+| [Usage — Setup then serve](usage.md#setup-then-serve-embedder) | Documented embedder path: `parse` → setup → `ServeMcpBuilder::for_cli` |
+| [`ServeMcpBuilder::stdio_io`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.stdio_io) | Custom `AsyncRead` + `AsyncWrite` for stdio MCP (default remains process stdio) |
+
 Removed (hard break — use unified serve API above):
 
 | Removed | Replacement |

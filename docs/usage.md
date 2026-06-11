@@ -208,6 +208,34 @@ after `parse` and setup; see [Stateful MCP tools](stateful-tools.md).
 Runnable demos: **setup_then_serve**, **async_embedder_serve**, and
 **placeholder_server** in [examples/README.md](../examples/README.md).
 
+### Custom stdio transport
+
+By default, [`McpListen::Stdio`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.McpListen.html)
+uses process stdin/stdout. Embedders that multiplex MCP over an existing
+JSON-RPC channel (socket pair, pipe, or in-process duplex) can pass a custom
+async read/write pair:
+
+```rust
+use clap_mcp::{McpListen, ServeMcpBuilder};
+use tokio::io::{AsyncRead, AsyncWrite};
+
+async fn serve_on_channel<R, W>(read: R, write: W) -> Result<(), clap_mcp::ClapMcpError>
+where
+    R: AsyncRead + Send + Unpin + 'static,
+    W: AsyncWrite + Send + Unpin + 'static,
+{
+    ServeMcpBuilder::for_cli::<App>(McpListen::Stdio)
+        .stdio_io(read, write)
+        .serve()
+        .await
+}
+```
+
+[`ServeMcpBuilder::stdio_io`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.stdio_io)
+is only valid with `McpListen::Stdio` (not HTTP). The lower-level
+[`serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp.html) free
+functions always use process stdio.
+
 ## Preserve CLI parse
 
 `parse_or_serve_mcp` and `parse_or_serve_mcp_with` use clap-mcp's argv

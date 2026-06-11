@@ -55,6 +55,10 @@ When subcommand handlers are `async` or call async libraries:
 
 Examples: **async_sleep**, **async_sleep_shared** in [examples/README.md](../../../../examples/README.md).
 
+Async embedders on `#[tokio::main]` can pass socket or duplex halves via
+[`ServeMcpBuilder::stdio_io`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.stdio_io)
+when MCP does not use process stdin/stdout.
+
 ## Panic catching
 
 When in-process tools may panic but the MCP server should survive, add `catch_in_process_panics = true` to `#[clap_mcp(...)]`. See [execution-safety.md — Crash and panic behavior](../../../../docs/execution-safety.md#crash-exit-and-panic-behavior). Examples: **panic_catch**, **task_panic_catch**.

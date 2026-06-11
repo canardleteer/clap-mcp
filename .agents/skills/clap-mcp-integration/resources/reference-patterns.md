@@ -76,6 +76,20 @@ For logging bridges, stdout capture, or async embedders:
 
 See [logging.md](../../../../docs/logging.md) and [execution-safety.md — Async embedders](../../../../docs/execution-safety.md#async-embedders).
 
+## Custom stdio transport
+
+When MCP rides on an existing JSON-RPC channel instead of process stdin/stdout:
+
+```rust
+clap_mcp::ServeMcpBuilder::for_cli::<App>(clap_mcp::McpListen::Stdio)
+    .stdio_io(reader, writer)
+    .serve()
+    .await?;
+```
+
+`stdio_io` is only valid with `McpListen::Stdio`, not `McpListen::Http`. See
+[usage.md — Custom stdio transport](../../../../docs/usage.md#custom-stdio-transport).
+
 ## Struct root + required subcommand
 
 ```rust
