@@ -288,10 +288,16 @@ Release prep runs example smoke via `cargo xtask examples-help` (builds with
 `--all-features`, runs `--help` on each release-validation binary); see
 [examples/README.md](examples/README.md).
 
-Path-scoped agent rules live in [`.agents/rules/`](.agents/rules/) per the
-[agent-rules-spec RFC](https://github.com/rameshsunkara/agent-rules-spec)
-(draft). Agents must follow
-[`.agents/rules/clap-mcp-ci-gate.md`](.agents/rules/clap-mcp-ci-gate.md) and
-any other matching rule before finish; see [AGENTS.md](AGENTS.md#agent-rules-required).
-See [Maintainer testing](docs/maintainer-testing.md) for checklists and test
-filters.
+### Agent rules
+
+Path-scoped checklists live in [`.agents/rules/`](.agents/rules/) per the
+[agent-rules-spec](https://github.com/rameshsunkara/agent-rules-spec) draft.
+
+* [AGENTS.md](AGENTS.md#agent-rules-required) — conventions, doc touchpoints, and
+  which rules apply to which paths
+* [`.agents/rules/clap-mcp-ci-gate.md`](.agents/rules/clap-mcp-ci-gate.md) —
+  full local CI gate before finish on Rust, workflow, or test changes
+* [agent-rules-tool](https://github.com/canardleteer/agent-rules-tool) — lint
+  rule files with `agent-rules-tool lint`
+* [Maintainer testing](docs/maintainer-testing.md) — macro checklist, test
+  filters, and human-oriented detail
