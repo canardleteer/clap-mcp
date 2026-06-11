@@ -70,6 +70,7 @@ draft). Generated `--export-skills` output is separate under `.agents/skills/`
 | [`clap-mcp-macros.md`](.agents/rules/clap-mcp-macros.md) | `clap-mcp/macros/**` | Proc-macro / derive edits |
 | [`clap-mcp-lib.md`](.agents/rules/clap-mcp-lib.md) | `clap-mcp/src/**` | Runtime library edits |
 | [`clap-mcp-examples.md`](.agents/rules/clap-mcp-examples.md) | `examples/**` | Example binary edits |
+| [`clap-mcp-readme.md`](.agents/rules/clap-mcp-readme.md) | `README.md` | crates.io-safe absolute links in root README |
 
 Human-oriented detail and tables: [docs/maintainer-testing.md](docs/maintainer-testing.md).
 

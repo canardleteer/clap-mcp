@@ -14,15 +14,15 @@ towards instability of the public API surface.
 > **In general, you should be able to adapt any `clap` CLI binary to use
 > `clap-mcp` with natural API semantics.**
 
-* **[Derive with attributes (recommended)](docs/usage.md#derive-with-attributes-recommended)** —
+* **[Derive with attributes (recommended)](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md#derive-with-attributes-recommended)** —
   `#[clap_mcp(...)]` for execution safety and in-process tools
-* **[Derive (minimal)](docs/usage.md#derive-minimal)** — `#[derive(ClapMcp)]` on a
+* **[Derive (minimal)](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md#derive-minimal)** — `#[derive(ClapMcp)]` on a
   `Parser` enum with `parse_or_serve_mcp`
-* **[Imperative (existing clap CLI)](docs/usage.md#imperative-existing-clap-cli)** —
+* **[Imperative (existing clap CLI)](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md#imperative-existing-clap-cli)** —
   add MCP to a hand-built `clap::Command` with `get_matches_or_serve_mcp`
 
 Runnable server binaries and feature demos:
-[examples/servers](examples/servers).
+[examples/servers](https://github.com/canardleteer/clap-mcp/blob/HEAD/examples/servers).
 
 ## Design
 
@@ -71,20 +71,20 @@ clap-mcp = "0.0.4"
 * Execution modes: subprocess (default) or in-process (`reinvocation_safe`);
   for async tool bodies, separate runtime per call (default) or shared MCP
   async runtime (`share_runtime`); see
-  [execution-safety](docs/execution-safety.md#async-tools-and-share_runtime)
+  [execution-safety](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/execution-safety.md#async-tools-and-share_runtime)
 * Opt-in in-process panic catching (`catch_in_process_panics` on
   `#[clap_mcp(...)]`); panics become MCP errors instead of crashing the server;
-  see [Crash and panic behavior](docs/execution-safety.md#crash-exit-and-panic-behavior)
+  see [Crash and panic behavior](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/execution-safety.md#crash-exit-and-panic-behavior)
 * Logging forwarded to MCP clients as `notifications/message` (`tracing` /
-  `log` features); see [logging](docs/logging.md)
+  `log` features); see [logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md)
 * Structured tool output and optional JSON `outputSchema`; see
-  [tool-output](docs/tool-output.md)
-* Custom MCP resources and prompts; see [custom-content](docs/custom-content.md)
+  [tool-output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md)
+* Custom MCP resources and prompts; see [custom-content](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md)
 * Agent Skills export (`--export-skills`); see
-  [export-skills](docs/export-skills.md)
+  [export-skills](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/export-skills.md)
 * Stateful in-process session tools; see
-  [stateful-tools](docs/stateful-tools.md)
-* MCP task-augmented `tools/call`; see [MCP tasks support](docs/mcp-tasks.md)
+  [stateful-tools](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/stateful-tools.md)
+* MCP task-augmented `tools/call`; see [MCP tasks support](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/mcp-tasks.md)
 
 ### Feature Flags
 
@@ -101,7 +101,7 @@ Cargo features and their maturity:
 | `tracing` | Shipped | `ClapMcpTracingLayer` — a `tracing_subscriber::Layer` that forwards tracing events to MCP clients via `notifications/message`. |
 | `log` | Shipped | `ClapMcpLogBridge` — a `log::Log` implementation that forwards `log` crate messages to MCP clients. |
 | `output-schema` | Shipped | `schemars`-based JSON schema generation for structured tool output. Enables [`output_schema_for_type`], [`output_schema_one_of!`], and `#[clap_mcp_output_type]` / `#[clap_mcp_output_one_of]` to set each tool's `output_schema` for MCP clients. |
-| `http` | Shipped | Streamable HTTP MCP server (`--mcp-http`); see [http.md](docs/http.md). |
+| `http` | Shipped | Streamable HTTP MCP server (`--mcp-http`); see [http.md](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/http.md). |
 
 Enable features in `Cargo.toml`:
 
@@ -142,8 +142,8 @@ when each subcommand has predictable inputs and outputs.
 The table below is **illustrative** — suggested starting points for familiar
 Rust CLIs, not official guidance from those projects. Tune flags after you know
 your tool's locking, I/O, and global state. Details:
-[Execution safety](docs/execution-safety.md),
-[Usage patterns](docs/usage.md).
+[Execution safety](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/execution-safety.md),
+[Usage patterns](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md).
 
 | Rust CLI | Typical role | Suggested starting config | Why |
 | --- | --- | --- | --- |
@@ -152,12 +152,12 @@ your tool's locking, I/O, and global state. Details:
 | [`tokei`](https://github.com/XAMPPRocky/tokei) | Count lines / stats | `reinvocation_safe`, `parallel_safe = true` | Walks trees read-only |
 | [`xh`](https://github.com/ducaale/xh) | HTTP client (calls remote API) | `reinvocation_safe`, `parallel_safe = true` | Thin CLI over network; backend is separate |
 | gRPC/`tonic` admin CLI | RPC client (calls remote service) | `reinvocation_safe`, `parallel_safe = true` | Your user's case: MCP on the client binary |
-| [`cargo`](https://github.com/rust-lang/cargo) | Build / resolve / lock | Default (subprocess) or `reinvocation_safe`, `parallel_safe = true`, `#[clap_mcp(serialized)]` on mutating subcommands | Registry and artifact locks; see [topical serialization](docs/execution-safety.md#topical-serialization) |
+| [`cargo`](https://github.com/rust-lang/cargo) | Build / resolve / lock | Default (subprocess) or `reinvocation_safe`, `parallel_safe = true`, `#[clap_mcp(serialized)]` on mutating subcommands | Registry and artifact locks; see [topical serialization](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/execution-safety.md#topical-serialization) |
 | [`sqlx-cli`](https://github.com/launchbadge/sqlx) | DB migrate / prepare | Default (subprocess) | Schema mutations; prefer process isolation |
 | [`wasm-pack`](https://github.com/rustwasm/wasm-pack) | Build wasm via cargo | Default (subprocess) | Spawns nested toolchains |
 | [`hyperfine`](https://github.com/sharkdp/hyperfine) | Benchmark runner | Default (subprocess) | Spawns arbitrary shell commands per run |
-| In-process session tool (e.g. counter) | Shared MCP session state | `reinvocation_safe`, `stateful` | See [stateful-tools](docs/stateful-tools.md) |
-| Long-running subcommand (sleep, batch job) | Task-augmented `tools/call` | `reinvocation_safe`, `task_augmented_tools` | See [mcp-tasks](docs/mcp-tasks.md) |
+| In-process session tool (e.g. counter) | Shared MCP session state | `reinvocation_safe`, `stateful` | See [stateful-tools](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/stateful-tools.md) |
+| Long-running subcommand (sleep, batch job) | Task-augmented `tools/call` | `reinvocation_safe`, `task_augmented_tools` | See [mcp-tasks](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/mcp-tasks.md) |
 | [`gitui`](https://github.com/gitui-org/gitui) | Full-screen TUI | **Poor fit** as-is | Needs dedicated non-TUI subcommands for MCP |
 | [`bacon`](https://github.com/Canop/bacon) | Test/file watcher | **Poor fit** | Long-lived loop, not a one-shot tool |
 | Backend service only (no user-facing bin) | gRPC/HTTP server | **Wrong layer** | Add a CLI (or MCP elsewhere); clap-mcp targets the invoke binary |
@@ -168,43 +168,43 @@ invocation — the safest baseline when you are unsure.
 
 ## Documentation
 
-Every guide in [`docs/`](docs/) is listed below. See also
-[examples/README.md](examples/README.md) for runnable binaries.
+Every guide in [`docs/`](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/) is listed below. See also
+[examples/README.md](https://github.com/canardleteer/clap-mcp/blob/HEAD/examples/README.md) for runnable binaries.
 
 ### Guides for CLI authors
 
 | Guide | Topics |
 | --- | --- |
-| [Usage patterns](docs/usage.md) | Derive (minimal / with attributes), imperative CLI, struct root |
-| [Supported CLI shapes](docs/supported-cli-shapes.md) | Pattern matrix, example binaries, non-goals |
-| [Custom resources and prompts](docs/custom-content.md) | `ClapMcpServeOptions`, static/dynamic content |
-| [Exporting agent skills](docs/export-skills.md) | `--export-skills`, SKILL.md generation |
-| [Execution safety](docs/execution-safety.md) | `reinvocation_safe`, topical serialization, skip/requires, ArgGroup hints (`meta.clapMcp.argGroups`), nested metadata, dual derive, async embedders |
-| [MCP tasks support](docs/mcp-tasks.md) | Task-augmented `tools/call`, examples, support matrix |
-| [Stateful MCP tools](docs/stateful-tools.md) | Shared session state, `parse_or_serve_mcp_with_state` |
-| [Security](docs/security.md) | Schema validation, localhost/single-user model, subprocess and HTTP trust boundaries |
-| [Tool output](docs/tool-output.md) | `run` return types, structured output, `output-schema` |
-| [Logging](docs/logging.md) | `tracing` / `log` bridges, MCP notifications |
-| [Streamable HTTP](docs/http.md) | `--mcp-http`, listen env vars |
-| [Migration notes (0.0.3 → 0.0.4)](docs/migration-notes.md) | Breaking changes, rmcp port, API renames |
+| [Usage patterns](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md) | Derive (minimal / with attributes), imperative CLI, struct root |
+| [Supported CLI shapes](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/supported-cli-shapes.md) | Pattern matrix, example binaries, non-goals |
+| [Custom resources and prompts](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md) | `ClapMcpServeOptions`, static/dynamic content |
+| [Exporting agent skills](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/export-skills.md) | `--export-skills`, SKILL.md generation |
+| [Execution safety](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/execution-safety.md) | `reinvocation_safe`, topical serialization, skip/requires, ArgGroup hints (`meta.clapMcp.argGroups`), nested metadata, dual derive, async embedders |
+| [MCP tasks support](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/mcp-tasks.md) | Task-augmented `tools/call`, examples, support matrix |
+| [Stateful MCP tools](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/stateful-tools.md) | Shared session state, `parse_or_serve_mcp_with_state` |
+| [Security](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/security.md) | Schema validation, localhost/single-user model, subprocess and HTTP trust boundaries |
+| [Tool output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md) | `run` return types, structured output, `output-schema` |
+| [Logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md) | `tracing` / `log` bridges, MCP notifications |
+| [Streamable HTTP](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/http.md) | `--mcp-http`, listen env vars |
+| [Migration notes (0.0.3 → 0.0.4)](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/migration-notes.md) | Breaking changes, rmcp port, API renames |
 
 ### Maintainer notes
 
 | Guide | Topics |
 | --- | --- |
-| [Conformance baseline](docs/conformance-baseline.md) | `cargo xtask conformance`, baseline YAML |
-| [Maintainer testing](docs/maintainer-testing.md) | Macro checklist, `complex_cli` / `example_contract` filters, `.agents/rules/` |
+| [Conformance baseline](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/conformance-baseline.md) | `cargo xtask conformance`, baseline YAML |
+| [Maintainer testing](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/maintainer-testing.md) | Macro checklist, `complex_cli` / `example_contract` filters, `.agents/rules/` |
 
 ## CLI compatibility
 
 For derive usage, `use clap_mcp::ClapMcp` so you can write `#[derive(ClapMcp)]`.
-Integration patterns: [Usage patterns](docs/usage.md).
+Integration patterns: [Usage patterns](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md).
 
 Adding clap-mcp should not change how your CLI runs unless you explicitly opt
 into MCP.
 
 1. **MCP is flag-opt-in only.** A server starts only when the user passes **`--mcp`**
-   (stdio) or **`--mcp-http`** ([`http`](docs/http.md) feature). Normal invocations
+   (stdio) or **`--mcp-http`** ([`http`](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/http.md) feature). Normal invocations
    never accidentally enter MCP mode.
 
 2. **Non-MCP behavior is unchanged on success paths.** Any argv **without** a
@@ -215,7 +215,7 @@ into MCP.
    unless you already planned to. When native clap error formatting on invalid
    argv matters (custom `FromArgMatches`, Usage footers), use
    [`ParseOrServeMcp::parse_or_serve_mcp_preserve_cli`] instead; see
-   [Usage — Preserve CLI parse](docs/usage.md#preserve-cli-parse).
+   [Usage — Preserve CLI parse](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md#preserve-cli-parse).
 
 3. **`--mcp` does not require `Option<Commands>`.** If your CLI already uses a
    required subcommand (`command: Commands` + `subcommand_required = true`),
@@ -231,17 +231,17 @@ into MCP.
 
 **Do not migrate to `Option<Commands>` solely for MCP** — that changes bare-invocation
 behavior for CLIs that previously required a subcommand. See
-[Execution safety — dual derive](docs/execution-safety.md#dual-derive--root-and-subcommand)
-and **struct_subcommand_required** in [examples/README.md](examples/README.md).
+[Execution safety — dual derive](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/execution-safety.md#dual-derive--root-and-subcommand)
+and **struct_subcommand_required** in [examples/README.md](https://github.com/canardleteer/clap-mcp/blob/HEAD/examples/README.md).
 
 Passthrough (`--`), renaming builtin MCP flags, struct-root derive, and the
-three integration patterns (derive / imperative): [Usage patterns](docs/usage.md)
-and [Execution safety — CLI compatibility details](docs/execution-safety.md#cli-compatibility-details).
+three integration patterns (derive / imperative): [Usage patterns](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md)
+and [Execution safety — CLI compatibility details](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/execution-safety.md#cli-compatibility-details).
 
 ## Development
 
 Contributors should follow these conventions. AI agents should also read
-[AGENTS.md](AGENTS.md) for design priorities, documentation style, and doc
+[AGENTS.md](https://github.com/canardleteer/clap-mcp/blob/HEAD/AGENTS.md) for design priorities, documentation style, and doc
 touchpoints.
 
 * Format code with `cargo fmt`. CI runs `cargo fmt --all -- --check`.
@@ -251,7 +251,7 @@ touchpoints.
   block explaining invariants.
 
 MCP task support matrix (including limitations) is in
-[MCP tasks support](docs/mcp-tasks.md).
+[MCP tasks support](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/mcp-tasks.md).
 
 Run all tests (including feature-gated logging tests):
 
@@ -286,18 +286,20 @@ crate is excluded from coverage targets.
 
 Release prep runs example smoke via `cargo xtask examples-help` (builds with
 `--all-features`, runs `--help` on each release-validation binary); see
-[examples/README.md](examples/README.md).
+[examples/README.md](https://github.com/canardleteer/clap-mcp/blob/HEAD/examples/README.md).
 
 ### Agent rules
 
-Path-scoped checklists live in [`.agents/rules/`](.agents/rules/) per the
+Path-scoped checklists live in [`.agents/rules/`](https://github.com/canardleteer/clap-mcp/blob/HEAD/.agents/rules/) per the
 [agent-rules-spec](https://github.com/rameshsunkara/agent-rules-spec) draft.
 
-* [AGENTS.md](AGENTS.md#agent-rules-required) — conventions, doc touchpoints, and
+* [AGENTS.md](https://github.com/canardleteer/clap-mcp/blob/HEAD/AGENTS.md#agent-rules-required) — conventions, doc touchpoints, and
   which rules apply to which paths
-* [`.agents/rules/clap-mcp-ci-gate.md`](.agents/rules/clap-mcp-ci-gate.md) —
+* [`.agents/rules/clap-mcp-ci-gate.md`](https://github.com/canardleteer/clap-mcp/blob/HEAD/.agents/rules/clap-mcp-ci-gate.md) —
   full local CI gate before finish on Rust, workflow, or test changes
+* [`.agents/rules/clap-mcp-readme.md`](https://github.com/canardleteer/clap-mcp/blob/HEAD/.agents/rules/clap-mcp-readme.md) —
+  absolute GitHub links for `docs/`, `examples/`, and repo-root paths (crates.io)
 * [agent-rules-tool](https://github.com/canardleteer/agent-rules-tool) — lint
   rule files with `agent-rules-tool lint`
-* [Maintainer testing](docs/maintainer-testing.md) — macro checklist, test
+* [Maintainer testing](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/maintainer-testing.md) — macro checklist, test
   filters, and human-oriented detail
