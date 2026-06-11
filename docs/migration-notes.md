@@ -6,9 +6,10 @@
 [← Documentation index](../README.md#documentation)
 
 `0.0.4-rc.1` is a **breaking** release. It replaces the workspace dependency on
-**rust-mcp-sdk 0.9** with official **[rmcp 1.7](https://github.com/modelcontextprotocol/rust-sdk)**,
-slims the public API, and adds MCP task-augmented `tools/call`, concurrent
-execution options, and stateful in-process tools.
+**rust-mcp-sdk 0.9** with official
+**[rmcp 1.7](https://github.com/modelcontextprotocol/rust-sdk)**, slims the
+public API, and adds MCP task-augmented `tools/call`, concurrent execution
+options, and stateful in-process tools.
 
 ## Breaking API changes (0.0.4-rc.1)
 
@@ -20,13 +21,15 @@ Public API surface after `0.0.4-rc.1`:
   `parse_or_serve_mcp_preserve_cli_with`
 * **Imperative entry:** `get_matches_or_serve_mcp*` ladder; preserve native CLI
   parse with `get_matches_preserve_cli_or_serve_mcp*`
-* **Low-level serve:** [`ServeMcpBuilder`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html)
+* **Low-level serve:**
+  [`ServeMcpBuilder`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html)
   (recommended; `.serve().await` or `.serve_blocking()`) with
   [`ServeMcpBuilder::for_cli`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.for_cli)
   for derive CLIs or `.new()` for hand-built schemas;
   [`serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp.html) /
   [`serve_mcp_blocking`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp_blocking.html)
-  remain as lower-level 7-arg delegators with [`McpListen::Stdio`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.McpListen.html)
+  remain as lower-level 7-arg delegators with
+  [`McpListen::Stdio`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.McpListen.html)
   or `McpListen::Http(addr)` (`http` feature)
 * **Tasks flag:** `ClapMcpSchemaMetadata::task_augmented_tools` (from
   `#[clap_mcp(task_augmented_tools)]`)
@@ -59,7 +62,8 @@ rmcp = { version = "1.7", default-features = false, features = [
 ] }
 ```
 
-Confirmed feature names in **rmcp 1.7.0** (HTTP/OAuth features exist separately):
+Confirmed feature names in **rmcp 1.7.0** (HTTP/OAuth features exist
+separately):
 
 | Feature | Role |
 |---------|------|
@@ -156,7 +160,8 @@ Task-augmented `tools/call`: rmcp **`Service<RoleServer>`** dispatches to
 
 ## Key rmcp 1.x differences (upstream)
 
-From the official [CHANGELOG](https://github.com/modelcontextprotocol/rust-sdk/blob/main/crates/rmcp/CHANGELOG.md)
+From the official
+[CHANGELOG](https://github.com/modelcontextprotocol/rust-sdk/blob/main/crates/rmcp/CHANGELOG.md)
 and API docs:
 
 1. **Crate split:** Official **`rmcp`** on crates.io (not `rust-mcp-stack` /
@@ -182,8 +187,8 @@ Beyond the initial serialized baseline:
   sync panics in `run()` use `catch_unwind`; async panics on dedicated threads
   are caught at join when `catch_in_process_panics` is enabled.
 
-Still **not supported:** subprocess (`reinvocation_safe = false`) + tasks (derive
-compile error).
+Still **not supported:** subprocess (`reinvocation_safe = false`) + tasks
+(derive compile error).
 
 **Logging during concurrent tasks:** When `ClapMcpServeOptions::log_rx` is set,
 log notifications from a task-augmented tool body include `meta.taskId` matching
@@ -199,13 +204,15 @@ under concurrent `parallel_safe` load; omitting that re-scope dropped
 [Logging](logging.md#task-augmented-tools-and-metataskid) and
 [MCP tasks](mcp-tasks.md).
 
-Examples: `task_parallel_probe_*`, `task_panic_catch`, `task_panic_catch_parallel`;
-user-facing demos in `task_tools_*` and `task_panic_catch`.
+Examples: `task_parallel_probe_*`, `task_panic_catch`,
+`task_panic_catch_parallel`; user-facing demos in `task_tools_*` and
+`task_panic_catch`.
 
 ## Stateful tools + positional guard
 
-Additive API on `0.0.4-rc.1+` (ports [#11](https://github.com/canardleteer/clap-mcp/pull/11)
-and [#12](https://github.com/canardleteer/clap-mcp/pull/12)):
+Additive API on `0.0.4-rc.1+` (ports
+[#11](https://github.com/canardleteer/clap-mcp/pull/11) and
+[#12](https://github.com/canardleteer/clap-mcp/pull/12)):
 
 * **`ClapMcpToolExecutorWithState`** — in-process execution with associated
   `State`; tool code receives `&Self::State` (server holds `Arc` internally)
@@ -214,8 +221,9 @@ and [#12](https://github.com/canardleteer/clap-mcp/pull/12)):
   second parameter); `#[clap_mcp(stateful)]` on struct roots / delegating enums
 * **`ParseOrServeMcpWithState`**, `parse_or_serve_mcp_with_state`,
   **`ServeMcpBuilder::for_cli_with_state`**
-* **`compile_error!`** when a derive target has two or more bare positional scalar
-  fields (use `#[arg(long)]` instead) — see [PR #12](https://github.com/canardleteer/clap-mcp/pull/12)
+* **`compile_error!`** when a derive target has two or more bare positional
+  scalar fields (use `#[arg(long)]` instead) — see
+  [PR #12](https://github.com/canardleteer/clap-mcp/pull/12)
 
 Example: `examples/servers/stateful_counter.rs`; integration test:
 `clap-mcp/tests/stateful_server_tests.rs`.
@@ -224,7 +232,8 @@ Example: `examples/servers/stateful_counter.rs`; integration test:
 
 Additive API (no migration required for existing embedders):
 
-* **`#[clap_mcp(serialized)]`** on a subcommand variant — tool-wide lock topic when
+* **`#[clap_mcp(serialized)]`** on a subcommand variant — tool-wide lock topic
+  when
   [`ClapMcpConfig::parallel_safe`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpConfig.html#structfield.parallel_safe)
   is true
 * **`#[clap_mcp(serialized = "arg1, arg2")]`** — arg-scoped lock topic
@@ -234,13 +243,15 @@ Additive API (no migration required for existing embedders):
   for imperative metadata
 * **`meta.clapMcp` hints** on `list_tools`: `serialized`, `serializeScope`,
   `serializeArgs`, optional `serializeTopicArgs`
-* **`#[clap_mcp(serialize_topic)]`** on fields listed in arg-scoped `serialized`,
-  with optional [`ClapMcpSerializeTopic`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.ClapMcpSerializeTopic.html)
+* **`#[clap_mcp(serialize_topic)]`** on fields listed in arg-scoped
+  `serialized`, with optional
+  [`ClapMcpSerializeTopic`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.ClapMcpSerializeTopic.html)
   (`impl_serialize_topic_hash_eq!`, `impl_serialize_topic_serde_eq!`)
 * **`ClapMcpSchemaMetadata::serialize_topic_args`** for imperative typed topics
 
-When `parallel_safe = false`, global serialization is unchanged (topical metadata
-is ignored). See [Execution safety — Topical serialization](execution-safety.md#topical-serialization).
+When `parallel_safe = false`, global serialization is unchanged (topical
+metadata is ignored). See
+[Execution safety — Topical serialization](execution-safety.md#topical-serialization).
 
 Derive metadata keys (`skip`, `requires`, `serialized`, `serialize_topic`) now
 resolve clap arg ids from `#[arg(id = "...")]` when present (field ident
@@ -257,7 +268,8 @@ Additive API (no migration required):
 * **[`ClapArgGroup`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapArgGroup.html)**
   and **`ClapCommand::arg_groups`** on schema nodes
 * **`meta.clapMcp.argGroups`** on `list_tools` when clap ArgGroups are present
-* **Description suffix** on tools with groups (parse-time hint; same extraction as meta)
+* **Description suffix** on tools with groups (parse-time hint; same extraction
+  as meta)
 
 Hints are advisory; clap parse remains authoritative. No JSON Schema `oneOf`.
 See [Execution safety — Arg groups](execution-safety.md#arg-groups).
@@ -304,7 +316,8 @@ pattern has emerged.
 `transport-streamable-http-client-reqwest` features; load OAuth config in your
 binary or follow examples under
 [`rust-sdk/examples/clients/`](https://github.com/modelcontextprotocol/rust-sdk/tree/main/examples/clients).
-See [OAuth in rmcp](https://github.com/modelcontextprotocol/rust-sdk/blob/main/docs/OAUTH_SUPPORT.md).
+See
+[OAuth in rmcp](https://github.com/modelcontextprotocol/rust-sdk/blob/main/docs/OAUTH_SUPPORT.md).
 
 **Unaffected:** `--mcp` / `--mcp-http` server serving; tool code calling
 arbitrary OAuth APIs via `oauth2`, `reqwest`, or similar.
