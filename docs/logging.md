@@ -67,6 +67,21 @@ log to both disk and MCP simultaneously, use a multiplexing wrapper (either a
 custom `Log` impl that fans out to multiple sinks, or a crate like
 [`multi_log`](https://crates.io/crates/multi_log)).
 
+## MCP transport I/O vs tool stdout
+
+MCP JSON-RPC traffic uses the stdio transport (process stdin/stdout by default,
+or a custom pair from [`ServeMcpBuilder::stdio_io`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.stdio_io)).
+That channel is separate from:
+
+* [`ClapMcpServeOptions::capture_stdout`](tool-output.md) — redirects **process
+  stdout** during in-process tool execution on Unix, not the MCP transport.
+* Log notifications — sent as MCP `notifications/message` on the transport
+  channel when `log_rx` is configured.
+
+When multiplexing MCP over an existing JSON-RPC pipe, pass that pipe to
+`stdio_io`; do not assume `capture_stdout` or `println!` in tools shares the
+same I/O.
+
 ## Task-augmented tools and `meta.taskId`
 
 When MCP task-augmented `tools/call` is enabled (`#[clap_mcp(task_augmented_tools)]`)

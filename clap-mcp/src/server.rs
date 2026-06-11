@@ -622,6 +622,7 @@ pub(crate) async fn serve_schema_json_over_stdio(
     in_process_handler: Option<InProcessToolHandler>,
     mut serve_options: ClapMcpServeOptions,
     metadata: &ClapMcpSchemaMetadata,
+    stdio_io: crate::serve::McpStdioIo,
 ) -> Result<(), ClapMcpError> {
     let schema: crate::ClapSchema = serde_json::from_str(&schema_json)?;
     let tools = crate::tools_from_schema_with_metadata(&schema, &config, metadata);
@@ -640,10 +641,15 @@ pub(crate) async fn serve_schema_json_over_stdio(
 
     spawn_log_forwarder(&server, serve_options.log_rx.take());
 
-    let service = server
-        .serve(rmcp::transport::stdio())
-        .await
-        .map_err(|e| ClapMcpError::Mcp(Box::new(rmcp::RmcpError::ServerInitialize(e))))?;
+    use rmcp::transport::IntoTransport;
+
+    let service = match stdio_io {
+        crate::serve::McpStdioIo::Process => server.serve(rmcp::transport::stdio()).await,
+        crate::serve::McpStdioIo::Custom { read, write } => {
+            server.serve((read, write).into_transport()).await
+        }
+    }
+    .map_err(|e| ClapMcpError::Mcp(Box::new(rmcp::RmcpError::ServerInitialize(e))))?;
     service.waiting().await.map_err(ClapMcpError::Join)?;
     Ok(())
 }

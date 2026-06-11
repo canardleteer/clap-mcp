@@ -9,8 +9,27 @@ use crate::{
     prepare_derive_mcp_serve, prepare_derive_mcp_serve_with_state, server,
 };
 use clap::CommandFactory;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{path::PathBuf, pin::Pin, sync::Arc};
+use tokio::io::{AsyncRead, AsyncWrite};
+
+/// Stdio transport source for [`ServeMcpBuilder`] (`McpListen::Stdio` only).
+#[derive(Default)]
+pub(crate) enum McpStdioIo {
+    /// Process stdin/stdout (default).
+    #[default]
+    Process,
+    /// Caller-supplied async read/write pair (for example a JSON-RPC multiplexer).
+    Custom {
+        read: Pin<Box<dyn AsyncRead + Send + Unpin>>,
+        write: Pin<Box<dyn AsyncWrite + Send + Unpin>>,
+    },
+}
+
+impl McpStdioIo {
+    pub(crate) fn is_custom(&self) -> bool {
+        matches!(self, Self::Custom { .. })
+    }
+}
 
 /// Bundled MCP serve parameters, produced by [`ServeMcpBuilder::build`].
 ///
@@ -24,6 +43,7 @@ pub struct ServeMcp {
     in_process_handler: Option<InProcessToolHandler>,
     serve_options: ClapMcpServeOptions,
     metadata: ClapMcpSchemaMetadata,
+    stdio_io: McpStdioIo,
 }
 
 impl ServeMcp {
@@ -39,6 +59,7 @@ impl ServeMcp {
                     self.in_process_handler,
                     self.serve_options,
                     &self.metadata,
+                    self.stdio_io,
                 )
                 .await
             }
@@ -107,6 +128,7 @@ pub struct ServeMcpBuilder {
     serve_options: ClapMcpServeOptions,
     executable_path: Option<PathBuf>,
     in_process_handler: Option<InProcessToolHandler>,
+    stdio_io: McpStdioIo,
 }
 
 impl ServeMcpBuilder {
@@ -135,6 +157,7 @@ impl ServeMcpBuilder {
             serve_options: ClapMcpServeOptions::default(),
             executable_path: prepared.executable_path,
             in_process_handler: prepared.in_process_handler,
+            stdio_io: McpStdioIo::default(),
         }
     }
 
@@ -170,6 +193,7 @@ impl ServeMcpBuilder {
             serve_options: ClapMcpServeOptions::default(),
             executable_path: prepared.executable_path,
             in_process_handler: prepared.in_process_handler,
+            stdio_io: McpStdioIo::default(),
         }
     }
 
@@ -215,9 +239,31 @@ impl ServeMcpBuilder {
         self
     }
 
+    /// Use custom async I/O for stdio MCP instead of process stdin/stdout.
+    ///
+    /// Only valid with [`McpListen::Stdio`]. Default is process stdio. Use when
+    /// multiplexing MCP over an existing JSON-RPC channel or socket pair.
+    pub fn stdio_io<R, W>(mut self, read: R, write: W) -> Self
+    where
+        R: AsyncRead + Send + Unpin + 'static,
+        W: AsyncWrite + Send + Unpin + 'static,
+    {
+        self.stdio_io = McpStdioIo::Custom {
+            read: Box::pin(read),
+            write: Box::pin(write),
+        };
+        self
+    }
+
     /// Validate required fields and return a [`ServeMcp`] bundle.
     pub fn build(self) -> Result<ServeMcp, ClapMcpError> {
         let listen = self.listen.ok_or_else(|| missing_field("listen"))?;
+        #[cfg(feature = "http")]
+        if matches!(listen, McpListen::Http(_)) && self.stdio_io.is_custom() {
+            return Err(ClapMcpError::InvalidConfig(
+                "ServeMcpBuilder::stdio_io is only valid with McpListen::Stdio".into(),
+            ));
+        }
         let schema_json = self
             .schema_json
             .ok_or_else(|| missing_field("schema_json"))?;
@@ -231,6 +277,7 @@ impl ServeMcpBuilder {
             in_process_handler: self.in_process_handler,
             serve_options: self.serve_options,
             metadata,
+            stdio_io: self.stdio_io,
         })
     }
 

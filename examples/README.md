@@ -43,6 +43,8 @@ for imperative embedders. Start with [Usage patterns](../docs/usage.md).
   `for_cli`, but captures shared state for stateful derive CLIs (see
   `stateful_counter`).
 * **`ServeMcpBuilder::new()`** — hand-built schema/config for imperative embedders.
+* **`ServeMcpBuilder::stdio_io(read, write)`** — custom async I/O for stdio MCP
+  (default process stdin/stdout); see [Usage — Custom stdio transport](../docs/usage.md#custom-stdio-transport).
 * **`serve_mcp` / `serve_mcp_blocking`** — lower-level 7-arg equivalents (delegate to builder).
 * **`tools_from_schema_with_metadata`** — build MCP tools from schema +
   [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html)

@@ -143,6 +143,10 @@ Do **not** use `parse_or_serve_mcp*` or `command_with_mcp_flag` unless the user
 wants clap-mcp's builtin `--mcp`. Mark embedder-only subcommands with
 `#[clap_mcp(skip)]`.
 
+For an existing JSON-RPC multiplexer, chain
+[`ServeMcpBuilder::stdio_io`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.stdio_io)(read, write)
+on `McpListen::Stdio` (default is process stdin/stdout). Not valid with HTTP.
+
 Upstream: [usage.md — Setup then serve](../../../docs/usage.md#setup-then-serve-embedder).
 Examples: **setup_then_serve**, **async_embedder_serve**, **placeholder_server**.
 
@@ -210,7 +214,7 @@ Upstream: [tool-output.md](../../../docs/tool-output.md).
 
 Subprocess mode does not set `structuredContent` from return types; in-process `AsStructured` does. See the subprocess vs in-process table in [tool-output.md](../../../docs/tool-output.md).
 
-On Unix in-process tools, optional `ClapMcpServeOptions::capture_stdout` merges human stdout into text results (see [tool-output.md — capture_stdout](../../../docs/tool-output.md)).
+On Unix in-process tools, optional `ClapMcpServeOptions::capture_stdout` merges human stdout into text results (see [tool-output.md — capture_stdout](../../../docs/tool-output.md)). That redirects **process stdout during tool execution**, not the MCP transport. Custom transport I/O uses `ServeMcpBuilder::stdio_io`; see [logging.md — MCP transport I/O vs tool stdout](../../../docs/logging.md#mcp-transport-io-vs-tool-stdout).
 
 **Metadata checklist:**
 
@@ -320,6 +324,8 @@ Use clap-mcp **client** example or project MCP tooling — not fabricated PASS r
 | Duplicate business logic in MCP handlers | Shared `execute` + `run` wrapper |
 | `Option<Subcommand>` only for MCP | Keep required subcommand; clap-mcp handles `--mcp` |
 | `parse_or_serve_mcp` when config/globals must load first | `parse` → setup → `ServeMcpBuilder::for_cli` |
+| Conflate MCP transport with process stdout / `capture_stdout` | `stdio_io` for transport; `capture_stdout` only for tool execution |
+| `stdio_io` with `McpListen::Http` | Stdio transport only; use HTTP listen without `stdio_io` |
 | Skip schema test | `schema_from_command_with_metadata` unit test |
 | Rely on `hide = true` to exclude MCP tools | `#[clap_mcp(skip)]` |
 | Add tracing bridge to a silent CLI | Omit Phase 6 |
