@@ -1,6 +1,7 @@
 # Supported CLI shapes
 
-> Guide for CLI authors adding clap-mcp. See [README](../README.md) to get started.
+> Guide for CLI authors adding clap-mcp. See [README](../README.md) to get
+> started.
 
 [← Documentation index](../README.md#documentation)
 
@@ -9,7 +10,8 @@ and shapes that are intentionally out of scope. Runnable binaries are listed in
 [examples/README.md](../examples/README.md).
 
 > [!NOTE]
-> Integrator policy: see [Execution safety — Integrator policy](execution-safety.md#integrator-policy).
+> Integrator policy: see
+> [Execution safety — Integrator policy](execution-safety.md#integrator-policy).
 
 ## Shape matrix
 
@@ -43,9 +45,10 @@ flattened groups you do not want agents to set over MCP. Runnable demo:
 ## Known limitations
 
 * Derive metadata (`skip`, `requires`, `serialize_topic`, `serialized = "..."`)
-  keys match clap arg ids (field ident by default; `#[arg(id = "...")]` when set).
-  Use the clap id in `serialized = "..."` and variant `requires = "..."` lists.
-  Imperative [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html)
+  keys match clap arg ids (field ident by default; `#[arg(id = "...")]` when
+  set). Use the clap id in `serialized = "..."` and variant `requires = "..."`
+  lists. Imperative
+  [`ClapMcpSchemaMetadata`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html)
   overrides still apply when derive cannot see your types.
 * Flatten skip and nested `serialize_topic` collection require same-crate
   `Args` / `Subcommand` types visible to the proc macro. Opaque or dependency
@@ -62,7 +65,8 @@ flattened groups you do not want agents to set over MCP. Runnable demo:
 clap-mcp does not currently provide first-class support for:
 
 * Mapping `hide` to MCP tool visibility (use `#[clap_mcp(skip)]` explicitly).
-* ArgGroup-aware JSON Schema `oneOf` generation (`meta.clapMcp.argGroups` hints are supported; see [Arg groups](execution-safety.md#arg-groups)).
+* ArgGroup-aware JSON Schema `oneOf` generation (`meta.clapMcp.argGroups` hints
+  are supported; see [Arg groups](execution-safety.md#arg-groups)).
 * In-process `exit` trapping for subprocess mode.
 * Bidirectional interactive MCP sessions over stdio.
 

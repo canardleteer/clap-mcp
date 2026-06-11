@@ -288,9 +288,10 @@ readers. Remove them during review.
 
 ### Hand-written docs (README, AGENTS, docs/)
 
-* Optional: [`rumdl`](https://github.com/rvben/rumdl) if installed. Config:
-  [`.rumdl.toml`](.rumdl.toml) (covers `README.md`, `AGENTS.md`, `docs/*.md`).
-  Run: `rumdl check README.md AGENTS.md docs/*.md`
+* [`rumdl`](https://github.com/rvben/rumdl) on Ubuntu CI ([`rvben/rumdl@v0`](https://rumdl.dev/usage/ci-cd/));
+  optional locally if installed. Config: [`.rumdl.toml`](.rumdl.toml) (covers
+  `README.md`, `AGENTS.md`, `docs/*.md`, `.agents/rules/*.md`).
+  Run: `rumdl check README.md AGENTS.md docs/*.md .agents/rules/*.md`
 
 ## Documentation touchpoints
 

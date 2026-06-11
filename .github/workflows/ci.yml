@@ -37,6 +37,10 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --no-deps -p clap-mcp --all-features
 
+      - name: Lint Markdown
+        if: matrix.os == 'ubuntu-latest'
+        uses: rvben/rumdl@v0
+
       - name: Security audit
         if: matrix.os == 'ubuntu-latest'
         uses: rustsec/audit-check@v2.0.0

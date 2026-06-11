@@ -13,8 +13,8 @@ paths:
 
 Run this gate **before** marking the task complete, committing, or pushing when
 you changed any matched path above. Static checks run before tests in CI; do not
-stop after `cargo test` alone — fmt, clippy, rustdoc, and examples smoke fail
-independently.
+stop after `cargo test` alone — fmt, clippy, rustdoc, rumdl, and examples smoke
+fail independently.
 
 Mirror [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) in order:
 
@@ -26,7 +26,8 @@ cargo test --all-features
 cargo xtask examples-help
 ```
 
-On Ubuntu CI only (optional locally): `cargo audit` (after rustdoc, before tests).
+On Ubuntu CI only (optional locally): `rumdl check` (uses [`.rumdl.toml`](../../.rumdl.toml)
+`include` paths) and `cargo audit` (after rustdoc, before tests).
 
 ## Integration test and workflow edits
 
