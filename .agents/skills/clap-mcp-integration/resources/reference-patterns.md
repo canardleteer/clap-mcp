@@ -41,9 +41,40 @@ let args = Args::parse_or_serve_mcp_preserve_cli();
 
 See [usage.md — Preserve CLI parse](../../../../docs/usage.md#preserve-cli-parse) and **preserve_cli_parse** in [examples/README.md](../../../../examples/README.md).
 
+## Setup then serve
+
+When argv must be fully parsed and setup run before MCP (for example `--config`):
+
+```rust
+#[cfg(feature = "mcp")]
+fn run_mcp_server() -> Result<(), clap_mcp::ClapMcpError> {
+    clap_mcp::ServeMcpBuilder::for_cli::<App>(clap_mcp::McpListen::Stdio)
+        .serve_options(serve_options())
+        .serve_blocking()
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = App::parse();
+    load_config(&app.config)?;
+    match app.command {
+        #[cfg(feature = "mcp")]
+        Commands::Serve => run_mcp_server()?,
+        cmd => println!("{}", run_app(App { /* fields */, command: cmd })),
+    }
+    Ok(())
+}
+```
+
+Do not call `parse_or_serve_mcp*` on this path. See [usage.md — Setup then serve](../../../../docs/usage.md#setup-then-serve-embedder) and **setup_then_serve** in [examples/README.md](../../../../examples/README.md).
+
 ## Custom serve options
 
-For logging bridges, stdout capture, or async embedders, use `parse_or_serve_mcp_with(ClapMcpRunOptions { .. })` or [`ServeMcpBuilder`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html). See [logging.md](../../../../docs/logging.md) and [execution-safety.md — Async embedders](../../../../docs/execution-safety.md#async-embedders).
+For logging bridges, stdout capture, or async embedders:
+
+- Vanilla CLI: `parse_or_serve_mcp_with(ClapMcpRunOptions { .. })`.
+- Embedder / `#[tokio::main]`: [`ServeMcpBuilder`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html) with `.serve_options(...)`.
+
+See [logging.md](../../../../docs/logging.md) and [execution-safety.md — Async embedders](../../../../docs/execution-safety.md#async-embedders).
 
 ## Struct root + required subcommand
 

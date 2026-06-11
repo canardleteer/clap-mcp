@@ -14,7 +14,7 @@ disable-model-invocation: true
 
 Wire [clap-mcp](https://github.com/canardleteer/clap-mcp) into a Rust CLI so `tools/list` and `tools/call` expose leaf subcommands. Keep the **existing clap tree idiomatic**; absorb MCP in a thin layer (shared `execute`, derive attributes, optional feature gate).
 
-**Bias:** Prefer clap-mcp's natural patterns (`parse_or_serve_mcp`, `#[clap_mcp(...)]`, `AsStructured`, topical `serialized`) over the smallest possible diff. Slim integration means **no CLI flattening** — not skipping structured output, async dispatch, or schema tests when they align cheaply.
+**Bias:** Prefer clap-mcp's natural patterns (`parse_or_serve_mcp`, `#[clap_mcp(...)]`, `AsStructured`, topical `serialized`) for vanilla CLIs. Use the **setup-then-serve embedder** path (`parse` → `ServeMcpBuilder::for_cli`) when Phase 1 finds setup-first workflows, custom `serve` subcommands, or existing JSON-RPC multiplexers. Slim integration means **no CLI flattening** — not skipping structured output, async dispatch, or schema tests when they align cheaply.
 
 When this skill is copied into another repo, read upstream docs from your **resolved `clap-mcp` dependency source** (path checkout, git checkout, or crate under `~/.cargo/registry/src/`), not from pinned URLs in this skill.
 
@@ -22,7 +22,7 @@ When this skill is copied into another repo, read upstream docs from your **reso
 
 ## When to run
 
-Run when the user asks to add MCP to a Rust CLI, wire `--mcp` / `--mcp-http`, expose subcommands as MCP tools, or enable **ripgrep-shaped** search tools (trailing paths, pattern flags, `--` passthrough).
+Run when the user asks to add MCP to a Rust CLI, wire `--mcp` / `--mcp-http`, expose subcommands as MCP tools, enable **ripgrep-shaped** search tools (trailing paths, pattern flags, `--` passthrough), or embed MCP after setup (`--config`, init) or on a custom `serve` subcommand / existing JSON-RPC pipe.
 
 ---
 
@@ -81,6 +81,8 @@ Read the target repo before changing code:
 | Global init hazards | `tracing_subscriber::init()`, `rustls`, `process::exit` in tool path |
 | Existing `-o json` | Human-default vs JSON opt-in |
 | Async tool bodies | `async fn` handlers, shared tokio runtime |
+| Setup-before-serve | `--config`, init hooks that must run before MCP |
+| Existing JSON-RPC / custom transport | Multiplexer, socket pair, non-stdio MCP entry |
 
 Use `rg` (ripgrep) for discovery — e.g. `rg 'derive\(Parser|Subcommand|process::exit|tracing_subscriber' src/`.
 
@@ -126,6 +128,23 @@ Match the **sem-tool** pattern when the CLI uses a struct root with required sub
 5. **Single dispatch:** `execute(cmd) -> Result<…>` shared by CLI and MCP; MCP `run` wraps with `AsStructured`.
 
 Keep **required** `#[command(subcommand)]` — do not switch to `Option<Commands>` only for MCP (clap-mcp intercepts `--mcp` before subcommand checks).
+
+### Setup then serve (embedder)
+
+When Phase 1 finds setup-before-serve, a custom MCP entry (for example `myapp serve`),
+or an existing JSON-RPC multiplexer:
+
+1. Parse with `Cli::parse()` (or imperative `get_matches()`).
+2. Run setup (load `--config`, init logging).
+3. On the MCP branch, call `ServeMcpBuilder::for_cli::<T>(McpListen::Stdio)` (or
+   `.new()` for hand-built schemas), then `.serve().await` or `.serve_blocking()`.
+
+Do **not** use `parse_or_serve_mcp*` or `command_with_mcp_flag` unless the user
+wants clap-mcp's builtin `--mcp`. Mark embedder-only subcommands with
+`#[clap_mcp(skip)]`.
+
+Upstream: [usage.md — Setup then serve](../../../docs/usage.md#setup-then-serve-embedder).
+Examples: **setup_then_serve**, **async_embedder_serve**, **placeholder_server**.
 
 ### Preserve CLI parse
 
@@ -254,8 +273,8 @@ cargo test   # default features still pass
 
 After compile succeeds:
 
-1. `cargo run --features mcp -- --help` — expect `--mcp`, `--export-skills` (and `--mcp-http` if `http` feature).
-2. Start stdio MCP: `cargo run --features mcp -- --mcp` (or dist binary).
+1. `cargo run --features mcp -- --help` — expect `--mcp`, `--export-skills` (and `--mcp-http` if `http` feature), unless the embedder path uses a custom entry (for example `myapp serve`).
+2. Start stdio MCP: `cargo run --features mcp -- --mcp` (or dist binary / custom `serve` subcommand).
 3. Send MCP `tools/list`; confirm leaf tool names match intent.
 4. `tools/call` one read-only tool; confirm `structuredContent` or text.
 
@@ -278,6 +297,7 @@ Use clap-mcp **client** example or project MCP tooling — not fabricated PASS r
 | Topic | Doc |
 |-------|-----|
 | Usage / dual derive | [usage.md](../../../docs/usage.md) |
+| Setup then serve (embedder) | [usage.md — Setup then serve](../../../docs/usage.md#setup-then-serve-embedder) |
 | Execution safety | [execution-safety.md](../../../docs/execution-safety.md) |
 | Structured output | [tool-output.md](../../../docs/tool-output.md) |
 | CLI shapes | [supported-cli-shapes.md](../../../docs/supported-cli-shapes.md) |
@@ -299,6 +319,7 @@ Use clap-mcp **client** example or project MCP tooling — not fabricated PASS r
 | Global `parallel_safe = false` for one conflicting tool | `#[clap_mcp(serialized)]` on that variant |
 | Duplicate business logic in MCP handlers | Shared `execute` + `run` wrapper |
 | `Option<Subcommand>` only for MCP | Keep required subcommand; clap-mcp handles `--mcp` |
+| `parse_or_serve_mcp` when config/globals must load first | `parse` → setup → `ServeMcpBuilder::for_cli` |
 | Skip schema test | `schema_from_command_with_metadata` unit test |
 | Rely on `hide = true` to exclude MCP tools | `#[clap_mcp(skip)]` |
 | Add tracing bridge to a silent CLI | Omit Phase 6 |

@@ -121,6 +121,93 @@ fn main() {
 Next steps: [Execution safety — runtime config and schema metadata](execution-safety.md);
 [`ServeMcpBuilder` for async embedders](execution-safety.md#async-embedders).
 
+## Setup then serve (embedder)
+
+Use when your application must **parse argv and run setup before MCP starts** —
+for example loading `--config`, initializing shared state, or branching on a
+custom `serve` subcommand instead of clap-mcp's builtin `--mcp` flag.
+
+Do **not** use [`parse_or_serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.ParseOrServeMcp.html)
+or [`get_matches_or_serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.get_matches_or_serve_mcp.html)
+for this path. Those entrypoints inspect argv for MCP flags before your normal
+parse runs, which is right for vanilla CLIs but wrong when globals or config
+must be applied first.
+
+Pattern:
+
+1. Parse with `Cli::parse()` (or your imperative `get_matches()`).
+2. Run setup (read config, init logging, and similar).
+3. On your MCP branch, call
+   [`ServeMcpBuilder::for_cli`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.for_cli)
+   (derive CLI) or [`ServeMcpBuilder::new`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.new)
+   (hand-built schema), then `.serve().await` or `.serve_blocking()`.
+
+You do not need [`command_with_mcp_flag`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.command_with_mcp_flag.html)
+unless you want clap-mcp's builtin `--mcp` on the CLI.
+
+```rust
+use clap::{Parser, Subcommand};
+use clap_mcp::{ClapMcp, McpListen, ServeMcpBuilder};
+use std::path::PathBuf;
+
+#[derive(Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe)]
+#[clap_mcp_output_from = "run_app"]
+#[command(name = "myapp", subcommand_required = true)]
+struct App {
+    #[arg(long, global = true)]
+    config: PathBuf,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum Commands {
+    /// Start MCP (embedder entry; not an MCP tool).
+    #[clap_mcp(skip)]
+    Serve,
+
+    Ping,
+}
+
+fn run_app(app: App) -> String {
+    match app.command {
+        Commands::Serve => unreachable!("handled in main"),
+        Commands::Ping => "pong".to_string(),
+    }
+}
+
+fn main() -> Result<(), clap_mcp::ClapMcpError> {
+    let app = App::parse();
+    load_config(&app.config)?;
+
+    match app.command {
+        Commands::Serve => {
+            ServeMcpBuilder::for_cli::<App>(McpListen::Stdio).serve_blocking()?;
+        }
+        _ => println!("{}", run_app(app)),
+    }
+    Ok(())
+}
+
+fn load_config(_path: &PathBuf) -> Result<(), clap_mcp::ClapMcpError> {
+    Ok(())
+}
+```
+
+For async embedders, replace `.serve_blocking()` with `.serve().await` under
+`#[tokio::main]`. Pass logging or custom resources via
+[`ServeMcpBuilder::serve_options`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.serve_options)
+instead of [`parse_or_serve_mcp_with`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.parse_or_serve_mcp_with.html).
+Stateful CLIs can use
+[`ServeMcpBuilder::for_cli_with_state`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.for_cli_with_state)
+after `parse` and setup; see [Stateful MCP tools](stateful-tools.md).
+
+Runnable demos: **setup_then_serve**, **async_embedder_serve**, and
+**placeholder_server** in [examples/README.md](../examples/README.md).
+
 ## Preserve CLI parse
 
 `parse_or_serve_mcp` and `parse_or_serve_mcp_with` use clap-mcp's argv
@@ -233,6 +320,7 @@ Runnable binaries: **struct_subcommand_required** (subcommand `run`),
 
 | Topic | Guide |
 | --- | --- |
+| Setup then serve (embedder) | [This guide — Setup then serve](#setup-then-serve-embedder) |
 | Passthrough (`--`), renaming `--mcp` | [Execution safety — CLI compatibility details](execution-safety.md#cli-compatibility-details) |
 | Skip/requires, dual derive, async | [Execution safety](execution-safety.md) |
 | Stateful session tools | [Stateful MCP tools](stateful-tools.md) |

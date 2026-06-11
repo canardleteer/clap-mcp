@@ -51,6 +51,10 @@ path = "servers/async_embedder_serve.rs"
 required-features = ["tracing"]
 
 [[bin]]
+name = "setup_then_serve"
+path = "servers/setup_then_serve.rs"
+
+[[bin]]
 name = "struct_subcommand"
 path = "servers/struct_subcommand.rs"
 

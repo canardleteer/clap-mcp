@@ -557,8 +557,11 @@ async fn main() -> Result<(), clap_mcp::ClapMcpError> {
 
 See [async_embedder_serve](../examples/servers/async_embedder_serve.rs) (imperative
 [`ServeMcpBuilder`]) vs [async_sleep_shared](../examples/servers/async_sleep_shared.rs)
-(derive + `parse_or_serve_mcp_with`). For HTTP, use `McpListen::Http(addr)` —
-see [http.md](http.md).
+(derive + `parse_or_serve_mcp_with`). When globals or config must be parsed
+before MCP starts, use the embedder path in
+[Usage — Setup then serve](usage.md#setup-then-serve-embedder) (`parse` then
+[`ServeMcpBuilder::for_cli`]) instead of `parse_or_serve_mcp_with`. For HTTP,
+use `McpListen::Http(addr)` — see [http.md](http.md).
 
 If [`ClapMcpConfig::needs_multi_thread_runtime`] is true and you call
 [`ServeMcpBuilder::serve`] on a `current_thread` runtime, you get
