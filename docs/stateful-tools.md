@@ -68,6 +68,12 @@ fn main() {
 Entrypoints: [`ParseOrServeMcpWithState::parse_or_serve_mcp_with_state`],
 [`parse_or_serve_mcp_with_state`], and
 [`ServeMcpBuilder::for_cli_with_state`]. Requires `reinvocation_safe`.
+
+For embedders that parse argv and run setup first (for example `--config`), use
+`App::parse()` (or your imperative parse), then
+[`ServeMcpBuilder::for_cli_with_state`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.for_cli_with_state)
+on your MCP branch instead of `parse_or_serve_mcp_with_state`. See
+[Usage — Setup then serve](usage.md#setup-then-serve-embedder).
 Example binary:
 [stateful_counter](../examples/servers/stateful_counter.rs) (ported from
 [PR #11](https://github.com/canardleteer/clap-mcp/pull/11) by Eddy Stefes / fneddy).

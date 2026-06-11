@@ -37,8 +37,8 @@ for imperative embedders. Start with [Usage patterns](../docs/usage.md).
 * **`parse_or_serve_mcp_with(ClapMcpRunOptions { config, serve })`** — custom
   logging, resources, or HTTP-related serve options.
 * **`ServeMcpBuilder::for_cli::<T>(listen)`** — derive CLI pre-filled; call
-  `.serve().await` or `.serve_blocking()` (see `async_embedder_serve`,
-  `placeholder_server`, `invalid_executable_server`).
+  `.serve().await` or `.serve_blocking()` (see `setup_then_serve`,
+  `async_embedder_serve`, `placeholder_server`, `invalid_executable_server`).
 * **`ServeMcpBuilder::for_cli_with_state::<T, S>(listen, state)`** — like
   `for_cli`, but captures shared state for stateful derive CLIs (see
   `stateful_counter`).
@@ -59,7 +59,8 @@ public `ClapMcpServer` / `build_clap_mcp_server`. See
   or `task_tools_shared`)
 * **`servers/`** — Example MCP server CLIs (subcommands, struct_subcommand,
   **struct_subcommand_required**, optional_commands_and_args, result_output, structured, tracing_bridge,
-  log_bridge, async_sleep, async_sleep_shared, **async_embedder_serve**,
+  log_bridge, async_sleep, async_sleep_shared, **setup_then_serve**,
+  **async_embedder_serve**,
   **task_tools_dedicated**,
   **task_tools_shared**, **subprocess_exit_handling**, **panic_catch_opt_in**,
   **custom_resources_prompts**, **vec_and_flags**, **arg_group_hints**, **preserve_cli_parse**,
@@ -75,8 +76,10 @@ Two patterns for async MCP servers with `share_runtime = true`:
 |---------|---------|
 | **async_sleep_shared** | Derive path: `parse_or_serve_mcp_with` from sync `main` |
 | **async_embedder_serve** | Imperative path: `ServeMcpBuilder::for_cli` + `.serve().await` from `#[tokio::main]` |
+| **setup_then_serve** | Embedder path: `App::parse()` → load config → `serve` subcommand → `ServeMcpBuilder::for_cli` |
 
-See [Async embedders](../docs/execution-safety.md#async-embedders) for runtime selection details.
+See [Usage — Setup then serve](../docs/usage.md#setup-then-serve-embedder) and
+[Async embedders](../docs/execution-safety.md#async-embedders) for runtime selection details.
 
 ## Crash / panic behavior
 
