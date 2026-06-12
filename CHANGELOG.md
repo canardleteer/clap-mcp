@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+## `clap-mcp` - [0.0.5](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.0.4...clap-mcp-v0.0.5) - 2026-06-12
+
+### Added
+- *(serve)* custom stdio read/write for embedders ([#21](https://github.com/canardleteer/clap-mcp/pull/21))
+
+### Fixed
+- agent-rules section
+
+### Other
+- *(usage)* setup-then-serve embedder pattern ([#22](https://github.com/canardleteer/clap-mcp/pull/22))- *(readme)* fix crates.io links with absolute GitHub URLs
 ## `clap-mcp` - [0.0.4](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.0.4-rc.2...clap-mcp-v0.0.4) - 2026-06-10
 
 ### Added
