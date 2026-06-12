@@ -25,12 +25,6 @@ pub(crate) enum McpStdioIo {
     },
 }
 
-impl McpStdioIo {
-    pub(crate) fn is_custom(&self) -> bool {
-        matches!(self, Self::Custom { .. })
-    }
-}
-
 /// Bundled MCP serve parameters, produced by [`ServeMcpBuilder::build`].
 ///
 /// Most callers use [`ServeMcpBuilder::serve`] or [`ServeMcpBuilder::serve_blocking`]
@@ -259,7 +253,9 @@ impl ServeMcpBuilder {
     pub fn build(self) -> Result<ServeMcp, ClapMcpError> {
         let listen = self.listen.ok_or_else(|| missing_field("listen"))?;
         #[cfg(feature = "http")]
-        if matches!(listen, McpListen::Http(_)) && self.stdio_io.is_custom() {
+        if matches!(listen, McpListen::Http(_))
+            && matches!(self.stdio_io, McpStdioIo::Custom { .. })
+        {
             return Err(ClapMcpError::InvalidConfig(
                 "ServeMcpBuilder::stdio_io is only valid with McpListen::Stdio".into(),
             ));

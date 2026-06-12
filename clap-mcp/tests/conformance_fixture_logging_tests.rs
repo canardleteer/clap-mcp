@@ -28,6 +28,12 @@ fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Streamable HTTP `cancel()` can stall on macOS CI; bound the wait and drop on timeout.
+const CLIENT_CANCEL_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[cfg(target_os = "macos")]
+const CLIENT_CANCEL_KILL_SERVER_AFTER: Duration = Duration::from_secs(5);
+
 async fn step_timeout<T>(label: &str, fut: impl std::future::Future<Output = T>) -> T {
     match tokio::time::timeout(STEP_TIMEOUT, fut).await {
         Ok(value) => value,
@@ -103,7 +109,30 @@ async fn wait_for_http(port: u16) {
 async fn shutdown_http_client<H: ClientHandler>(
     client: rmcp::service::RunningService<rmcp::RoleClient, H>,
 ) {
-    step_timeout("client cancel", shutdown(client)).await;
+    let _ = tokio::time::timeout(CLIENT_CANCEL_TIMEOUT, shutdown(client)).await;
+}
+
+async fn teardown_fixture<H: ClientHandler>(
+    client: rmcp::service::RunningService<rmcp::RoleClient, H>,
+    child: tokio::process::Child,
+) {
+    #[cfg(target_os = "macos")]
+    {
+        let mut child = child;
+        tokio::select! {
+            _ = tokio::time::timeout(CLIENT_CANCEL_TIMEOUT, shutdown(client)) => {}
+            _ = async {
+                tokio::time::sleep(CLIENT_CANCEL_KILL_SERVER_AFTER).await;
+                let _ = child.start_kill();
+            } => {}
+        }
+        shutdown_child(child).await;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = tokio::time::timeout(CLIENT_CANCEL_TIMEOUT, shutdown(client)).await;
+        shutdown_child(child).await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -156,8 +185,7 @@ async fn conformance_fixture_emits_logs_during_tool_call() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 
-    shutdown_http_client(client).await;
-    shutdown_child(child).await;
+    teardown_fixture(client, child).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -190,6 +218,7 @@ async fn conformance_fixture_logs_after_prior_set_level_session() {
         .await
         .expect("set level");
         shutdown_http_client(client).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     let counter = LogCounter::default();
@@ -228,6 +257,5 @@ async fn conformance_fixture_logs_after_prior_set_level_session() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 
-    shutdown_http_client(client).await;
-    shutdown_child(child).await;
+    teardown_fixture(client, child).await;
 }
