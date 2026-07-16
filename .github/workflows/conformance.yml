@@ -39,6 +39,7 @@ jobs:
               sha256sum docker/conformance/VERSION
               sha256sum docker/conformance/Dockerfile
               sha256sum conformance-baseline.yml
+              sha256sum conformance-baseline-draft.yml
               sha256sum xtask/src/conformance.rs
             } | sha256sum | awk '{print $1}'
           )
@@ -80,25 +81,11 @@ jobs:
             echo "Skipping scheduled conformance: no commits since last success and harness unchanged."
           fi
 
-      - name: Start MCP HTTP conformance server
-        if: steps.gate.outputs.run == 'true'
-        run: |
-          mkdir -p target
-          cargo xtask conformance-server --log-file target/conformance-server.log &
-          timeout 60 bash -c 'until test -f target/conformance-port; do sleep 0.25; done'
-          set -a && source target/conformance-port && set +a
-          echo "CONFORMANCE_PORT=$CONFORMANCE_PORT" >> "$GITHUB_ENV"
-
-      - name: Run MCP conformance (official Action)
+      - name: Run MCP conformance (2025-11-25 + draft)
         if: steps.gate.outputs.run == 'true'
         id: conformance
-        uses: modelcontextprotocol/conformance@v0.1.16
-        with:
-          mode: server
-          url: http://127.0.0.1:${{ env.CONFORMANCE_PORT }}/mcp
-          suite: active
-          expected-failures: ./conformance-baseline.yml
-          verbose: true
+        # Local/CI parity via cargo xtask (Docker image from docker/conformance/VERSION).
+        run: cargo xtask conformance --verbose
 
       - name: Write conformance gate state
         if: success() && steps.gate.outputs.run == 'true'
@@ -125,4 +112,5 @@ jobs:
             target/conformance-server.log
             target/conformance-port
             conformance-baseline.yml
+            conformance-baseline-draft.yml
           retention-days: 14

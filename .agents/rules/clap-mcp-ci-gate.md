@@ -24,7 +24,12 @@ cargo clippy --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p clap-mcp --all-features
 cargo test --all-features
 cargo xtask examples-help
+cargo xtask conformance
 ```
+
+`cargo xtask conformance` requires Docker. It runs the pinned harness twice:
+`active` @ `2025-11-25`, then `draft` @ `draft` (`2026-07-28`). See
+[docs/conformance-baseline.md](../../docs/conformance-baseline.md).
 
 On Ubuntu CI only (optional locally): `rumdl check` (uses [`.rumdl.toml`](../../.rumdl.toml)
 `include` paths) and `cargo audit` (after rustdoc, before tests).

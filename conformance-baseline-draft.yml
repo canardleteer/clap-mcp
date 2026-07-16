@@ -1,0 +1,42 @@
+# Expected failures for draft @ draft (2026-07-28).
+# Rationale for every ID: docs/conformance-baseline.md#draft-baseline-inventory
+server:
+  # SEP-2575 stateless HTTP (server/discover, per-request _meta) not implemented.
+  - server-stateless
+  # SEP-2164: handler emits resource_not_found+data.uri, but draft HTTP returns 422
+  # without a JSON-RPC error body the harness can parse (rmcp transport).
+  - sep-2164-resource-not-found
+  # SEP-2243 standard Mcp-Method / Mcp-Name header validation (rmcp transport).
+  - http-header-validation
+  # SEP-2243 custom Mcp-Param / x-mcp-header validation not implemented.
+  - http-custom-header-server-validation
+  # SEP-2549 list-result caching hints (ttlMs / cacheScope) not emitted.
+  - caching
+  # SEP-2322 InputRequiredResult + elicitation (draft; needs elicitation).
+  - input-required-result-basic-elicitation
+  # SEP-2322 InputRequiredResult + sampling (draft; sampling not offered).
+  - input-required-result-basic-sampling
+  # SEP-2322 InputRequiredResult + roots/list (draft multi-turn input).
+  - input-required-result-basic-list-roots
+  # SEP-2322 requestState round-trip (same InputRequiredResult surface).
+  - input-required-result-request-state
+  # SEP-2322 multiple inputRequests in one result.
+  - input-required-result-multiple-input-requests
+  # SEP-2322 multi-round InputRequiredResult + evolving requestState.
+  - input-required-result-multi-round
+  # SEP-2322 missing/wrong inputResponses re-request behavior.
+  - input-required-result-missing-input-response
+  # SEP-2322 InputRequiredResult on prompts/get (non-tool).
+  - input-required-result-non-tool-request
+  # SEP-2322 explicit resultType on InputRequiredResult.
+  - input-required-result-result-type
+  # SEP-2322 must not emit InputRequiredResult on unsupported methods.
+  - input-required-result-unsupported-methods
+  # SEP-2322 integrity-protected / tampered requestState rejection.
+  - input-required-result-tampered-state
+  # SEP-2322 gate inputRequests on client-declared capabilities.
+  - input-required-result-capability-check
+  # SEP-2322 ignore unknown keys in inputResponses.
+  - input-required-result-ignore-extra-params
+  # SEP-2322 validate malformed inputResponses.
+  - input-required-result-validate-input

@@ -1,17 +1,29 @@
+# Expected failures for active @ 2025-11-25.
+# Rationale for every ID: docs/conformance-baseline.md#stable-baseline-inventory
 server:
-  - tools-call-simple-text
+  # Tool result ContentBlock::Image not in IntoClapMcpResult / derive path.
   - tools-call-image
+  # Tool result ContentBlock::Audio not in IntoClapMcpResult / derive path.
   - tools-call-audio
+  # Tool result embedded Resource content block not offered for tools/call.
   - tools-call-embedded-resource
+  # Mixed media tool content (text+image+…) not offered; text/JSON only.
   - tools-call-mixed-content
+  # No progress-notification API (notifications/progress) for tools.
   - tools-call-with-progress
+  # Server→client sampling/createMessage not offered (see docs/mcp-tasks.md).
   - tools-call-sampling
+  # MCP elicitation removed; no clap-shaped replacement yet (migration-notes).
   - tools-call-elicitation
+  # Same: elicitation defaults (SEP-1034) not offered.
   - elicitation-sep1034-defaults
+  # Same: elicitation enum variants (SEP-1330) not offered.
   - elicitation-sep1330-enums
+  # CustomResource is text String only; no blob/binary resource body API.
   - resources-read-binary
+  # No resource-templates list/read API (list_resource_templates stays empty).
   - resources-templates-read
+  # resources/subscribe capability and handlers not implemented.
   - resources-subscribe
+  # resources/unsubscribe not implemented (pairs with subscribe).
   - resources-unsubscribe
-  - prompts-get-embedded-resource
-  - prompts-get-with-image

@@ -68,19 +68,7 @@ jobs:
         with:
           shared-key: ci-conformance
 
-      - name: Start MCP HTTP conformance server
-        run: |
-          mkdir -p target
-          cargo xtask conformance-server --log-file target/conformance-server.log &
-          timeout 60 bash -c 'until test -f target/conformance-port; do sleep 0.25; done'
-          set -a && source target/conformance-port && set +a
-          echo "CONFORMANCE_PORT=$CONFORMANCE_PORT" >> "$GITHUB_ENV"
-
-      - name: Run MCP conformance (official Action)
-        uses: modelcontextprotocol/conformance@v0.1.16
-        with:
-          mode: server
-          url: http://127.0.0.1:${{ env.CONFORMANCE_PORT }}/mcp
-          suite: active
-          expected-failures: ./conformance-baseline.yml
-          verbose: true
+      - name: Run MCP conformance (2025-11-25 + draft)
+        # Local/CI parity: Docker image from docker/conformance/VERSION; xtask runs
+        # active@2025-11-25 then draft@draft with separate baselines.
+        run: cargo xtask conformance --verbose

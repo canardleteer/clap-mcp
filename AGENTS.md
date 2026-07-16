@@ -109,13 +109,14 @@ cargo llvm-cov test -p clap-mcp -p clap-mcp-macros --all-features --summary-only
 cargo xtask code-coverage-html          # HTML report in target/llvm-cov/html
 cargo xtask code-coverage-html --open   # same, then open in browser
 
-# MCP conformance harness (maintainer)
-cargo xtask conformance                 # local Docker harness; stops stale servers first
+# MCP conformance harness (requires Docker; part of ci-gate)
+cargo xtask conformance                 # active@2025-11-25 + draft; stops stale servers first
 cargo xtask conformance-stop            # stop conformance-server / orphan fixture
-# conformance-server is CI/debug-only — see docs/conformance-baseline.md#local-safety-conformance-server
+# conformance-server is debug-only — see docs/conformance-baseline.md#local-safety-conformance-server
 ```
 
-CI runs the ci-gate commands on Ubuntu, Windows, and macOS.
+CI runs the ci-gate commands on Ubuntu, Windows, and macOS. Conformance runs on
+Ubuntu (Docker) via the dedicated `conformance` job.
 
 ### When bumping workspace `rmcp`
 

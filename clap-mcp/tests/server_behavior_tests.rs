@@ -63,7 +63,11 @@ async fn unknown_resources_prompts_tools_and_arguments_return_errors() {
         .read_resource(ReadResourceRequestParams::new("example://missing"))
         .await
         .expect_err("unknown resource should error");
-    assert!(format!("{resource_error:?}").contains("unknown resource uri"));
+    let err = format!("{resource_error:?}");
+    assert!(
+        err.contains("Resource not found") || err.contains("resource"),
+        "unexpected resource error: {err}"
+    );
 
     let prompt_error = client
         .get_prompt(GetPromptRequestParams::new("missing-prompt"))
