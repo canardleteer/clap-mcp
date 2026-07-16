@@ -1,4 +1,6 @@
 #![cfg(feature = "http")]
+// Logging types remain functional in rmcp 2.x but are deprecated by SEP-2577.
+#![allow(deprecated)]
 mod common;
 
 use clap::Parser;

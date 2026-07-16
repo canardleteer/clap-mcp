@@ -6,6 +6,9 @@
 //! that exercise clap-mcp's shipped capabilities (logging, text resources/prompts,
 //! tool errors).
 
+// Logging types remain functional in rmcp 2.x but are deprecated by SEP-2577.
+#![allow(deprecated)]
+
 #[cfg(all(feature = "tracing", feature = "http"))]
 use async_trait::async_trait;
 #[cfg(all(feature = "tracing", feature = "http"))]
@@ -19,7 +22,7 @@ use clap_mcp::logging::{ClapMcpTracingLayer, log_channel, log_params};
 #[cfg(all(feature = "tracing", feature = "http"))]
 use clap_mcp::{ClapMcp, ClapMcpConfigProvider, ClapMcpToolError, IntoClapMcpToolError};
 #[cfg(all(feature = "tracing", feature = "http"))]
-use rmcp::model::{LoggingLevel, PromptArgument, PromptMessage, PromptMessageRole};
+use rmcp::model::{LoggingLevel, PromptArgument, PromptMessage, Role};
 #[cfg(all(feature = "tracing", feature = "http"))]
 use std::{sync::OnceLock, time::Duration};
 #[cfg(all(feature = "tracing", feature = "http"))]
@@ -65,7 +68,7 @@ impl PromptContentProvider for PromptWithArgumentsProvider {
         let arg1 = arguments.get("arg1").and_then(|v| v.as_str()).unwrap_or("");
         let arg2 = arguments.get("arg2").and_then(|v| v.as_str()).unwrap_or("");
         Ok(vec![PromptMessage::new_text(
-            PromptMessageRole::User,
+            Role::User,
             format!("Prompt with arguments: arg1='{arg1}', arg2='{arg2}'"),
         )])
     }
@@ -162,7 +165,7 @@ fn conformance_serve_options() -> clap_mcp::ClapMcpServeOptions {
         description: Some("Simple prompt without arguments".into()),
         arguments: vec![],
         content: PromptContent::Static(vec![PromptMessage::new_text(
-            PromptMessageRole::User,
+            Role::User,
             "This is a simple prompt for testing.",
         )]),
     });

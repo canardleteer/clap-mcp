@@ -13,8 +13,8 @@ use clap::Parser;
 use rmcp::{
     ClientHandler, RoleClient, ServiceExt,
     model::{
-        CallToolRequestParams, ClientRequest, CreateTaskResult, GetTaskInfoParams,
-        GetTaskResultParams, Request, ServerResult, TaskStatus,
+        CallToolRequestParams, ClientRequest, ContentBlock, CreateTaskResult, GetTaskParams,
+        GetTaskPayloadParams, Request, ServerResult, TaskMetadata, TaskStatus,
     },
     service::Peer,
     transport::{ConfigureCommandExt, TokioChildProcess},
@@ -70,11 +70,8 @@ async fn get_task_info(
     task_id: &str,
 ) -> Result<rmcp::model::GetTaskResult, rmcp::ServiceError> {
     let resp = peer
-        .send_request(ClientRequest::GetTaskInfoRequest(Request::new(
-            GetTaskInfoParams {
-                meta: None,
-                task_id: task_id.to_string(),
-            },
+        .send_request(ClientRequest::GetTaskRequest(Request::new(
+            GetTaskParams::new(task_id),
         )))
         .await?;
     match resp {
@@ -88,11 +85,8 @@ async fn get_task_payload(
     task_id: &str,
 ) -> Result<rmcp::model::GetTaskPayloadResult, rmcp::ServiceError> {
     let resp = peer
-        .send_request(ClientRequest::GetTaskResultRequest(Request::new(
-            GetTaskResultParams {
-                meta: None,
-                task_id: task_id.to_string(),
-            },
+        .send_request(ClientRequest::GetTaskPayloadRequest(Request::new(
+            GetTaskPayloadParams::new(task_id),
         )))
         .await?;
     match resp {
@@ -141,7 +135,7 @@ async fn run_client(bin: &str) -> Result<(), rmcp::RmcpError> {
                 "ms".into(),
                 serde_json::json!(25),
             )]))
-            .with_task(rmcp::object!({})),
+            .with_task(TaskMetadata::new()),
     )
     .await?;
 
@@ -163,6 +157,7 @@ async fn run_client(bin: &str) -> Result<(), rmcp::RmcpError> {
                 }
                 tokio::time::sleep(Duration::from_millis(poll_ms)).await;
             }
+            _ => panic!("task ended with status {:?}", st.task.status),
         }
     }
 
@@ -172,8 +167,8 @@ async fn run_client(bin: &str) -> Result<(), rmcp::RmcpError> {
     let text = tool_result
         .content
         .iter()
-        .filter_map(|block| match &block.raw {
-            rmcp::model::RawContent::Text(t) => Some(t.text.as_str()),
+        .filter_map(|block| match block {
+            ContentBlock::Text(t) => Some(t.text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()

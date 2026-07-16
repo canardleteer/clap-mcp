@@ -3417,26 +3417,26 @@ mod tests {
     use clap::{Arg, ArgAction, ArgGroup, Command, CommandFactory};
     use rmcp::ServerHandler;
     use rmcp::model::{
-        Content, GetPromptRequestParams, PromptMessage, PromptMessageContent, PromptMessageRole,
-        RawContent, ReadResourceRequestParams, ResourceContents, Tool,
+        ContentBlock, GetPromptRequestParams, PromptMessage, ReadResourceRequestParams,
+        ResourceContents, Role, Tool,
     };
     use serde::Deserialize;
     use serde_json::json;
     use std::error::Error;
     use std::sync::{Arc, Mutex};
 
-    fn content_text(content: &Content) -> &str {
-        match &content.raw {
-            RawContent::Text(text) => &text.text,
-            _ => panic!("expected text content"),
-        }
+    fn content_text(content: &ContentBlock) -> &str {
+        content
+            .as_text()
+            .map(|text| text.text.as_str())
+            .unwrap_or_else(|| panic!("expected text content"))
     }
 
-    fn prompt_text(content: &PromptMessageContent) -> &str {
-        match content {
-            PromptMessageContent::Text { text, .. } => text,
-            _ => panic!("expected text prompt content"),
-        }
+    fn prompt_text(content: &ContentBlock) -> &str {
+        content
+            .as_text()
+            .map(|text| text.text.as_str())
+            .unwrap_or_else(|| panic!("expected text prompt content"))
     }
 
     #[cfg(unix)]
@@ -4746,10 +4746,7 @@ mod tests {
     #[tokio::test]
     async fn test_prompt_helpers_cover_logging_custom_and_error_paths() {
         let provider = Arc::new(TestPromptProvider {
-            response: Ok(vec![PromptMessage::new_text(
-                PromptMessageRole::User,
-                "dynamic prompt",
-            )]),
+            response: Ok(vec![PromptMessage::new_text(Role::User, "dynamic prompt")]),
             seen: Mutex::new(Vec::new()),
         });
         let prompts = vec![content::CustomPrompt {

@@ -33,9 +33,9 @@ priorities below.
   embedders. Do not remove thin delegators without an explicit breaking-change
   decision.
 
-Early-stage warning: the crate is on the pre-stable `0.0.4` release line (see
+Early-stage warning: the crate is on the pre-stable `0.1.0` release line (see
 workspace `Cargo.toml`). See [migration notes](docs/migration-notes.md) for
-recent API slimming.
+rmcp 2.2 and historical API slimming.
 
 ## Repository layout
 
@@ -215,7 +215,7 @@ Every file below must appear in the README Documentation table.
 | [docs/tool-output.md](docs/tool-output.md) | CLI authors | `run` return types, structured output, `output-schema` |
 | [docs/logging.md](docs/logging.md) | CLI authors | `tracing` / `log` bridges, MCP notifications |
 | [docs/http.md](docs/http.md) | CLI authors | Streamable HTTP listen (`--mcp-http`) |
-| [docs/migration-notes.md](docs/migration-notes.md) | CLI authors / maintainers | 0.0.3-rc.1 → 0.0.4-rc.1 upgrade, breaking renames |
+| [docs/migration-notes.md](docs/migration-notes.md) | CLI authors / maintainers | 0.1.0-rc.1 (rmcp 2.2), historical 0.0.3 → 0.0.4 |
 | [docs/conformance-baseline.md](docs/conformance-baseline.md) | Maintainers | MCP conformance harness, baseline YAML |
 | [docs/maintainer-testing.md](docs/maintainer-testing.md) | Maintainers | Macro checklist, test filters, example contracts |
 | [docs/supported-cli-shapes.md](docs/supported-cli-shapes.md) | CLI authors | Pattern matrix, attributes per shape, non-goals |
@@ -323,14 +323,24 @@ stateful derive → `docs/stateful-tools.md`; tool output / schemas →
 * **Single source of truth:** workspace version in root [`Cargo.toml`](Cargo.toml)
   only.
 * **Copy-paste examples** in README, `docs/*.md`, and hand-authored skills under
-  `.agents/skills/`: use `version = "0.0.4"` (major.minor), not pinned
-  `0.0.4-rc.N`, unless documenting a specific historical release.
-* **Exempt from bump sweeps:** [`CHANGELOG.md`](CHANGELOG.md),
-  [`docs/migration-notes.md`](docs/migration-notes.md) — historical semver
-  literals stay as release boundaries.
-* **After a workspace version bump:** run  
-  `rg '0\.0\.4-rc\.' README.md docs/*.md AGENTS.md examples/README.md`  
-  and fix any matches outside migration-notes / CHANGELOG.
+  `.agents/skills/`: match the workspace version **exactly**, including any
+  `-rc.N` pre-release suffix (for example `version = "0.1.0-rc.1"`). During this
+  pre-stable phase, readers should depend on the same RC the repo is on. After
+  a stable `0.1.0` (or later) ships, you may relax examples to a broader
+  requirement such as `"0.1.0"` without the RC pin.
+* **Exempt from bump sweeps:** [`CHANGELOG.md`](CHANGELOG.md) historical
+  entries, and historical semver literals inside
+  [`docs/migration-notes.md`](docs/migration-notes.md) that document past
+  release boundaries. Current-release guidance in migration-notes (including
+  copy-paste `Cargo.toml` snippets) still tracks the workspace version.
+* **After a workspace version bump:** run:
+
+  ```shell
+  rg 'clap-mcp = |"clap-mcp"' README.md docs/*.md AGENTS.md examples/README.md .agents/skills
+  ```
+
+  Align every copy-paste dependency version with root `Cargo.toml` (including
+  `-rc.N` while on an RC).
 
 ## Git
 

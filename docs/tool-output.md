@@ -130,8 +130,8 @@ type.
 
 Use when your tool output is a **single type** (e.g. an enum or struct). The
 type must implement
-[`schemars::JsonSchema`](https://docs.rs/schemars/latest/schemars/trait.JsonSchema.html).
-For enums, schemars typically produces a `oneOf` schema.
+[`schemars::JsonSchema`](https://docs.rs/schemars/latest/schemars/trait.JsonSchema.html)
+(schemars **1.x**). For enums, schemars typically produces a `oneOf` schema.
 
 Excerpt (requires `features = ["output-schema"]` and `JsonSchema` on the type):
 

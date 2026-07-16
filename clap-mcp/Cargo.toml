@@ -32,7 +32,7 @@ libc = "0.2"
 
 # Optional dependencies
 clap-mcp-macros = { workspace = true, optional = true }
-schemars = { version = "0.8", optional = true }
+schemars = { version = "1", optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, features = ["registry", "fmt"] }
 log = { version = "0.4", optional = true }
@@ -40,5 +40,5 @@ axum = { version = "0.8", optional = true }
 
 [dev-dependencies]
 clap-mcp-macros = { workspace = true }
-schemars = "0.8"
+schemars = "1"
 trybuild = "1.0.116"

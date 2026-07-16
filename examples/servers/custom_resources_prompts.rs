@@ -9,7 +9,7 @@
 use clap::Parser;
 use clap_mcp::content::{CustomPrompt, CustomResource, PromptContent, ResourceContent};
 use clap_mcp::{ClapMcp, ClapMcpServeOptions};
-use rmcp::model::{PromptMessage, PromptMessageRole};
+use rmcp::model::{PromptMessage, Role};
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false)]
@@ -54,7 +54,7 @@ fn main() {
         description: Some("A static prompt that returns a short instruction".into()),
         arguments: vec![],
         content: PromptContent::Static(vec![PromptMessage::new_text(
-            PromptMessageRole::User,
+            Role::User,
             "When using this example CLI via MCP, prefer the echo tool for simple text.",
         )]),
     });

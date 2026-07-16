@@ -1,5 +1,8 @@
 //! MCP server transport and handler (rmcp `ServerHandler` + stdio).
 
+// Logging types remain functional in rmcp 2.x but are deprecated by SEP-2577.
+#![allow(deprecated)]
+
 use crate::{
     ClapMcpConfig, ClapMcpError, ClapMcpSchemaMetadata, ClapMcpSerializeScope, ClapMcpServeOptions,
     ClapMcpToolError, ClapMcpToolOutput, InProcessToolHandler, LOG_INTERPRETATION_INSTRUCTIONS,
@@ -9,12 +12,12 @@ use crate::{
 use rmcp::{
     ErrorData as McpError, Peer, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResult, Content, CreateTaskResult, GetPromptRequestParams,
-        GetPromptResult, GetTaskInfoParams, GetTaskPayloadResult, GetTaskResult,
-        GetTaskResultParams, Implementation, ListPromptsResult, ListResourcesResult,
-        ListToolsResult, LoggingLevel, LoggingMessageNotification, LoggingMessageNotificationParam,
-        Meta, PaginatedRequestParams, PromptMessage, PromptMessageRole, RawResource,
-        ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents,
+        CallToolRequestParams, CallToolResult, ContentBlock, CreateTaskResult,
+        GetPromptRequestParams, GetPromptResult, GetTaskParams, GetTaskPayloadParams,
+        GetTaskPayloadResult, GetTaskResult, Implementation, ListPromptsResult,
+        ListResourcesResult, ListToolsResult, LoggingLevel, LoggingMessageNotification,
+        LoggingMessageNotificationParam, Meta, PaginatedRequestParams, PromptMessage,
+        ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents, Role,
         ServerCapabilities, SetLevelRequestParams, Task, TaskStatus, Tool,
     },
     service::{RequestContext, RoleServer},
@@ -421,7 +424,7 @@ impl ServerHandler for ClapMcpServer {
 
     fn get_task_info(
         &self,
-        request: GetTaskInfoParams,
+        request: GetTaskParams,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<GetTaskResult, McpError>> + Send + '_ {
         let processor = self.processor.clone();
@@ -450,14 +453,14 @@ impl ServerHandler for ClapMcpServer {
                 };
                 let timestamp = current_timestamp();
                 let task = Task::new(task_id, status, timestamp.clone(), timestamp);
-                return Ok(GetTaskResult { meta: None, task });
+                return Ok(GetTaskResult::new(task));
             }
 
             let running = processor.list_running();
             if running.into_iter().any(|id| id == task_id) {
                 let timestamp = current_timestamp();
                 let task = Task::new(task_id, TaskStatus::Working, timestamp.clone(), timestamp);
-                return Ok(GetTaskResult { meta: None, task });
+                return Ok(GetTaskResult::new(task));
             }
 
             Err(McpError::resource_not_found(
@@ -469,7 +472,7 @@ impl ServerHandler for ClapMcpServer {
 
     fn get_task_result(
         &self,
-        request: GetTaskResultParams,
+        request: GetTaskPayloadParams,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<GetTaskPayloadResult, McpError>> + Send + '_ {
         let processor = self.processor.clone();
@@ -654,15 +657,16 @@ pub(crate) async fn serve_schema_json_over_stdio(
     Ok(())
 }
 
+#[allow(deprecated)]
 async fn notify_log(
     peer: &Peer<RoleServer>,
     params: LoggingMessageNotificationParams,
 ) -> Result<(), McpError> {
-    let mut notification = LoggingMessageNotification::new(LoggingMessageNotificationParam {
-        level: params.level,
-        logger: params.logger,
-        data: params.data,
-    });
+    let mut param = LoggingMessageNotificationParam::new(params.level, params.data);
+    if let Some(logger) = params.logger {
+        param = param.with_logger(logger);
+    }
+    let mut notification = LoggingMessageNotification::new(param);
     if let Some(meta_map) = params.meta {
         notification.extensions.insert(Meta(meta_map));
     }
@@ -678,11 +682,11 @@ async fn notify_log(
 
 pub(crate) fn call_tool_result_from_output(output: ClapMcpToolOutput) -> CallToolResult {
     match output {
-        ClapMcpToolOutput::Text(text) => CallToolResult::success(vec![Content::text(text)]),
+        ClapMcpToolOutput::Text(text) => CallToolResult::success(vec![ContentBlock::text(text)]),
         ClapMcpToolOutput::Structured(value) => {
             let json_text =
                 serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
-            let mut result = CallToolResult::success(vec![Content::text(json_text)]);
+            let mut result = CallToolResult::success(vec![ContentBlock::text(json_text)]);
             result.structured_content = Some(value);
             result
         }
@@ -690,7 +694,7 @@ pub(crate) fn call_tool_result_from_output(output: ClapMcpToolOutput) -> CallToo
 }
 
 pub(crate) fn call_tool_result_from_tool_error(error: ClapMcpToolError) -> CallToolResult {
-    let mut result = CallToolResult::error(vec![Content::text(error.message)]);
+    let mut result = CallToolResult::error(vec![ContentBlock::text(error.message)]);
     result.structured_content = error.structured.clone();
     result
 }
@@ -699,15 +703,15 @@ pub(crate) fn call_tool_result_from_panic(
     panic_payload: &(dyn std::any::Any + Send),
 ) -> CallToolResult {
     let msg = crate::format_panic_payload(panic_payload);
-    CallToolResult::error(vec![Content::text(format!("Tool panicked: {msg}"))])
+    CallToolResult::error(vec![ContentBlock::text(format!("Tool panicked: {msg}"))])
 }
 
 pub(crate) fn schema_parse_failure_result() -> CallToolResult {
-    CallToolResult::error(vec![Content::text("Failed to parse schema")])
+    CallToolResult::error(vec![ContentBlock::text("Failed to parse schema")])
 }
 
 pub(crate) fn command_launch_failure_result(error: &std::io::Error) -> CallToolResult {
-    CallToolResult::error(vec![Content::text(format!(
+    CallToolResult::error(vec![ContentBlock::text(format!(
         "Failed to run command: {error}"
     ))])
 }
@@ -717,7 +721,7 @@ pub(crate) fn placeholder_tool_result(
     arguments: &serde_json::Map<String, serde_json::Value>,
 ) -> CallToolResult {
     let args_json = serde_json::Value::Object(arguments.clone());
-    CallToolResult::success(vec![Content::text(format!(
+    CallToolResult::success(vec![ContentBlock::text(format!(
         "Would invoke clap command '{name}' with arguments: {args_json:?}"
     ))])
 }
@@ -781,14 +785,14 @@ pub(crate) fn call_tool_result_from_subprocess_output(
             msg.push_str("\nstderr:\n");
             msg.push_str(stderr.trim());
         }
-        return CallToolResult::error(vec![Content::text(msg)]);
+        return CallToolResult::error(vec![ContentBlock::text(msg)]);
     }
     let text = if stderr.is_empty() {
         stdout.trim().to_string()
     } else {
         format!("{}\nstderr:\n{}", stdout.trim(), stderr.trim())
     };
-    CallToolResult::success(vec![Content::text(text)])
+    CallToolResult::success(vec![ContentBlock::text(text)])
 }
 
 pub(crate) fn validate_tool_argument_names(
@@ -811,13 +815,10 @@ pub(crate) fn validate_tool_argument_names(
 }
 
 fn clap_schema_resource() -> Resource {
-    Resource::new(
-        RawResource::new(MCP_RESOURCE_URI_SCHEMA, "clap-schema")
-            .with_title("Clap CLI schema")
-            .with_description("JSON schema extracted from clap Command definitions")
-            .with_mime_type("application/json"),
-        None,
-    )
+    Resource::new(MCP_RESOURCE_URI_SCHEMA, "clap-schema")
+        .with_title("Clap CLI schema")
+        .with_description("JSON schema extracted from clap Command definitions")
+        .with_mime_type("application/json")
 }
 
 pub(crate) fn list_resources_result(
@@ -827,11 +828,7 @@ pub(crate) fn list_resources_result(
     for resource in custom_resources {
         resources.push(resource.to_list_resource());
     }
-    ListResourcesResult {
-        resources,
-        meta: None,
-        next_cursor: None,
-    }
+    ListResourcesResult::with_all_items(resources)
 }
 
 pub(crate) async fn read_resource_result(
@@ -841,12 +838,7 @@ pub(crate) async fn read_resource_result(
 ) -> Result<ReadResourceResult, McpError> {
     if params.uri == MCP_RESOURCE_URI_SCHEMA {
         return Ok(ReadResourceResult::new(vec![
-            ResourceContents::TextResourceContents {
-                uri: params.uri,
-                mime_type: Some("application/json".into()),
-                text: schema_json.to_string(),
-                meta: None,
-            },
+            ResourceContents::text(schema_json, params.uri).with_mime_type("application/json"),
         ]));
     }
     let custom = custom_resources
@@ -859,14 +851,11 @@ pub(crate) async fn read_resource_result(
         ));
     };
     let text = content::resolve_resource_content(resource, &params.uri).await?;
-    Ok(ReadResourceResult::new(vec![
-        ResourceContents::TextResourceContents {
-            uri: params.uri.clone(),
-            mime_type: resource.mime_type.clone(),
-            text,
-            meta: None,
-        },
-    ]))
+    let mut contents = ResourceContents::text(text, params.uri.clone());
+    if let ResourceContents::TextResourceContents { mime_type, .. } = &mut contents {
+        *mime_type = resource.mime_type.clone();
+    }
+    Ok(ReadResourceResult::new(vec![contents]))
 }
 
 fn logging_guide_prompt() -> rmcp::model::Prompt {
@@ -889,11 +878,7 @@ pub(crate) fn list_prompts_result(
     for prompt in custom_prompts {
         prompts.push(prompt.to_list_prompt());
     }
-    ListPromptsResult {
-        prompts,
-        meta: None,
-        next_cursor: None,
-    }
+    ListPromptsResult::with_all_items(prompts)
 }
 
 pub(crate) async fn get_prompt_result(
@@ -909,7 +894,7 @@ pub(crate) async fn get_prompt_result(
             ));
         }
         return Ok(GetPromptResult::new(vec![PromptMessage::new_text(
-            PromptMessageRole::User,
+            Role::User,
             LOGGING_GUIDE_CONTENT,
         )])
         .with_description("How to interpret log messages from this clap-mcp server"));

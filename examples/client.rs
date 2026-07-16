@@ -10,6 +10,9 @@
 //! - `async-sleep-shared`: Same but shares the MCP server's runtime (requires --features tracing)
 //! - `async-embedder-serve`: Imperative `ServeMcpBuilder` embedder path (requires --features tracing)
 
+// Logging notification types remain functional in rmcp 2.x but are deprecated by SEP-2577.
+#![allow(deprecated)]
+
 use clap::{Parser, Subcommand};
 use rmcp::{
     ClientHandler, RoleClient, ServiceExt,
@@ -174,8 +177,8 @@ fn tool_text(result: &rmcp::model::CallToolResult) -> String {
     result
         .content
         .iter()
-        .filter_map(|block| match &block.raw {
-            rmcp::model::RawContent::Text(text) => Some(text.text.clone()),
+        .filter_map(|block| match block {
+            rmcp::model::ContentBlock::Text(text) => Some(text.text.clone()),
             _ => None,
         })
         .collect::<Vec<_>>()

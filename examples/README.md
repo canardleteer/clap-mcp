@@ -26,9 +26,10 @@ The `release` profile runs `--help` on every `[[bin]]` in
 `[[bin]]` here only; edit the exclude list when `--help` smoke is inappropriate.
 See [Maintainer testing](../docs/maintainer-testing.md#adding-an-example).
 
-## 0.0.4 API (derive path)
+## Derive and embedder API
 
-Since the **0.0.4** release line, examples use the slim derive entrypoints and
+Since the **0.0.4** release line (still used on **0.1.0**), examples use the slim
+derive entrypoints and
 [`ServeMcpBuilder`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html)
 for imperative embedders. Start with [Usage patterns](../docs/usage.md).
 

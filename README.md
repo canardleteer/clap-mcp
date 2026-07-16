@@ -61,7 +61,7 @@ macro):
 
 ```toml
 [dependencies]
-clap-mcp = "0.0.4"
+clap-mcp = "0.1.0-rc.1"
 ```
 
 * Opt-in MCP server on existing `clap` CLIs (`--mcp` stdio, `--mcp-http` with
@@ -76,7 +76,9 @@ clap-mcp = "0.0.4"
   `#[clap_mcp(...)]`); panics become MCP errors instead of crashing the server;
   see [Crash and panic behavior](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/execution-safety.md#crash-exit-and-panic-behavior)
 * Logging forwarded to MCP clients as `notifications/message` (`tracing` /
-  `log` features); see [logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md)
+  `log` features). MCP protocol logging is deprecated by SEP-2577; clap-mcp
+  still ships the bridge for agent-facing CLI diagnostics. See
+  [logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md)
 * Structured tool output and optional JSON `outputSchema`; see
   [tool-output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md)
 * Custom MCP resources and prompts; see [custom-content](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md)
@@ -98,8 +100,8 @@ Cargo features and their maturity:
 | Flag | Maturity | Enables |
 | --- | --- | --- |
 | `derive` (default) | Shipped | `#[derive(ClapMcp)]` proc-macro and `ParseOrServeMcp` |
-| `tracing` | Shipped | `ClapMcpTracingLayer` — a `tracing_subscriber::Layer` that forwards tracing events to MCP clients via `notifications/message`. |
-| `log` | Shipped | `ClapMcpLogBridge` — a `log::Log` implementation that forwards `log` crate messages to MCP clients. |
+| `tracing` | Shipped | `ClapMcpTracingLayer` — a `tracing_subscriber::Layer` that forwards tracing events to MCP clients via `notifications/message` (MCP logging deprecated by SEP-2577; still supported). See [logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md). |
+| `log` | Shipped | `ClapMcpLogBridge` — a `log::Log` implementation that forwards `log` crate messages to MCP clients (same SEP-2577 note as `tracing`). |
 | `output-schema` | Shipped | `schemars`-based JSON schema generation for structured tool output. Enables [`output_schema_for_type`], [`output_schema_one_of!`], and `#[clap_mcp_output_type]` / `#[clap_mcp_output_one_of]` to set each tool's `output_schema` for MCP clients. |
 | `http` | Shipped | Streamable HTTP MCP server (`--mcp-http`); see [http.md](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/http.md). |
 
@@ -107,7 +109,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-clap-mcp = { version = "0.0.4", features = ["tracing"] }
+clap-mcp = { version = "0.1.0-rc.1", features = ["tracing"] }
 ```
 
 ## When and when not to use `clap-mcp`
@@ -184,9 +186,9 @@ Every guide in [`docs/`](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs
 | [Stateful MCP tools](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/stateful-tools.md) | Shared session state, `parse_or_serve_mcp_with_state` |
 | [Security](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/security.md) | Schema validation, localhost/single-user model, subprocess and HTTP trust boundaries |
 | [Tool output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md) | `run` return types, structured output, `output-schema` |
-| [Logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md) | `tracing` / `log` bridges, MCP notifications |
+| [Logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md) | `tracing` / `log` bridges, MCP notifications, SEP-2577 deprecation note |
 | [Streamable HTTP](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/http.md) | `--mcp-http`, listen env vars |
-| [Migration notes (0.0.3 → 0.0.4)](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/migration-notes.md) | Breaking changes, rmcp port, API renames |
+| [Migration notes](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/migration-notes.md) | 0.1.0-rc.1 (rmcp 2.2), historical 0.0.3 → 0.0.4 |
 
 ### Maintainer notes
 
