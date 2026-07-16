@@ -25,6 +25,9 @@
 //! // Pass opts to parse_or_serve_mcp_with or ServeMcpBuilder::serve_options
 //! ```
 
+// LoggingLevel remains functional in rmcp 2.x but is deprecated by SEP-2577.
+#![allow(deprecated)]
+
 use rmcp::model::LoggingLevel;
 use serde_json::Value;
 use std::cell::RefCell;

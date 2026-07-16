@@ -11,8 +11,8 @@ Use a compatible semver range and let Cargo resolve the latest matching release:
 mcp = ["dep:clap-mcp", "dep:schemars"]
 
 [dependencies]
-clap-mcp = { version = "0.0.4", optional = true, features = ["output-schema", "http"] }
-schemars = { version = "0.8", optional = true, features = ["derive"] }
+clap-mcp = { version = "0.1.0-rc.1", optional = true, features = ["output-schema", "http"] }
+schemars = { version = "1", optional = true, features = ["derive"] }
 ```
 
 Or: `cargo add clap-mcp --optional --features output-schema,http`
@@ -37,8 +37,8 @@ Use only when crates.io lacks a fix you need. Pick branch or tag at integration 
 |---------|----------|-------------|
 | `output-schema` | Shipped | `#[clap_mcp_output_type]` / `JsonSchema` on tool output |
 | `http` | Shipped | Ship `--mcp-http` |
-| `tracing` | Shipped | Phase 6 tracing bridge |
-| `log` | Shipped | Phase 6 log bridge (replaces global logger) |
+| `tracing` | Shipped | Phase 6 tracing bridge (`notifications/message`; MCP logging deprecated by SEP-2577 — see [logging.md](../../../../docs/logging.md)) |
+| `log` | Shipped | Phase 6 log bridge (replaces global logger; same SEP-2577 note as `tracing`) |
 
 Default `derive` works without extra features beyond what you import. See [README feature flags](../../../../README.md#feature-flags).
 

@@ -5,7 +5,7 @@
 //! (SKILL.md) from the exposed tools, resources, and prompts.
 
 use async_trait::async_trait;
-use rmcp::model::{ErrorData, Prompt, PromptArgument, PromptMessage, RawResource, Resource};
+use rmcp::model::{ErrorData, Prompt, PromptArgument, PromptMessage, Resource};
 use std::sync::Arc;
 
 /// Content of a custom MCP resource: either static text or provided by an async callback.
@@ -58,17 +58,17 @@ pub struct CustomResource {
 impl CustomResource {
     /// Build an MCP `Resource` for list_resources.
     pub fn to_list_resource(&self) -> Resource {
-        let mut raw = RawResource::new(self.uri.clone(), self.name.clone());
+        let mut resource = Resource::new(self.uri.clone(), self.name.clone());
         if let Some(title) = &self.title {
-            raw = raw.with_title(title.clone());
+            resource = resource.with_title(title.clone());
         }
         if let Some(description) = &self.description {
-            raw = raw.with_description(description.clone());
+            resource = resource.with_description(description.clone());
         }
         if let Some(mime_type) = &self.mime_type {
-            raw = raw.with_mime_type(mime_type.clone());
+            resource = resource.with_mime_type(mime_type.clone());
         }
-        Resource::new(raw, None)
+        resource
     }
 }
 
@@ -378,7 +378,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use clap::{Arg, Command};
-    use rmcp::model::{PromptArgument, PromptMessageRole, Tool};
+    use rmcp::model::{PromptArgument, Role, Tool};
     use std::error::Error;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -450,10 +450,7 @@ mod tests {
     }
 
     fn sample_messages() -> Vec<PromptMessage> {
-        vec![PromptMessage::new_text(
-            PromptMessageRole::User,
-            "hello from prompt",
-        )]
+        vec![PromptMessage::new_text(Role::User, "hello from prompt")]
     }
 
     fn sample_tool(name: impl Into<String>, description: Option<String>) -> Tool {

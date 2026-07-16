@@ -101,8 +101,8 @@ Follow [reference-dependency.md](resources/reference-dependency.md).
 mcp = ["dep:clap-mcp", "dep:schemars"]
 
 [dependencies]
-clap-mcp = { version = "0.0.4", optional = true, features = ["output-schema", "http"] }
-schemars = { version = "0.8", optional = true, features = ["derive"] }
+clap-mcp = { version = "0.1.0-rc.1", optional = true, features = ["output-schema", "http"] }
+schemars = { version = "1", optional = true, features = ["derive"] }
 ```
 
 Add `tracing` or `log` clap-mcp features **only** when wiring a logging bridge (Phase 6).
@@ -237,6 +237,15 @@ Wire **only** when the project already uses `tracing` or `log` and MCP clients s
 - `log`: `ClapMcpLogBridge` replaces the global logger — skip unless acceptable.
 
 If wiring cost exceeds value (no existing subscriber, CLI is silent), **omit** — do not add logging deps solely for MCP.
+
+**Protocol deprecation (SEP-2577):** MCP logging (`notifications/message`,
+`logging/setLevel`, `ServerCapabilities.logging`) is deprecated upstream.
+clap-mcp still ships this bridge for **agent-facing** CLI diagnostics while a
+tool runs; it remains supported on current rmcp. Spec migration advice (stderr /
+OpenTelemetry) does not replace that client-visible stream. Prefer tool results
+/`capture_stdout` for durable output; use the bridge when live notifications
+matter. Track removal as a product risk — see
+[logging.md](../../../docs/logging.md).
 
 Upstream: [logging.md](../../../docs/logging.md).
 

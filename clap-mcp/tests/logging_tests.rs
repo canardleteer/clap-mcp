@@ -2,6 +2,8 @@
 //! Run with: cargo test --features tracing
 
 #![cfg(any(feature = "tracing", feature = "log"))]
+// Logging types remain functional in rmcp 2.x but are deprecated by SEP-2577.
+#![allow(deprecated)]
 
 use clap_mcp::logging::{McpTaskIdGuard, level_to_mcp, log_channel, log_params};
 use rmcp::model::LoggingLevel;

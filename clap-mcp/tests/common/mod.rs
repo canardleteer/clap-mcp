@@ -5,9 +5,9 @@
 use rmcp::{
     ClientHandler, RoleClient, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResult, ClientRequest, CreateTaskResult, GetTaskInfoParams,
-        GetTaskPayloadResult, GetTaskResult, GetTaskResultParams, PromptMessageContent,
-        ReadResourceResult, Request, ResourceContents, ServerResult, TaskStatus,
+        CallToolRequestParams, CallToolResult, ClientRequest, ContentBlock, CreateTaskResult,
+        GetTaskParams, GetTaskPayloadParams, GetTaskPayloadResult, GetTaskResult,
+        ReadResourceResult, Request, ResourceContents, ServerResult, TaskMetadata, TaskStatus,
     },
     service::Peer,
     transport::{ConfigureCommandExt, TokioChildProcess},
@@ -94,8 +94,8 @@ pub fn tool_text(result: &CallToolResult) -> String {
     result
         .content
         .iter()
-        .filter_map(|block| match &block.raw {
-            rmcp::model::RawContent::Text(text) => Some(text.text.clone()),
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.text.clone()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -116,7 +116,7 @@ pub fn read_text(result: &ReadResourceResult) -> String {
 
 pub fn prompt_has_text(messages: &[rmcp::model::PromptMessage], needle: &str) -> bool {
     messages.iter().any(|message| match &message.content {
-        PromptMessageContent::Text { text, .. } => text.contains(needle),
+        ContentBlock::Text(text) => text.text.contains(needle),
         _ => false,
     })
 }
@@ -131,7 +131,7 @@ pub fn task_call_params(
 ) -> CallToolRequestParams {
     CallToolRequestParams::new(name.into())
         .with_arguments(args)
-        .with_task(rmcp::object!({}))
+        .with_task(TaskMetadata::new())
 }
 
 pub async fn call_tool_task(
@@ -152,11 +152,8 @@ pub async fn get_task_info(
     task_id: &str,
 ) -> Result<GetTaskResult, rmcp::ServiceError> {
     let resp = peer
-        .send_request(ClientRequest::GetTaskInfoRequest(Request::new(
-            GetTaskInfoParams {
-                meta: None,
-                task_id: task_id.to_string(),
-            },
+        .send_request(ClientRequest::GetTaskRequest(Request::new(
+            GetTaskParams::new(task_id),
         )))
         .await?;
     match resp {
@@ -170,11 +167,8 @@ pub async fn get_task_payload(
     task_id: &str,
 ) -> Result<GetTaskPayloadResult, rmcp::ServiceError> {
     let resp = peer
-        .send_request(ClientRequest::GetTaskResultRequest(Request::new(
-            GetTaskResultParams {
-                meta: None,
-                task_id: task_id.to_string(),
-            },
+        .send_request(ClientRequest::GetTaskPayloadRequest(Request::new(
+            GetTaskPayloadParams::new(task_id),
         )))
         .await?;
     match resp {
@@ -222,6 +216,7 @@ pub async fn poll_until_completed_within(
                 }
                 tokio::time::sleep(Duration::from_millis(poll_ms)).await;
             }
+            _ => panic!("unexpected task status {:?}", st.task.status),
         }
     }
 }

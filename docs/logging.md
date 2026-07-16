@@ -8,6 +8,21 @@ clap-mcp forwards application log messages to MCP clients as
 `notifications/message`. Two feature-gated paths are available depending on
 your logging ecosystem.
 
+This bridge is for **agent-facing** streaming: CLI `tracing` / `log` output and
+related status while a tool runs. It is separate from tool result text
+(`CallToolResult`, including [`capture_stdout`](tool-output.md)) and from
+ops-oriented sinks such as OpenTelemetry.
+
+> [!WARNING]
+> MCP protocol logging (`notifications/message`, `logging/setLevel`,
+> `ServerCapabilities.logging`) is deprecated by
+> [SEP-2577](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2577).
+> clap-mcp’s bridge still works on rmcp 2.2 and remains the supported way to
+> push live CLI diagnostics to MCP clients. Spec migration advice (stderr /
+> OpenTelemetry) does not replace that client-visible stream. Track this as a
+> product risk; clap-mcp will keep the bridge until the protocol or SDK removes
+> the types, then document a successor path.
+
 ## `tracing` feature
 
 Enable with `features = ["tracing"]`. `ClapMcpTracingLayer` is a standard

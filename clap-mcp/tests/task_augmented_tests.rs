@@ -1,6 +1,8 @@
 //! Integration tests for MCP task-augmented `tools/call` (both `share_runtime` configurations).
 
 #![allow(clippy::await_holding_lock)]
+// Logging types remain functional in rmcp 2.x but are deprecated by SEP-2577.
+#![allow(deprecated)]
 
 mod common;
 

@@ -1,17 +1,59 @@
-# Migration notes (0.0.3-rc.1 → 0.0.4-rc.1)
+# Migration notes
 
-> Upgrade reference for CLI authors moving from clap-mcp `0.0.3-rc.1` to
-> `0.0.4-rc.1`. See [README](../README.md) to get started.
+> Upgrade reference for CLI authors. See [README](../README.md) to get started.
 
 [← Documentation index](../README.md#documentation)
 
-`0.0.4-rc.1` is a **breaking** release. It replaces the workspace dependency on
-**rust-mcp-sdk 0.9** with official
-**[rmcp 1.7](https://github.com/modelcontextprotocol/rust-sdk)**, slims the
-public API, and adds MCP task-augmented `tools/call`, concurrent execution
+## 0.0.5 → 0.1.0-rc.1
+
+`0.1.0-rc.1` is a **breaking** release. It bumps workspace [`rmcp`](https://docs.rs/rmcp)
+from **1.7** to **2.2**, moves `output-schema` to **schemars 1.x**, and keeps the
+derive / `ServeMcpBuilder` public surface from the 0.0.4 line. Copy-paste
+dependency examples use `version = "0.1.0-rc.1"` (match the workspace RC).
+
+Primary break for embedders: rmcp model types. See
+[rmcp 1.7 → 2.2](#rmcp-17--22). Derive-only CLIs that do not construct rmcp
+types usually need only a dependency bump.
+
+Later sections document the historical `0.0.3-rc.1` → `0.0.4-rc.1` port from
+rust-mcp-sdk to rmcp 1.7.
+
+## rmcp 1.7 → 2.2
+
+clap-mcp `0.1.0-rc.1` depends on **rmcp 2.2**. The JSON wire format is
+unchanged; the Rust model API aligns with MCP 2025-11-25. Upstream guide:
+[Migrating to 2.x](https://github.com/modelcontextprotocol/rust-sdk/discussions/926).
+
+If you only use clap-mcp derive entrypoints (`parse_or_serve_mcp*`) and do not
+construct rmcp types yourself, you typically only need to bump dependencies.
+If you build custom prompts/resources or an MCP task client, apply these
+renames:
+
+| Area | rmcp 1.x | rmcp 2.x |
+| --- | --- | --- |
+| Tool / prompt content | `Content` / `RawContent` / `PromptMessageContent` | `ContentBlock` |
+| Prompt roles | `PromptMessageRole` | `Role` |
+| Resources | `RawResource` + `Resource::new(raw, annotations)` | `Resource::new(uri, name).with_*()` |
+| Resource body | `ResourceContents::TextResourceContents { .. }` literals | `ResourceContents::text(..).with_mime_type(..)` (types are `#[non_exhaustive]`) |
+| Task poll params | `GetTaskInfoParams` / `GetTaskResultParams` | `GetTaskParams` / `GetTaskPayloadParams` |
+| Task client requests | `ClientRequest::GetTaskInfoRequest` / `GetTaskResultRequest` | `GetTaskRequest` / `GetTaskPayloadRequest` |
+| Task-augmented call | `with_task(object!({}))` | `with_task(TaskMetadata::new())` |
+| `output-schema` | `schemars` 0.8 | `schemars` 1.x (matches rmcp’s `server` feature) |
+
+MCP logging (`LoggingLevel`, `notifications/message`) remains supported through
+clap-mcp’s logging bridge. Upstream marks logging deprecated
+([SEP-2577](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2577));
+it still works in rmcp 2.2. See [logging.md](logging.md) for the agent-facing
+diagnostics product risk (stderr / OpenTelemetry are not a drop-in replacement).
+
+## Historical notes (0.0.3-rc.1 → 0.0.4-rc.1)
+
+`0.0.4-rc.1` replaced the workspace dependency on **rust-mcp-sdk 0.9** with
+official **[rmcp](https://github.com/modelcontextprotocol/rust-sdk)**, slimmed the
+public API, and added MCP task-augmented `tools/call`, concurrent execution
 options, and stateful in-process tools.
 
-## Breaking API changes (0.0.4-rc.1)
+### Breaking API changes (0.0.4-rc.1)
 
 Public API surface after `0.0.4-rc.1`:
 
@@ -57,10 +99,10 @@ Also removed: `parse_or_serve_mcp_with_config*` (use
 `ClapMcpConfig::task_augmented_tools`, public `tool_task_eligible`, public
 `ClapMcpServer` / `build_clap_mcp_server`.
 
-## Workspace dependency (rmcp 1.7)
+## Workspace dependency (rmcp 2.2)
 
 ```toml
-rmcp = { version = "1.7", default-features = false, features = [
+rmcp = { version = "2.2", default-features = false, features = [
   "server",
   "client",                 # example clients, integration tests
   "macros",
@@ -69,12 +111,12 @@ rmcp = { version = "1.7", default-features = false, features = [
 ] }
 ```
 
-Confirmed feature names in **rmcp 1.7.0** (HTTP/OAuth features exist
+Confirmed feature names in **rmcp 2.2.0** (HTTP/OAuth features exist
 separately):
 
 | Feature | Role |
 |---------|------|
-| `server` | `ServerHandler`, `serve_server`, `RoleServer` (implies `transport-async-rw`) |
+| `server` | `ServerHandler`, `serve_server`, `RoleServer` (implies `transport-async-rw`; pulls schemars 1.x) |
 | `client` | `ClientHandler`, `serve_client`, `RoleClient` |
 | `macros` | `rmcp-macros`, `#[tool_handler]`, etc. |
 | `transport-io` | `rmcp::transport::stdio()` — stdin/stdout server transport |
@@ -83,9 +125,13 @@ separately):
 `default` on rmcp enables `base64`, `macros`, `server` — clap-mcp sets
 `default-features = false` and enables explicitly.
 
-## Module / type mapping
+HTTP feature on clap-mcp still enables
+`rmcp/transport-streamable-http-server` and
+`rmcp/transport-streamable-http-client-reqwest`.
 
-| rust-mcp-sdk 0.9 | rmcp 1.7 |
+## Module / type mapping (historical 0.0.4 port)
+
+| rust-mcp-sdk 0.9 | rmcp 1.7+ |
 |------------------|----------|
 | `rust_mcp_sdk::schema::*` | `rmcp::model::*` |
 | `rust_mcp_sdk::mcp_server::ServerHandler` | `rmcp::ServerHandler` |
