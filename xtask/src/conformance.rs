@@ -20,12 +20,30 @@ const SERVER_PID_FILE: &str = "target/conformance-server.pid";
 const SERVER_LOG_FILE: &str = "target/conformance-server.log";
 const SERVER_PORT_FILE: &str = "target/conformance-port";
 
+/// Stable MCP protocol version under test. Keep aligned with
+/// `clap_mcp::protocol::PROTOCOL_VERSION_STABLE` / `SUPPORTED_PROTOCOL_VERSIONS`.
+const SPEC_STABLE: &str = "2025-11-25";
+/// Draft protocol alias in `@modelcontextprotocol/conformance` (`2026-07-28`).
+/// Keep aligned with `clap_mcp::protocol::PROTOCOL_VERSION_DRAFT`.
+const SPEC_DRAFT: &str = "draft";
+const DEFAULT_BASELINE: &str = "conformance-baseline.yml";
+const DEFAULT_DRAFT_BASELINE: &str = "conformance-baseline-draft.yml";
+
 #[derive(Parser)]
 pub struct ConformanceArgs {
-    #[arg(long, default_value = "active")]
+    /// Harness suite: `both` (default) runs active@2025-11-25 then draft@draft.
+    /// Single-suite values match the harness (`active`, `draft`, `all`, `pending`, `core`).
+    #[arg(long, default_value = "both")]
     pub suite: String,
-    #[arg(long, default_value = "conformance-baseline.yml")]
+    /// Filter by MCP protocol version (`2025-11-25`, `draft`, …). Ignored for `--suite both`.
+    #[arg(long)]
+    pub spec_version: Option<String>,
+    /// Expected-failures baseline for the stable (`2025-11-25` / `active`) pass.
+    #[arg(long, default_value = DEFAULT_BASELINE)]
     pub baseline: PathBuf,
+    /// Expected-failures baseline for the draft pass (`--suite both` or `--suite draft`).
+    #[arg(long, default_value = DEFAULT_DRAFT_BASELINE)]
+    pub draft_baseline: PathBuf,
     #[arg(long)]
     pub port: Option<u16>,
     #[arg(long)]
@@ -97,11 +115,69 @@ pub fn run_conformance(args: ConformanceArgs) -> Result<()> {
 
     let mut server = spawn_server(&binary, &addr, None, 0)?;
     let exit = match wait_ready(&format!("http://{addr}/mcp")) {
-        Ok(()) => run_conformance_docker(&root, port, &args.suite, &args.baseline, args.verbose),
+        Ok(()) => run_conformance_passes(&root, port, &args),
         Err(e) => Err(e),
     };
     stop_server(&mut server);
     exit
+}
+
+fn run_conformance_passes(root: &Path, port: u16, args: &ConformanceArgs) -> Result<()> {
+    let suite = args.suite.to_ascii_lowercase();
+    if suite == "both" {
+        eprintln!("=== Conformance pass 1/2: active @ {SPEC_STABLE} ===");
+        run_conformance_docker(
+            root,
+            port,
+            "active",
+            Some(SPEC_STABLE),
+            &args.baseline,
+            args.verbose,
+        )?;
+        eprintln!("=== Conformance pass 2/2: draft @ {SPEC_DRAFT} ===");
+        run_conformance_docker(
+            root,
+            port,
+            "draft",
+            Some(SPEC_DRAFT),
+            &args.draft_baseline,
+            args.verbose,
+        )?;
+        eprintln!("Both conformance passes succeeded ({SPEC_STABLE} + {SPEC_DRAFT}).");
+        return Ok(());
+    }
+
+    let (spec_version, baseline) = match suite.as_str() {
+        "draft" => (
+            args.spec_version
+                .as_deref()
+                .unwrap_or(SPEC_DRAFT)
+                .to_string(),
+            &args.draft_baseline,
+        ),
+        "active" | "core" => (
+            args.spec_version
+                .as_deref()
+                .unwrap_or(SPEC_STABLE)
+                .to_string(),
+            &args.baseline,
+        ),
+        _ => (
+            args.spec_version
+                .clone()
+                .unwrap_or_else(|| SPEC_STABLE.to_string()),
+            &args.baseline,
+        ),
+    };
+
+    run_conformance_docker(
+        root,
+        port,
+        &suite,
+        Some(spec_version.as_str()),
+        baseline,
+        args.verbose,
+    )
 }
 
 pub fn run_conformance_server(args: ConformanceServerArgs) -> Result<()> {
@@ -379,6 +455,7 @@ fn run_conformance_docker(
     root: &Path,
     port: u16,
     suite: &str,
+    spec_version: Option<&str>,
     baseline: &Path,
     verbose: bool,
 ) -> Result<()> {
@@ -389,13 +466,20 @@ fn run_conformance_docker(
     };
     if !baseline_abs.exists() {
         bail!(
-            "baseline file not found: {}; create it or pass --baseline",
+            "baseline file not found: {}; create it or pass --baseline / --draft-baseline",
             baseline_abs.display()
         );
     }
 
     let url = conformance_url(port);
-    eprintln!("Running conformance harness in Docker against {url} (suite {suite})...");
+    match spec_version {
+        Some(v) => eprintln!(
+            "Running conformance harness in Docker against {url} (suite {suite}, spec-version {v})..."
+        ),
+        None => {
+            eprintln!("Running conformance harness in Docker against {url} (suite {suite})...")
+        }
+    }
 
     let mut docker = Command::new("docker");
     docker.arg("run").arg("--rm");
@@ -413,6 +497,10 @@ fn run_conformance_docker(
         .args(["server", "--url", &url, "--suite", suite])
         .arg("--expected-failures")
         .arg("/baseline.yml");
+
+    if let Some(version) = spec_version {
+        docker.args(["--spec-version", version]);
+    }
 
     if verbose {
         docker.arg("--verbose");

@@ -51,6 +51,9 @@ pub mod logging;
 /// Custom MCP resources and prompts, and skill export.
 pub mod content;
 
+/// MCP protocol versions clap-mcp supports (aligned with conformance).
+pub mod protocol;
+
 #[cfg(feature = "derive")]
 pub use clap_mcp_macros::ClapMcp;
 pub use serve::{ServeMcp, ServeMcpBuilder};
@@ -4721,7 +4724,11 @@ mod tests {
         )
         .await
         .expect_err("missing resource should error");
-        assert!(missing.message.contains("unknown resource uri"));
+        assert_eq!(missing.message, "Resource not found");
+        assert_eq!(
+            missing.data,
+            Some(serde_json::json!({ "uri": "test://missing" }))
+        );
 
         let failing_resources = vec![content::CustomResource {
             uri: "test://broken".to_string(),
@@ -5188,6 +5195,7 @@ mod tests {
         let info = with_logging.get_info();
         assert!(info.capabilities.logging.is_some());
         assert!(info.capabilities.tasks.is_none());
+        assert_eq!(info.protocol_version.as_str(), "2025-11-25");
         assert_eq!(
             info.instructions.as_deref(),
             Some(LOG_INTERPRETATION_INSTRUCTIONS)

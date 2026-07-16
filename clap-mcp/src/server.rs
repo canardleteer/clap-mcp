@@ -7,20 +7,22 @@ use crate::{
     ClapMcpConfig, ClapMcpError, ClapMcpSchemaMetadata, ClapMcpSerializeScope, ClapMcpServeOptions,
     ClapMcpToolError, ClapMcpToolOutput, InProcessToolHandler, LOG_INTERPRETATION_INSTRUCTIONS,
     LOGGING_GUIDE_CONTENT, MCP_RESOURCE_URI_SCHEMA, PROMPT_LOGGING_GUIDE, content,
-    logging::LoggingMessageNotificationParams, serialize_lock_key,
+    logging::LoggingMessageNotificationParams,
+    protocol::{PROTOCOL_VERSION_STABLE, negotiate_protocol_version},
+    serialize_lock_key,
 };
 use rmcp::{
-    ErrorData as McpError, Peer, ServerHandler, ServiceExt,
+    ErrorData as McpError, Peer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResult, ContentBlock, CreateTaskResult,
         GetPromptRequestParams, GetPromptResult, GetTaskParams, GetTaskPayloadParams,
-        GetTaskPayloadResult, GetTaskResult, Implementation, ListPromptsResult,
-        ListResourcesResult, ListToolsResult, LoggingLevel, LoggingMessageNotification,
-        LoggingMessageNotificationParam, Meta, PaginatedRequestParams, PromptMessage,
-        ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents, Role,
-        ServerCapabilities, SetLevelRequestParams, Task, TaskStatus, Tool,
+        GetTaskPayloadResult, GetTaskResult, Implementation, InitializeRequestParams,
+        ListPromptsResult, ListResourcesResult, ListToolsResult, LoggingLevel,
+        LoggingMessageNotification, LoggingMessageNotificationParam, Meta, PaginatedRequestParams,
+        PromptMessage, ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents,
+        Role, ServerCapabilities, SetLevelRequestParams, Task, TaskStatus, Tool,
     },
-    service::{RequestContext, RoleServer},
+    service::{RequestContext, RoleServer, serve_directly},
     task_manager::{
         OperationDescriptor, OperationMessage, OperationProcessor, ToolCallTaskResult,
         current_timestamp,
@@ -226,11 +228,31 @@ impl ServerHandler for ClapMcpServer {
         let server_info = Implementation::new("clap-mcp", env!("CARGO_PKG_VERSION"))
             .with_title("clap-mcp")
             .with_description("Expose clap CLI schema over MCP (stdio)");
-        let mut info = rmcp::model::ServerInfo::new(capabilities).with_server_info(server_info);
+        let mut info = rmcp::model::ServerInfo::new(capabilities)
+            .with_server_info(server_info)
+            .with_protocol_version(PROTOCOL_VERSION_STABLE);
         if logging_enabled {
             info = info.with_instructions(LOG_INTERPRETATION_INSTRUCTIONS);
         }
         info
+    }
+
+    fn initialize(
+        &self,
+        mut request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<rmcp::model::InitializeResult, McpError>> + Send + '_
+    {
+        // Restrict negotiation to conformance-tested versions. Stdio uses
+        // `serve_directly` so rmcp cannot overwrite this with full KNOWN_VERSIONS.
+        // Streamable HTTP still goes through rmcp `serve_server`, which may echo
+        // older known versions; see `protocol` module docs.
+        let negotiated = negotiate_protocol_version(&request.protocol_version);
+        request.protocol_version = negotiated.clone();
+        context.peer.set_peer_info(request);
+        let mut info = self.get_info();
+        info.protocol_version = negotiated;
+        std::future::ready(Ok(info))
     }
 
     fn set_level(
@@ -646,13 +668,14 @@ pub(crate) async fn serve_schema_json_over_stdio(
 
     use rmcp::transport::IntoTransport;
 
+    // `serve_directly` so `initialize` negotiation is not rewritten by rmcp's
+    // post-handshake echo of every `ProtocolVersion::KNOWN_VERSIONS` entry.
     let service = match stdio_io {
-        crate::serve::McpStdioIo::Process => server.serve(rmcp::transport::stdio()).await,
+        crate::serve::McpStdioIo::Process => serve_directly(server, rmcp::transport::stdio(), None),
         crate::serve::McpStdioIo::Custom { read, write } => {
-            server.serve((read, write).into_transport()).await
+            serve_directly(server, (read, write).into_transport(), None)
         }
-    }
-    .map_err(|e| ClapMcpError::Mcp(Box::new(rmcp::RmcpError::ServerInitialize(e))))?;
+    };
     service.waiting().await.map_err(ClapMcpError::Join)?;
     Ok(())
 }
@@ -845,9 +868,11 @@ pub(crate) async fn read_resource_result(
         .iter()
         .find(|resource| resource.uri == params.uri);
     let Some(resource) = custom else {
-        return Err(McpError::invalid_params(
-            format!("unknown resource uri: {}", params.uri),
-            None,
+        // SEP-2164: include the requested URI in error `data` (rmcp upgrades
+        // RESOURCE_NOT_FOUND to INVALID_PARAMS for protocol 2026-07-28+).
+        return Err(McpError::resource_not_found(
+            "Resource not found",
+            Some(serde_json::json!({ "uri": params.uri })),
         ));
     };
     let text = content::resolve_resource_content(resource, &params.uri).await?;

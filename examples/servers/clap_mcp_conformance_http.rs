@@ -22,7 +22,7 @@ use clap_mcp::logging::{ClapMcpTracingLayer, log_channel, log_params};
 #[cfg(all(feature = "tracing", feature = "http"))]
 use clap_mcp::{ClapMcp, ClapMcpConfigProvider, ClapMcpToolError, IntoClapMcpToolError};
 #[cfg(all(feature = "tracing", feature = "http"))]
-use rmcp::model::{LoggingLevel, PromptArgument, PromptMessage, Role};
+use rmcp::model::{ContentBlock, ImageContent, LoggingLevel, PromptArgument, PromptMessage, Role};
 #[cfg(all(feature = "tracing", feature = "http"))]
 use std::{sync::OnceLock, time::Duration};
 #[cfg(all(feature = "tracing", feature = "http"))]
@@ -74,6 +74,40 @@ impl PromptContentProvider for PromptWithArgumentsProvider {
     }
 }
 
+/// 1×1 transparent PNG (base64) for `prompts-get-with-image`.
+#[cfg(all(feature = "tracing", feature = "http"))]
+const CONFORMANCE_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+#[cfg(all(feature = "tracing", feature = "http"))]
+struct PromptWithEmbeddedResourceProvider;
+
+#[cfg(all(feature = "tracing", feature = "http"))]
+#[async_trait]
+impl PromptContentProvider for PromptWithEmbeddedResourceProvider {
+    async fn get(
+        &self,
+        _name: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Vec<PromptMessage>, Box<dyn std::error::Error + Send + Sync>> {
+        let resource_uri = arguments
+            .get("resourceUri")
+            .and_then(|v| v.as_str())
+            .unwrap_or("test://example-resource");
+        Ok(vec![
+            PromptMessage::new_resource(
+                Role::User,
+                resource_uri.to_string(),
+                Some("text/plain".into()),
+                Some("Embedded resource content for testing.".into()),
+                None,
+                None,
+                None,
+            ),
+            PromptMessage::new_text(Role::User, "Please process the embedded resource above."),
+        ])
+    }
+}
+
 #[cfg(all(feature = "tracing", feature = "http"))]
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = false, share_runtime = true)]
@@ -84,13 +118,17 @@ impl PromptContentProvider for PromptWithArgumentsProvider {
     subcommand_required = false
 )]
 enum Cli {
+    /// Conformance harness: tool that returns simple text content.
+    #[command(name = "test_simple_text")]
+    SimpleText,
+
     /// Conformance harness: tool that emits MCP log notifications during execution.
     #[command(name = "test_tool_with_logging")]
-    TestToolWithLogging,
+    ToolWithLogging,
 
     /// Conformance harness: tool that always returns an MCP error result.
     #[command(name = "test_error_handling")]
-    TestErrorHandling,
+    ErrorHandling,
 }
 
 #[cfg(all(feature = "tracing", feature = "http"))]
@@ -109,18 +147,17 @@ async fn send_conformance_log_async(message: &str) {
 #[cfg(all(feature = "tracing", feature = "http"))]
 fn run(cmd: Cli) -> Result<String, ConformanceToolError> {
     match cmd {
-        Cli::TestToolWithLogging => {
-            Ok(clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || async {
-                send_conformance_log_async("Tool execution started").await;
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                send_conformance_log_async("Tool processing data").await;
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                send_conformance_log_async("Tool execution completed").await;
-                "Tool with logging executed".to_string()
-            })
-            .map_err(|e| ConformanceToolError::Intentional(format!("async tool failed: {e}")))?)
-        }
-        Cli::TestErrorHandling => Err(ConformanceToolError::Intentional(
+        Cli::SimpleText => Ok("This is a simple text response for testing.".into()),
+        Cli::ToolWithLogging => Ok(clap_mcp::run_async_tool(&Cli::clap_mcp_config(), || async {
+            send_conformance_log_async("Tool execution started").await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            send_conformance_log_async("Tool processing data").await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            send_conformance_log_async("Tool execution completed").await;
+            "Tool with logging executed".to_string()
+        })
+        .map_err(|e| ConformanceToolError::Intentional(format!("async tool failed: {e}")))?),
+        Cli::ErrorHandling => Err(ConformanceToolError::Intentional(
             "This tool intentionally returns an error for testing".into(),
         )),
     }
@@ -183,6 +220,35 @@ fn conformance_serve_options() -> clap_mcp::ClapMcpServeOptions {
                 .with_required(true),
         ],
         content: PromptContent::Dynamic(std::sync::Arc::new(PromptWithArgumentsProvider)),
+    });
+
+    // Custom prompts accept rmcp `PromptMessage` content blocks (including image /
+    // embedded resource). The fixture exercises that pass-through for harness IDs
+    // that match shipped custom-prompt API, not tool-result media.
+    serve_options.custom_prompts.push(CustomPrompt {
+        name: "test_prompt_with_image".into(),
+        title: Some("Image conformance prompt".into()),
+        description: Some("Prompt that includes an image content block".into()),
+        arguments: vec![],
+        content: PromptContent::Static(vec![
+            PromptMessage::new(
+                Role::User,
+                ContentBlock::Image(ImageContent::new(CONFORMANCE_PNG_B64, "image/png")),
+            ),
+            PromptMessage::new_text(Role::User, "Please analyze the image above."),
+        ]),
+    });
+
+    serve_options.custom_prompts.push(CustomPrompt {
+        name: "test_prompt_with_embedded_resource".into(),
+        title: Some("Embedded resource conformance prompt".into()),
+        description: Some("Prompt that embeds a resource from resourceUri".into()),
+        arguments: vec![
+            PromptArgument::new("resourceUri")
+                .with_description("URI of the resource to embed")
+                .with_required(true),
+        ],
+        content: PromptContent::Dynamic(std::sync::Arc::new(PromptWithEmbeddedResourceProvider)),
     });
 
     serve_options

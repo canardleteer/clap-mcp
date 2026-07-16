@@ -100,12 +100,15 @@ Current excludes:
 ## MCP conformance (local)
 
 Prefer `cargo xtask conformance`. It stops stale
-`clap-mcp-conformance-http` processes before running the pinned Docker harness.
+`clap-mcp-conformance-http` processes before running the pinned Docker harness
+twice (`active` @ `2025-11-25`, then `draft` @ `draft`). Requires Docker.
 
 | Command | Use |
 | --- | --- |
-| `cargo xtask conformance` | Local harness run (start → test → stop) |
+| `cargo xtask conformance` | Dual pass (stable + draft); start → test → stop |
+| `cargo xtask conformance --suite active` | Stable pass only (`2025-11-25`) |
+| `cargo xtask conformance --suite draft` | Draft pass only |
 | `cargo xtask conformance-stop` | Stop `conformance-server` / orphan fixture; remove pid/log/port files |
-| `cargo xtask conformance-server` | CI/debug only; stale guard unless `--force` |
+| `cargo xtask conformance-server` | Advanced debugging only; stale guard unless `--force` |
 
 See [conformance-baseline.md](conformance-baseline.md) for baseline updates and local safety.

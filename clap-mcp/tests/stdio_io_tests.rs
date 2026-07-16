@@ -2,6 +2,8 @@
 
 use clap::Parser;
 use clap_mcp::{ClapMcp, ClapMcpConfig, ClapMcpSchemaMetadata, McpListen, ServeMcpBuilder};
+use rmcp::model::{ClientJsonRpcMessage, ServerJsonRpcMessage, ServerResult};
+use rmcp::transport::{IntoTransport, Transport};
 use rmcp::{ClientHandler, ServiceExt};
 use std::time::Duration;
 
@@ -49,6 +51,55 @@ async fn stdio_io_duplex_list_tools() {
     assert!(tools.iter().any(|t| t.name == "ping"));
 
     client.cancel().await.ok();
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stdio_initialize_falls_back_from_untested_protocol_version() {
+    let (io1, io2) = tokio::io::duplex(8192);
+    let (server_read, server_write) = tokio::io::split(io1);
+    let (client_read, client_write) = tokio::io::split(io2);
+
+    let server = tokio::spawn(async move {
+        ServeMcpBuilder::for_cli::<StdioIoTestCli>(McpListen::Stdio)
+            .stdio_io(server_read, server_write)
+            .serve()
+            .await
+            .expect("stdio_io server should start");
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut client =
+        IntoTransport::<rmcp::RoleClient, _, _>::into_transport((client_read, client_write));
+    let init: ClientJsonRpcMessage = serde_json::from_str(
+        r#"{
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "proto-test", "version": "0.0.0" }
+            }
+        }"#,
+    )
+    .expect("init request JSON");
+    client.send(init).await.expect("send initialize");
+    let response = client.receive().await.expect("initialize response");
+    let ServerJsonRpcMessage::Response(resp) = response else {
+        panic!("expected JSON-RPC response, got {response:?}");
+    };
+    let ServerResult::InitializeResult(result) = resp.result else {
+        panic!("expected InitializeResult, got {:?}", resp.result);
+    };
+    assert_eq!(
+        result.protocol_version.as_str(),
+        "2025-11-25",
+        "stdio must not echo untested protocol versions"
+    );
+
     server.abort();
     let _ = server.await;
 }
