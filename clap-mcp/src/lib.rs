@@ -51,7 +51,7 @@ pub mod logging;
 /// Custom MCP resources and prompts, and skill export.
 pub mod content;
 
-/// MCP protocol versions clap-mcp supports (aligned with conformance).
+/// MCP protocol versions clap-mcp advertises and accepts in `initialize`.
 pub mod protocol;
 
 #[cfg(feature = "derive")]

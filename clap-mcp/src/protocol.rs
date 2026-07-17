@@ -1,23 +1,19 @@
-//! MCP protocol versions clap-mcp supports and conformance-tests.
-//!
-//! Keep in sync with `cargo xtask conformance` (`active` @ `2025-11-25` and
-//! `draft` @ `draft` / `2026-07-28`). See [`docs/conformance-baseline.md`].
-//!
-//! [`docs/conformance-baseline.md`]: ../../docs/conformance-baseline.md
+//! When you add a version here, run `cargo xtask conformance` for that version
+//! as far as the harness and baseline allow. Do not advertise versions that
+//! have not been exercised.
 
 use rmcp::model::ProtocolVersion;
 
 /// Stable MCP protocol version (primary advertise / fallback).
 pub const PROTOCOL_VERSION_STABLE: ProtocolVersion = ProtocolVersion::V_2025_11_25;
 
-/// Draft MCP protocol version exercised by the draft conformance pass.
+/// Draft MCP protocol version clap-mcp accepts during negotiation.
 pub const PROTOCOL_VERSION_DRAFT: ProtocolVersion = ProtocolVersion::V_2026_07_28;
 
 /// Protocol versions clap-mcp advertises and accepts in `initialize` negotiation.
 ///
-/// Matches the dual conformance gate (`2025-11-25` and draft `2026-07-28`). Older
-/// rmcp `KNOWN_VERSIONS` entries are not echoed; clients requesting them receive
-/// [`PROTOCOL_VERSION_STABLE`] per the MCP lifecycle rules.
+/// Clients that request a version outside this set receive
+/// [`PROTOCOL_VERSION_STABLE`].
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[ProtocolVersion] =
     &[PROTOCOL_VERSION_STABLE, PROTOCOL_VERSION_DRAFT];
 
