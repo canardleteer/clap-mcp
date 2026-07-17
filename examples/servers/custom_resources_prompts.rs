@@ -48,6 +48,18 @@ fn main() {
         ),
     });
 
+    // 1×1 transparent PNG (base64) for blob resource reads.
+    serve_options.custom_resources.push(CustomResource {
+        uri: "example://icon".into(),
+        name: "icon".into(),
+        title: Some("Example icon".into()),
+        description: Some("Static PNG blob for binary resource reads".into()),
+        mime_type: Some("image/png".into()),
+        content: ResourceContent::StaticBlob {
+            base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==".into(),
+        },
+    });
+
     serve_options.custom_prompts.push(CustomPrompt {
         name: "example-prompt".into(),
         title: Some("Example prompt".into()),

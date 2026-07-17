@@ -1,7 +1,9 @@
 mod common;
 
-use common::{launch_example, prompt_has_text, read_text, shutdown, tool_text};
-use rmcp::model::{CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams};
+use common::{launch_example, prompt_has_text, read_blob, read_text, shutdown, tool_text};
+use rmcp::model::{
+    CallToolRequestParams, GetPromptRequestParams, ReadResourceRequestParams, ResourceContents,
+};
 
 #[tokio::test(flavor = "current_thread")]
 async fn custom_resources_and_prompts_round_trip() {
@@ -30,6 +32,23 @@ async fn custom_resources_and_prompts_round_trip() {
         .await
         .expect("custom resource should be readable");
     assert!(read_text(&readme).contains("Custom resources & prompts example"));
+
+    assert!(
+        resources
+            .iter()
+            .any(|resource| resource.uri == "example://icon")
+    );
+    let icon = client
+        .read_resource(ReadResourceRequestParams::new("example://icon"))
+        .await
+        .expect("blob resource should be readable");
+    let (blob, mime) = read_blob(&icon).expect("icon should return blob contents");
+    assert!(blob.starts_with("iVBORw0KGgo"));
+    assert_eq!(mime.as_deref(), Some("image/png"));
+    assert!(matches!(
+        icon.contents[0],
+        ResourceContents::BlobResourceContents { .. }
+    ));
 
     let schema = client
         .read_resource(ReadResourceRequestParams::new("clap://schema"))

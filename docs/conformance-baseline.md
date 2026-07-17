@@ -88,7 +88,6 @@ Source: [`conformance-baseline.yml`](../conformance-baseline.yml)
 | `tools-call-elicitation` | Tool calls client `elicitation/create` | Elicitation scaffolding removed; see [migration-notes](migration-notes.md#removed-scaffolding-elicitation) | `deferred` (revisit when a clap-shaped confirm/prompt pattern exists) |
 | `elicitation-sep1034-defaults` | Elicitation schema with primitive defaults (SEP-1034) | Same elicitation gap | `deferred` |
 | `elicitation-sep1330-enums` | Elicitation enum schema variants (SEP-1330) | Same elicitation gap | `deferred` |
-| `resources-read-binary` | Resource `test://static-binary` returns `blob` | `ResourceContent` is `String` only; reads use text contents | `deferred` (binary/`blob` custom resources) |
 | `resources-templates-read` | Template `test://template/{id}/data` with substitution | No resource-templates API; `list_resource_templates` empty | `deferred` (URI templates for custom resources) |
 | `resources-subscribe` | `resources/subscribe` + capability | Subscribe handlers and `resources.subscribe` capability not set | `deferred` |
 | `resources-unsubscribe` | `resources/unsubscribe` | Pairs with subscribe; not implemented | `deferred` |
@@ -99,7 +98,8 @@ Source: [`conformance-baseline.yml`](../conformance-baseline.yml)
   `completion-complete`
 * Lists: `tools-list`, `resources-list`, `prompts-list`
 * Shipped capabilities: `tools-call-simple-text`, `tools-call-with-logging`,
-  `tools-call-error`, `resources-read-text`, `prompts-get-simple`,
+  `tools-call-error`, `resources-read-text`, `resources-read-binary`
+  (`ResourceContent::StaticBlob`), `prompts-get-simple`,
   `prompts-get-with-args`, `prompts-get-with-image`,
   `prompts-get-embedded-resource` (image/embedded via custom `PromptMessage`
   pass-through, not tool-result media)
@@ -146,22 +146,23 @@ negotiation, but does not implement the full draft server surface.
 
 Ordered by how close they are to clap-mcp’s product shape:
 
-1. **Binary custom resources** (`resources-read-binary`) — extend `ResourceContent`
-   beyond `String` / emit `blob`.
-2. **Resource URI templates** (`resources-templates-read`) — template list + read
+1. **Resource URI templates** (`resources-templates-read`) — template list + read
    substitution for custom resources.
-3. **Resource subscribe/unsubscribe** — capability + handlers when a clap-shaped
-   invalidation story exists.
-4. **List-result cache hints** (`caching`) — optional `ttlMs` / `cacheScope` on
+2. **Resource subscribe/unsubscribe** — capability + handlers; update
+   notifications remain out of scope until a clap-shaped invalidation story exists.
+3. **List-result cache hints** (`caching`) — optional `ttlMs` / `cacheScope` on
    tools/resources/prompts list results.
-5. **Progress notifications** (`tools-call-with-progress`) — optional bridge from
+4. **Progress notifications** (`tools-call-with-progress`) — optional bridge from
    long-running tools when embedders can supply a progress token.
-6. **Elicitation / InputRequiredResult** — revisit only with a clear clap UX
+5. **Elicitation / InputRequiredResult** — revisit only with a clear clap UX
    (confirm flags, interactive prompts); currently deferred after scaffolding
    removal.
-7. **Stateless / SEP-2575 HTTP**, **SEP-2243 header rules**, and **draft JSON-RPC
+6. **Stateless / SEP-2575 HTTP**, **SEP-2243 header rules**, and **draft JSON-RPC
    error encoding** (`sep-2164` under draft) — largely transport/`rmcp` work;
    track upstream before inventing a clap-mcp layer.
+
+Shipped from this backlog: binary custom resources (`resources-read-binary` via
+`ResourceContent::StaticBlob`).
 
 ## Remote CI debugging
 

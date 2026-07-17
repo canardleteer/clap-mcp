@@ -18,12 +18,14 @@ values. Each has:
 
 * **Identity:** `uri`, `name`, optional `title`, `description`, `mime_type`. Use
   a stable URI (e.g. `myapp://config`) so clients can list and read.
-* **Content:** Either **static** (`ResourceContent::Static(String)`) or
-  **dynamic** (`ResourceContent::Dynamic(Arc<dyn ResourceContentProvider>)`).
-  Dynamic content uses the async [`ResourceContentProvider::read`](https://docs.rs/clap-mcp/latest/clap_mcp/content/trait.ResourceContentProvider.html#tymethod.read)
-  so the handler can await it.
+* **Content:** One of:
+  * **static text** (`ResourceContent::Static(String)`) for MCP text contents
+  * **static binary** (`ResourceContent::StaticBlob { base64 }`) for MCP `blob`
+    contents (pass base64-encoded bytes; clap-mcp does not encode or decode)
+  * **dynamic text** (`ResourceContent::Dynamic(Arc<dyn ResourceContentProvider>)`)
+    via async [`ResourceContentProvider::read`](https://docs.rs/clap-mcp/latest/clap_mcp/content/trait.ResourceContentProvider.html#tymethod.read)
 
-Example (static):
+Example (static text):
 
 ```rust
 use clap_mcp::content::{CustomResource, ResourceContent};
@@ -39,7 +41,24 @@ opts.custom_resources.push(CustomResource {
 });
 ```
 
-For dynamic content, implement
+Example (static binary / blob):
+
+```rust
+use clap_mcp::content::{CustomResource, ResourceContent};
+
+opts.custom_resources.push(CustomResource {
+    uri: "myapp://icon".into(),
+    name: "icon".into(),
+    title: Some("Icon".into()),
+    description: Some("PNG icon".into()),
+    mime_type: Some("image/png".into()),
+    content: ResourceContent::StaticBlob {
+        base64: "iVBORw0KGgo...".into(),
+    },
+});
+```
+
+For dynamic text content, implement
 [`ResourceContentProvider`](https://docs.rs/clap-mcp/latest/clap_mcp/content/trait.ResourceContentProvider.html)
 (async `read(uri)`).
 
