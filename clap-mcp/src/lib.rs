@@ -793,6 +793,12 @@ pub struct ClapMcpServeOptions {
     /// Custom MCP resources (static or async dynamic). Merged with the built-in `clap://schema` resource.
     pub custom_resources: Vec<content::CustomResource>,
 
+    /// Custom MCP resource URI templates (`resources/templates/list` + template `resources/read`).
+    ///
+    /// Simple `{param}` single-segment dialect only. Exact [`custom_resources`](Self::custom_resources)
+    /// URIs take precedence over template matches.
+    pub custom_resource_templates: Vec<content::CustomResourceTemplate>,
+
     /// Custom MCP prompts (static or async dynamic). Merged with the built-in logging guide when logging is enabled.
     pub custom_prompts: Vec<content::CustomPrompt>,
 }
@@ -3413,8 +3419,9 @@ mod tests {
         ClapMcpServer, build_clap_mcp_server, build_execution_command,
         call_tool_result_from_output, call_tool_result_from_panic,
         call_tool_result_from_tool_error, command_launch_failure_result, get_prompt_result,
-        list_prompts_result, list_resources_result, placeholder_tool_result, read_resource_result,
-        schema_parse_failure_result, subprocess_stderr_log_params, validate_tool_argument_names,
+        list_prompts_result, list_resource_templates_result, list_resources_result,
+        placeholder_tool_result, read_resource_result, schema_parse_failure_result,
+        subprocess_stderr_log_params, validate_tool_argument_names,
     };
     use async_trait::async_trait;
     use clap::{Arg, ArgAction, ArgGroup, Command, CommandFactory};
@@ -4708,6 +4715,7 @@ mod tests {
         let schema_read = read_resource_result(
             "{\"name\":\"sample\"}",
             &custom,
+            &[],
             ReadResourceRequestParams::new(MCP_RESOURCE_URI_SCHEMA),
         )
         .await
@@ -4721,6 +4729,7 @@ mod tests {
         let custom_read = read_resource_result(
             "{}",
             &custom,
+            &[],
             ReadResourceRequestParams::new("test://dynamic"),
         )
         .await
@@ -4734,6 +4743,7 @@ mod tests {
         let blob_read = read_resource_result(
             "{}",
             &custom,
+            &[],
             ReadResourceRequestParams::new("test://static-binary"),
         )
         .await
@@ -4755,6 +4765,7 @@ mod tests {
         let missing = read_resource_result(
             "{}",
             &custom,
+            &[],
             ReadResourceRequestParams::new("test://missing"),
         )
         .await
@@ -4778,11 +4789,88 @@ mod tests {
         let failing = read_resource_result(
             "{}",
             &failing_resources,
+            &[],
             ReadResourceRequestParams::new("test://broken"),
         )
         .await
         .expect_err("provider failure should map to rpc error");
         assert_eq!(failing.message, "read failed");
+    }
+
+    #[tokio::test]
+    async fn test_resource_templates_list_match_and_read() {
+        let templates = vec![content::CustomResourceTemplate {
+            uri_template: "test://template/{id}/data".to_string(),
+            name: "template-data".to_string(),
+            title: Some("Template data".to_string()),
+            description: Some("Parameterized resource".to_string()),
+            mime_type: Some("application/json".to_string()),
+            content: content::ResourceContent::Static(
+                r#"{"id":"{id}","templateTest":true,"data":"Data for ID: {id}"}"#.into(),
+            ),
+        }];
+        let exact = vec![content::CustomResource {
+            uri: "test://template/exact/data".to_string(),
+            name: "exact".to_string(),
+            title: None,
+            description: None,
+            mime_type: Some("text/plain".to_string()),
+            content: content::ResourceContent::Static("exact wins".into()),
+        }];
+
+        let listed = list_resource_templates_result(&templates);
+        assert_eq!(listed.resource_templates.len(), 1);
+        assert_eq!(
+            listed.resource_templates[0].uri_template,
+            "test://template/{id}/data"
+        );
+        assert_eq!(listed.resource_templates[0].name, "template-data");
+
+        let templated = read_resource_result(
+            "{}",
+            &exact,
+            &templates,
+            ReadResourceRequestParams::new("test://template/123/data"),
+        )
+        .await
+        .expect("template read should resolve");
+        let text = match &templated.contents[0] {
+            ResourceContents::TextResourceContents { text, uri, .. } => {
+                assert_eq!(uri, "test://template/123/data");
+                text
+            }
+            other => panic!("unexpected content: {other:?}"),
+        };
+        assert!(text.contains("\"123\""));
+        assert!(text.contains("Data for ID: 123"));
+
+        let exact_read = read_resource_result(
+            "{}",
+            &exact,
+            &templates,
+            ReadResourceRequestParams::new("test://template/exact/data"),
+        )
+        .await
+        .expect("exact resource should win over template");
+        let text = match &exact_read.contents[0] {
+            ResourceContents::TextResourceContents { text, .. } => text,
+            other => panic!("unexpected content: {other:?}"),
+        };
+        assert_eq!(text, "exact wins");
+
+        let missing = read_resource_result(
+            "{}",
+            &exact,
+            &templates,
+            ReadResourceRequestParams::new("test://template/123/other"),
+        )
+        .await
+        .expect_err("non-matching template URI should be not found");
+        assert_eq!(missing.message, "Resource not found");
+        assert_eq!(
+            missing.data,
+            Some(serde_json::json!({ "uri": "test://template/123/other" }))
+        );
     }
 
     #[tokio::test]

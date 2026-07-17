@@ -78,6 +78,30 @@ The built-in **`clap-mcp-logging-guide`** prompt is only listed when logging is
 enabled (`serve_options.log_rx.is_some()`). Custom prompts are always merged
 into the list.
 
+## Resource URI templates
+
+Set [`custom_resource_templates`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html#structfield.custom_resource_templates)
+to expose `resources/templates/list` and template-matched `resources/read`.
+
+Templates use a simple dialect: single-segment `{param}` placeholders such as
+`myapp://item/{id}`. This is not full RFC 6570. On read, clap-mcp substitutes
+captured values into static (and dynamic) text content. Exact
+`custom_resources` URIs take precedence over template matches. `StaticBlob` is
+not supported for template content in this release.
+
+```rust
+use clap_mcp::content::{CustomResourceTemplate, ResourceContent};
+
+opts.custom_resource_templates.push(CustomResourceTemplate {
+    uri_template: "myapp://item/{id}".into(),
+    name: "item".into(),
+    title: Some("Item".into()),
+    description: Some("Item by id".into()),
+    mime_type: Some("application/json".into()),
+    content: ResourceContent::Static(r#"{"id":"{id}"}"#.into()),
+});
+```
+
 ## Resource subscribe
 
 When resources are enabled, clap-mcp advertises `resources.subscribe` and

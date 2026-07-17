@@ -15,7 +15,8 @@ use async_trait::async_trait;
 use clap::Parser;
 #[cfg(all(feature = "tracing", feature = "http"))]
 use clap_mcp::content::{
-    CustomPrompt, CustomResource, PromptContent, PromptContentProvider, ResourceContent,
+    CustomPrompt, CustomResource, CustomResourceTemplate, PromptContent, PromptContentProvider,
+    ResourceContent,
 };
 #[cfg(all(feature = "tracing", feature = "http"))]
 use clap_mcp::logging::{ClapMcpTracingLayer, log_channel, log_params};
@@ -184,6 +185,7 @@ fn conformance_serve_options() -> clap_mcp::ClapMcpServeOptions {
         #[cfg(unix)]
         capture_stdout: false,
         custom_resources: vec![],
+        custom_resource_templates: vec![],
         custom_prompts: vec![],
     };
 
@@ -206,6 +208,19 @@ fn conformance_serve_options() -> clap_mcp::ClapMcpServeOptions {
             base64: CONFORMANCE_PNG_B64.into(),
         },
     });
+
+    serve_options
+        .custom_resource_templates
+        .push(CustomResourceTemplate {
+            uri_template: "test://template/{id}/data".into(),
+            name: "template-data".into(),
+            title: Some("Template data (conformance)".into()),
+            description: Some("URI template resource for MCP conformance harness".into()),
+            mime_type: Some("application/json".into()),
+            content: ResourceContent::Static(
+                r#"{"id":"{id}","templateTest":true,"data":"Data for ID: {id}"}"#.into(),
+            ),
+        });
 
     serve_options.custom_prompts.push(CustomPrompt {
         name: "test_simple_prompt".into(),

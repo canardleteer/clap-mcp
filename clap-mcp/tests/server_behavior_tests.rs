@@ -50,6 +50,22 @@ async fn custom_resources_and_prompts_round_trip() {
         ResourceContents::BlobResourceContents { .. }
     ));
 
+    let templates = client
+        .list_resource_templates(None)
+        .await
+        .expect("resource templates should list")
+        .resource_templates;
+    assert!(
+        templates
+            .iter()
+            .any(|template| template.uri_template == "example://item/{id}")
+    );
+    let item = client
+        .read_resource(ReadResourceRequestParams::new("example://item/42"))
+        .await
+        .expect("template resource should be readable");
+    assert!(read_text(&item).contains("\"42\""));
+
     let schema = client
         .read_resource(ReadResourceRequestParams::new("clap://schema"))
         .await

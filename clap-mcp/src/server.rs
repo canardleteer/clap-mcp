@@ -17,11 +17,11 @@ use rmcp::{
         CallToolRequestParams, CallToolResult, ContentBlock, CreateTaskResult,
         GetPromptRequestParams, GetPromptResult, GetTaskParams, GetTaskPayloadParams,
         GetTaskPayloadResult, GetTaskResult, Implementation, InitializeRequestParams,
-        ListPromptsResult, ListResourcesResult, ListToolsResult, LoggingLevel,
-        LoggingMessageNotification, LoggingMessageNotificationParam, Meta, PaginatedRequestParams,
-        PromptMessage, ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents,
-        Role, ServerCapabilities, SetLevelRequestParams, SubscribeRequestParams, Task, TaskStatus,
-        Tool, UnsubscribeRequestParams,
+        ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
+        LoggingLevel, LoggingMessageNotification, LoggingMessageNotificationParam, Meta,
+        PaginatedRequestParams, PromptMessage, ReadResourceRequestParams, ReadResourceResult,
+        Resource, ResourceContents, Role, ServerCapabilities, SetLevelRequestParams,
+        SubscribeRequestParams, Task, TaskStatus, Tool, UnsubscribeRequestParams,
     },
     service::{RequestContext, RoleServer, serve_directly},
     task_manager::{
@@ -44,6 +44,7 @@ pub(crate) struct ServeHandlerInner {
     pub root_name: String,
     pub catch_in_process_panics: bool,
     pub custom_resources: Vec<content::CustomResource>,
+    pub custom_resource_templates: Vec<content::CustomResourceTemplate>,
     pub custom_prompts: Vec<content::CustomPrompt>,
     pub logging_enabled: bool,
     pub task_augmented_tools: bool,
@@ -319,7 +320,29 @@ impl ServerHandler for ClapMcpServer {
     ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
         self.capture_peer(&context);
         let inner = self.inner.clone();
-        async move { read_resource_result(&inner.schema_json, &inner.custom_resources, params).await }
+        async move {
+            read_resource_result(
+                &inner.schema_json,
+                &inner.custom_resources,
+                &inner.custom_resource_templates,
+                params,
+            )
+            .await
+        }
+    }
+
+    fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListResourceTemplatesResult, McpError>> + Send + '_
+    {
+        self.capture_peer(&context);
+        async move {
+            Ok(list_resource_templates_result(
+                &self.inner.custom_resource_templates,
+            ))
+        }
     }
 
     fn subscribe(
@@ -656,6 +679,7 @@ pub(crate) fn build_clap_mcp_server(
         root_name,
         catch_in_process_panics: config.catch_in_process_panics,
         custom_resources: serve_options.custom_resources.clone(),
+        custom_resource_templates: serve_options.custom_resource_templates.clone(),
         custom_prompts: serve_options.custom_prompts.clone(),
         logging_enabled,
         task_augmented_tools: metadata.task_augmented_tools,
@@ -908,9 +932,46 @@ pub(crate) fn list_resources_result(
     ListResourcesResult::with_all_items(resources)
 }
 
+pub(crate) fn list_resource_templates_result(
+    custom_resource_templates: &[content::CustomResourceTemplate],
+) -> ListResourceTemplatesResult {
+    let templates = custom_resource_templates
+        .iter()
+        .map(|template| template.to_list_resource_template())
+        .collect();
+    ListResourceTemplatesResult::with_all_items(templates)
+}
+
+fn resource_contents_from_body(
+    body: content::ResolvedResourceBody,
+    uri: String,
+    mime_type: &Option<String>,
+) -> ResourceContents {
+    match body {
+        content::ResolvedResourceBody::Text(text) => {
+            let mut contents = ResourceContents::text(text, uri);
+            if let ResourceContents::TextResourceContents {
+                mime_type: slot, ..
+            } = &mut contents
+            {
+                *slot = mime_type.clone();
+            }
+            contents
+        }
+        content::ResolvedResourceBody::Blob { base64 } => {
+            let mut contents = ResourceContents::blob(base64, uri);
+            if let Some(mime) = mime_type {
+                contents = contents.with_mime_type(mime.clone());
+            }
+            contents
+        }
+    }
+}
+
 pub(crate) async fn read_resource_result(
     schema_json: &str,
     custom_resources: &[content::CustomResource],
+    custom_resource_templates: &[content::CustomResourceTemplate],
     params: ReadResourceRequestParams,
 ) -> Result<ReadResourceResult, McpError> {
     if params.uri == MCP_RESOURCE_URI_SCHEMA {
@@ -918,35 +979,34 @@ pub(crate) async fn read_resource_result(
             ResourceContents::text(schema_json, params.uri).with_mime_type("application/json"),
         ]));
     }
-    let custom = custom_resources
+    if let Some(resource) = custom_resources
         .iter()
-        .find(|resource| resource.uri == params.uri);
-    let Some(resource) = custom else {
-        // SEP-2164: include the requested URI in error `data` (rmcp upgrades
-        // RESOURCE_NOT_FOUND to INVALID_PARAMS for protocol 2026-07-28+).
-        return Err(McpError::resource_not_found(
-            "Resource not found",
-            Some(serde_json::json!({ "uri": params.uri })),
-        ));
-    };
-    let body = content::resolve_resource_content(resource, &params.uri).await?;
-    let contents = match body {
-        content::ResolvedResourceBody::Text(text) => {
-            let mut contents = ResourceContents::text(text, params.uri.clone());
-            if let ResourceContents::TextResourceContents { mime_type, .. } = &mut contents {
-                *mime_type = resource.mime_type.clone();
-            }
-            contents
+        .find(|resource| resource.uri == params.uri)
+    {
+        let body = content::resolve_resource_content(resource, &params.uri).await?;
+        return Ok(ReadResourceResult::new(vec![resource_contents_from_body(
+            body,
+            params.uri,
+            &resource.mime_type,
+        )]));
+    }
+    for template in custom_resource_templates {
+        if let Some(captures) = content::match_uri_template(&template.uri_template, &params.uri) {
+            let body = content::resolve_template_resource_content(template, &params.uri, &captures)
+                .await?;
+            return Ok(ReadResourceResult::new(vec![resource_contents_from_body(
+                body,
+                params.uri,
+                &template.mime_type,
+            )]));
         }
-        content::ResolvedResourceBody::Blob { base64 } => {
-            let mut contents = ResourceContents::blob(base64, params.uri.clone());
-            if let Some(mime_type) = &resource.mime_type {
-                contents = contents.with_mime_type(mime_type.clone());
-            }
-            contents
-        }
-    };
-    Ok(ReadResourceResult::new(vec![contents]))
+    }
+    // SEP-2164: include the requested URI in error `data` (rmcp upgrades
+    // RESOURCE_NOT_FOUND to INVALID_PARAMS for protocol 2026-07-28+).
+    Err(McpError::resource_not_found(
+        "Resource not found",
+        Some(serde_json::json!({ "uri": params.uri })),
+    ))
 }
 
 fn logging_guide_prompt() -> rmcp::model::Prompt {

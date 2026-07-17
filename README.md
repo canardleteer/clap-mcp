@@ -179,7 +179,7 @@ Every guide in [`docs/`](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs
 | --- | --- |
 | [Usage patterns](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md) | Derive (minimal / with attributes), imperative CLI, struct root, setup then serve (embedder) |
 | [Supported CLI shapes](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/supported-cli-shapes.md) | Pattern matrix, example binaries, non-goals |
-| [Custom resources and prompts](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md) | `ClapMcpServeOptions`, static/dynamic content |
+| [Custom resources and prompts](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md) | `ClapMcpServeOptions`, static/dynamic/blob content, URI templates, subscribe |
 | [Exporting agent skills](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/export-skills.md) | `--export-skills`, SKILL.md generation |
 | [Execution safety](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/execution-safety.md) | `reinvocation_safe`, topical serialization, skip/requires, ArgGroup hints (`meta.clapMcp.argGroups`), nested metadata, dual derive, async embedders |
 | [MCP tasks support](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/mcp-tasks.md) | Task-augmented `tools/call`, examples, support matrix |

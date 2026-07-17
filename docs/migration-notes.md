@@ -40,8 +40,16 @@ renames:
 | Task-augmented call | `with_task(object!({}))` | `with_task(TaskMetadata::new())` |
 | `output-schema` | `schemars` 0.8 | `schemars` 1.x (matches rmcp’s `server` feature) |
 
-Additive on the same line: `ResourceContent::StaticBlob { base64 }` for MCP
-`blob` resource reads. [`resolve_resource_content`](https://docs.rs/clap-mcp/latest/clap_mcp/content/fn.resolve_resource_content.html)
+Additive on the same line:
+
+* `ResourceContent::StaticBlob { base64 }` for MCP `blob` resource reads
+* [`CustomResourceTemplate`](https://docs.rs/clap-mcp/latest/clap_mcp/content/struct.CustomResourceTemplate.html)
+  / `ClapMcpServeOptions::custom_resource_templates` for simple `{param}` URI
+  templates
+* `resources.subscribe` capability with subscribe/unsubscribe RPC acceptance
+  (no update notifications)
+
+[`resolve_resource_content`](https://docs.rs/clap-mcp/latest/clap_mcp/content/fn.resolve_resource_content.html)
 now returns [`ResolvedResourceBody`](https://docs.rs/clap-mcp/latest/clap_mcp/content/enum.ResolvedResourceBody.html)
 (`Text` or `Blob`) instead of `String`. See [custom-content](custom-content.md).
 

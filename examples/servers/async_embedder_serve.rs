@@ -57,6 +57,7 @@ async fn main() -> Result<(), clap_mcp::ClapMcpError> {
         #[cfg(unix)]
         capture_stdout: false,
         custom_resources: vec![],
+        custom_resource_templates: vec![],
         custom_prompts: vec![],
     };
 

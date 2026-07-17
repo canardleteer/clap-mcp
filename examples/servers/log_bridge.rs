@@ -79,6 +79,7 @@ fn main() {
         #[cfg(unix)]
         capture_stdout: false,
         custom_resources: vec![],
+        custom_resource_templates: vec![],
         custom_prompts: vec![],
     };
 

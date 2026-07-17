@@ -19,5 +19,3 @@ server:
   - elicitation-sep1034-defaults
   # Same: elicitation enum variants (SEP-1330) not offered.
   - elicitation-sep1330-enums
-  # No resource-templates list/read API (list_resource_templates stays empty).
-  - resources-templates-read

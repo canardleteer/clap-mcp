@@ -88,8 +88,6 @@ Source: [`conformance-baseline.yml`](../conformance-baseline.yml)
 | `tools-call-elicitation` | Tool calls client `elicitation/create` | Elicitation scaffolding removed; see [migration-notes](migration-notes.md#removed-scaffolding-elicitation) | `deferred` (revisit when a clap-shaped confirm/prompt pattern exists) |
 | `elicitation-sep1034-defaults` | Elicitation schema with primitive defaults (SEP-1034) | Same elicitation gap | `deferred` |
 | `elicitation-sep1330-enums` | Elicitation enum schema variants (SEP-1330) | Same elicitation gap | `deferred` |
-| `resources-templates-read` | Template `test://template/{id}/data` with substitution | No resource-templates API; `list_resource_templates` empty | `deferred` (URI templates for custom resources) |
-
 ### Passing on the stable pass (not baselined)
 
 * Lifecycle/utilities: `server-initialize`, `logging-set-level`, `ping`,
@@ -97,9 +95,10 @@ Source: [`conformance-baseline.yml`](../conformance-baseline.yml)
 * Lists: `tools-list`, `resources-list`, `prompts-list`
 * Shipped capabilities: `tools-call-simple-text`, `tools-call-with-logging`,
   `tools-call-error`, `resources-read-text`, `resources-read-binary`
-  (`ResourceContent::StaticBlob`), `resources-subscribe`,
-  `resources-unsubscribe` (capability + RPC success; no update notifications),
-  `prompts-get-simple`, `prompts-get-with-args`, `prompts-get-with-image`,
+  (`ResourceContent::StaticBlob`), `resources-templates-read` (simple
+  `{param}` templates), `resources-subscribe`, `resources-unsubscribe`
+  (capability + RPC success; no update notifications), `prompts-get-simple`,
+  `prompts-get-with-args`, `prompts-get-with-image`,
   `prompts-get-embedded-resource` (image/embedded via custom `PromptMessage`
   pass-through, not tool-result media)
 * Transport: `server-sse-multiple-streams`, `dns-rebinding-protection`
@@ -145,22 +144,20 @@ negotiation, but does not implement the full draft server surface.
 
 Ordered by how close they are to clap-mcp’s product shape:
 
-1. **Resource URI templates** (`resources-templates-read`) — template list + read
-   substitution for custom resources.
-2. **List-result cache hints** (`caching`) — optional `ttlMs` / `cacheScope` on
+1. **List-result cache hints** (`caching`) — optional `ttlMs` / `cacheScope` on
    tools/resources/prompts list results.
-3. **Progress notifications** (`tools-call-with-progress`) — optional bridge from
+2. **Progress notifications** (`tools-call-with-progress`) — optional bridge from
    long-running tools when embedders can supply a progress token.
-4. **Elicitation / InputRequiredResult** — revisit only with a clear clap UX
+3. **Elicitation / InputRequiredResult** — revisit only with a clear clap UX
    (confirm flags, interactive prompts); currently deferred after scaffolding
    removal.
-5. **Stateless / SEP-2575 HTTP**, **SEP-2243 header rules**, and **draft JSON-RPC
+4. **Stateless / SEP-2575 HTTP**, **SEP-2243 header rules**, and **draft JSON-RPC
    error encoding** (`sep-2164` under draft) — largely transport/`rmcp` work;
    track upstream before inventing a clap-mcp layer.
 
-Shipped from this backlog: binary custom resources (`resources-read-binary` via
-`ResourceContent::StaticBlob`); resource subscribe/unsubscribe RPCs (no update
-notifications).
+Shipped from this backlog: binary custom resources (`ResourceContent::StaticBlob`);
+resource subscribe/unsubscribe RPCs (no update notifications); simple `{param}`
+URI templates (`CustomResourceTemplate`).
 
 ## Remote CI debugging
 
