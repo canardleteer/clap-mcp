@@ -88,6 +88,7 @@ Source: [`conformance-baseline.yml`](../conformance-baseline.yml)
 | `tools-call-elicitation` | Tool calls client `elicitation/create` | Elicitation scaffolding removed; see [migration-notes](migration-notes.md#removed-scaffolding-elicitation) | `deferred` (revisit when a clap-shaped confirm/prompt pattern exists) |
 | `elicitation-sep1034-defaults` | Elicitation schema with primitive defaults (SEP-1034) | Same elicitation gap | `deferred` |
 | `elicitation-sep1330-enums` | Elicitation enum schema variants (SEP-1330) | Same elicitation gap | `deferred` |
+
 ### Passing on the stable pass (not baselined)
 
 * Lifecycle/utilities: `server-initialize`, `logging-set-level`, `ping`,
