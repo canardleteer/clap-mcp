@@ -5,7 +5,8 @@
 //! (SKILL.md) from the exposed tools, resources, and prompts.
 
 use async_trait::async_trait;
-use rmcp::model::{ErrorData, Prompt, PromptArgument, PromptMessage, Resource};
+use rmcp::model::{ErrorData, Prompt, PromptArgument, PromptMessage, Resource, ResourceTemplate};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Content of a custom MCP resource: static text, static binary (base64), or async dynamic text.
@@ -89,6 +90,127 @@ impl CustomResource {
             resource = resource.with_mime_type(mime_type.clone());
         }
         resource
+    }
+}
+
+/// Descriptor for a custom MCP resource URI template.
+///
+/// Add to [`crate::ClapMcpServeOptions::custom_resource_templates`] to expose
+/// `resources/templates/list` entries and template-matched `resources/read`.
+///
+/// Templates use a simple dialect: single-segment `{param}` placeholders
+/// (for example `test://template/{id}/data`). This is not full RFC 6570.
+/// Template content should be text (`Static` or `Dynamic`); `StaticBlob` is
+/// not supported for template reads in this release.
+#[derive(Clone, Debug)]
+pub struct CustomResourceTemplate {
+    /// URI template with `{param}` placeholders (e.g. `myapp://item/{id}`).
+    pub uri_template: String,
+    /// Short name for listing.
+    pub name: String,
+    /// Optional human-readable title.
+    pub title: Option<String>,
+    /// Optional description.
+    pub description: Option<String>,
+    /// Optional MIME type for resources matching this template.
+    pub mime_type: Option<String>,
+    /// Content: static or dynamic text. Placeholder names in static text are
+    /// replaced with captured URI segments on read.
+    pub content: ResourceContent,
+}
+
+impl CustomResourceTemplate {
+    /// Build an MCP `ResourceTemplate` for `resources/templates/list`.
+    pub fn to_list_resource_template(&self) -> ResourceTemplate {
+        let mut template = ResourceTemplate::new(self.uri_template.clone(), self.name.clone());
+        if let Some(title) = &self.title {
+            template = template.with_title(title.clone());
+        }
+        if let Some(description) = &self.description {
+            template = template.with_description(description.clone());
+        }
+        if let Some(mime_type) = &self.mime_type {
+            template = template.with_mime_type(mime_type.clone());
+        }
+        template
+    }
+}
+
+/// Match a concrete URI against a simple `{param}` URI template.
+///
+/// Placeholders capture a single path segment (no `/`). Returns `None` when
+/// the URI does not match or a capture would span multiple segments.
+pub fn match_uri_template(template: &str, uri: &str) -> Option<HashMap<String, String>> {
+    let mut captures = HashMap::new();
+    let mut t = template;
+    let mut u = uri;
+    while !t.is_empty() {
+        if let Some(rest) = t.strip_prefix('{') {
+            let end = rest.find('}')?;
+            let name = &rest[..end];
+            if name.is_empty() || name.contains('{') || name.contains('/') {
+                return None;
+            }
+            t = &rest[end + 1..];
+            let value = if t.is_empty() {
+                let value = u;
+                u = "";
+                value
+            } else {
+                let lit_end = t.find('{').unwrap_or(t.len());
+                let literal = &t[..lit_end];
+                let idx = u.find(literal)?;
+                let value = &u[..idx];
+                u = &u[idx..];
+                value
+            };
+            if value.is_empty() || value.contains('/') {
+                return None;
+            }
+            captures.insert(name.to_string(), value.to_string());
+        } else {
+            let lit_end = t.find('{').unwrap_or(t.len());
+            let literal = &t[..lit_end];
+            if !u.starts_with(literal) {
+                return None;
+            }
+            t = &t[lit_end..];
+            u = &u[literal.len()..];
+        }
+    }
+    if u.is_empty() { Some(captures) } else { None }
+}
+
+/// Replace `{param}` placeholders in text with captured URI values.
+///
+/// Unknown placeholders are left unchanged.
+pub fn substitute_template_text(text: &str, captures: &HashMap<String, String>) -> String {
+    let mut result = text.to_string();
+    for (name, value) in captures {
+        result = result.replace(&format!("{{{name}}}"), value);
+    }
+    result
+}
+
+/// Resolve template content for a concrete URI and its captures.
+pub async fn resolve_template_resource_content(
+    template: &CustomResourceTemplate,
+    uri: &str,
+    captures: &HashMap<String, String>,
+) -> std::result::Result<ResolvedResourceBody, ErrorData> {
+    match &template.content {
+        ResourceContent::Static(s) => Ok(ResolvedResourceBody::Text(substitute_template_text(
+            s, captures,
+        ))),
+        ResourceContent::StaticBlob { .. } => Err(ErrorData::internal_error(
+            "StaticBlob is not supported for resource URI templates",
+            None,
+        )),
+        ResourceContent::Dynamic(provider) => provider
+            .read(uri)
+            .await
+            .map(|text| ResolvedResourceBody::Text(substitute_template_text(&text, captures)))
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None)),
     }
 }
 
@@ -578,6 +700,74 @@ mod tests {
                 base64: "AAAA".into()
             }
         );
+    }
+
+    #[test]
+    fn match_uri_template_captures_single_segment_params() {
+        let captures = match_uri_template("test://template/{id}/data", "test://template/123/data")
+            .expect("should match");
+        assert_eq!(captures.get("id").map(String::as_str), Some("123"));
+
+        assert!(
+            match_uri_template("test://template/{id}/data", "test://template/123/other").is_none()
+        );
+        assert!(
+            match_uri_template("test://template/{id}/data", "test://template/12/3/data").is_none()
+        );
+        assert!(
+            match_uri_template("test://a/{x}/b/{y}", "test://a/1/b/2")
+                .expect("multi-param")
+                .contains_key("y")
+        );
+    }
+
+    #[test]
+    fn substitute_template_text_replaces_known_placeholders() {
+        let mut captures = HashMap::new();
+        captures.insert("id".into(), "123".into());
+        assert_eq!(
+            substitute_template_text("id={id} missing={other}", &captures),
+            "id=123 missing={other}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_template_resource_content_substitutes_static_text() {
+        let template = CustomResourceTemplate {
+            uri_template: "test://template/{id}/data".into(),
+            name: "t".into(),
+            title: None,
+            description: None,
+            mime_type: Some("application/json".into()),
+            content: ResourceContent::Static(r#"{"id":"{id}"}"#.into()),
+        };
+        let mut captures = HashMap::new();
+        captures.insert("id".into(), "99".into());
+        assert_eq!(
+            resolve_template_resource_content(&template, "test://template/99/data", &captures)
+                .await
+                .expect("resolve"),
+            ResolvedResourceBody::Text(r#"{"id":"99"}"#.into())
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_template_resource_content_rejects_static_blob() {
+        let template = CustomResourceTemplate {
+            uri_template: "test://bin/{id}".into(),
+            name: "bin".into(),
+            title: None,
+            description: None,
+            mime_type: Some("image/png".into()),
+            content: ResourceContent::StaticBlob {
+                base64: "AAAA".into(),
+            },
+        };
+        let captures = HashMap::new();
+        let err = resolve_template_resource_content(&template, "test://bin/1", &captures)
+            .await
+            .expect_err("blob templates unsupported");
+        assert!(err.message.contains("StaticBlob"));
     }
 
     #[tokio::test]

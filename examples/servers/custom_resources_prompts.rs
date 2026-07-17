@@ -7,7 +7,9 @@
 //! - `cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --export-skills=./out` (generate into ./out)
 
 use clap::Parser;
-use clap_mcp::content::{CustomPrompt, CustomResource, PromptContent, ResourceContent};
+use clap_mcp::content::{
+    CustomPrompt, CustomResource, CustomResourceTemplate, PromptContent, ResourceContent,
+};
 use clap_mcp::{ClapMcp, ClapMcpServeOptions};
 use rmcp::model::{PromptMessage, Role};
 
@@ -59,6 +61,17 @@ fn main() {
             base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==".into(),
         },
     });
+
+    serve_options
+        .custom_resource_templates
+        .push(CustomResourceTemplate {
+            uri_template: "example://item/{id}".into(),
+            name: "item".into(),
+            title: Some("Item by id".into()),
+            description: Some("Simple URI template with {id} substitution".into()),
+            mime_type: Some("application/json".into()),
+            content: ResourceContent::Static(r#"{"id":"{id}"}"#.into()),
+        });
 
     serve_options.custom_prompts.push(CustomPrompt {
         name: "example-prompt".into(),

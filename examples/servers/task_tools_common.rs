@@ -28,6 +28,7 @@ pub fn serve_options_with_logging() -> clap_mcp::ClapMcpServeOptions {
         #[cfg(unix)]
         capture_stdout: false,
         custom_resources: vec![],
+        custom_resource_templates: vec![],
         custom_prompts: vec![],
     }
 }
