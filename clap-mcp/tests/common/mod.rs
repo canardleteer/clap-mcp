@@ -114,6 +114,15 @@ pub fn read_text(result: &ReadResourceResult) -> String {
         .join("\n")
 }
 
+pub fn read_blob(result: &ReadResourceResult) -> Option<(String, Option<String>)> {
+    result.contents.iter().find_map(|content| match content {
+        ResourceContents::BlobResourceContents {
+            blob, mime_type, ..
+        } => Some((blob.clone(), mime_type.clone())),
+        _ => None,
+    })
+}
+
 pub fn prompt_has_text(messages: &[rmcp::model::PromptMessage], needle: &str) -> bool {
     messages.iter().any(|message| match &message.content {
         ContentBlock::Text(text) => text.text.contains(needle),

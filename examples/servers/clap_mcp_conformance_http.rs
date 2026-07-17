@@ -196,6 +196,17 @@ fn conformance_serve_options() -> clap_mcp::ClapMcpServeOptions {
         content: ResourceContent::Static("This is the content of the static text resource.".into()),
     });
 
+    serve_options.custom_resources.push(CustomResource {
+        uri: "test://static-binary".into(),
+        name: "static-binary".into(),
+        title: Some("Static binary (conformance)".into()),
+        description: Some("PNG blob resource for MCP conformance harness".into()),
+        mime_type: Some("image/png".into()),
+        content: ResourceContent::StaticBlob {
+            base64: CONFORMANCE_PNG_B64.into(),
+        },
+    });
+
     serve_options.custom_prompts.push(CustomPrompt {
         name: "test_simple_prompt".into(),
         title: Some("Simple conformance prompt".into()),

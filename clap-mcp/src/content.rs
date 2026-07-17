@@ -8,11 +8,18 @@ use async_trait::async_trait;
 use rmcp::model::{ErrorData, Prompt, PromptArgument, PromptMessage, Resource};
 use std::sync::Arc;
 
-/// Content of a custom MCP resource: either static text or provided by an async callback.
+/// Content of a custom MCP resource: static text, static binary (base64), or async dynamic text.
 #[derive(Clone)]
 pub enum ResourceContent {
-    /// Fixed content known at serve start.
+    /// Fixed text content known at serve start.
     Static(String),
+    /// Fixed binary content as base64 (MCP `blob` resource contents).
+    ///
+    /// The string must already be base64-encoded; clap-mcp does not encode or decode it.
+    StaticBlob {
+        /// Base64-encoded bytes for the MCP wire `blob` field.
+        base64: String,
+    },
     /// Content provided asynchronously when the resource is read.
     Dynamic(Arc<dyn ResourceContentProvider>),
 }
@@ -21,9 +28,22 @@ impl std::fmt::Debug for ResourceContent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ResourceContent::Static(s) => f.debug_tuple("Static").field(&s.len()).finish(),
+            ResourceContent::StaticBlob { base64 } => f
+                .debug_struct("StaticBlob")
+                .field("base64_len", &base64.len())
+                .finish(),
             ResourceContent::Dynamic(_) => f.write_str("Dynamic(_)"),
         }
     }
+}
+
+/// Resolved body for a custom resource read (text or base64 blob).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolvedResourceBody {
+    /// UTF-8 text body for `ResourceContents::text`.
+    Text(String),
+    /// Base64 blob body for `ResourceContents::blob`.
+    Blob { base64: String },
 }
 
 /// Async provider for custom resource content.
@@ -137,16 +157,20 @@ impl CustomPrompt {
     }
 }
 
-/// Resolve custom resource content (static or await dynamic).
+/// Resolve custom resource content (static text, static blob, or await dynamic text).
 pub async fn resolve_resource_content(
     r: &CustomResource,
     uri: &str,
-) -> std::result::Result<String, ErrorData> {
+) -> std::result::Result<ResolvedResourceBody, ErrorData> {
     match &r.content {
-        ResourceContent::Static(s) => Ok(s.clone()),
+        ResourceContent::Static(s) => Ok(ResolvedResourceBody::Text(s.clone())),
+        ResourceContent::StaticBlob { base64 } => Ok(ResolvedResourceBody::Blob {
+            base64: base64.clone(),
+        }),
         ResourceContent::Dynamic(provider) => provider
             .read(uri)
             .await
+            .map(ResolvedResourceBody::Text)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None)),
     }
 }
@@ -497,7 +521,7 @@ mod tests {
             resolve_resource_content(&static_resource, &static_resource.uri)
                 .await
                 .expect("static content should resolve"),
-            "fixed text"
+            ResolvedResourceBody::Text("fixed text".into())
         );
 
         let provider = Arc::new(TestResourceProvider {
@@ -516,11 +540,43 @@ mod tests {
             resolve_resource_content(&dynamic_resource, &dynamic_resource.uri)
                 .await
                 .expect("dynamic content should resolve"),
-            "dynamic text"
+            ResolvedResourceBody::Text("dynamic text".into())
         );
         assert_eq!(
             provider.seen_uri.lock().unwrap().as_slice(),
             ["test://dynamic"]
+        );
+    }
+
+    #[test]
+    fn static_blob_debug_reports_length_not_payload() {
+        let blob = ResourceContent::StaticBlob {
+            base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ".into(),
+        };
+        let debug = format!("{blob:?}");
+        assert!(debug.contains("base64_len"));
+        assert!(!debug.contains("iVBORw0KGgo"));
+    }
+
+    #[tokio::test]
+    async fn resolve_resource_content_handles_static_blob() {
+        let resource = CustomResource {
+            uri: "test://static-binary".to_string(),
+            name: "static-binary".to_string(),
+            title: None,
+            description: None,
+            mime_type: Some("image/png".to_string()),
+            content: ResourceContent::StaticBlob {
+                base64: "AAAA".into(),
+            },
+        };
+        assert_eq!(
+            resolve_resource_content(&resource, &resource.uri)
+                .await
+                .expect("static blob should resolve"),
+            ResolvedResourceBody::Blob {
+                base64: "AAAA".into()
+            }
         );
     }
 

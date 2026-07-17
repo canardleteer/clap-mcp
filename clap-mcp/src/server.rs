@@ -875,11 +875,23 @@ pub(crate) async fn read_resource_result(
             Some(serde_json::json!({ "uri": params.uri })),
         ));
     };
-    let text = content::resolve_resource_content(resource, &params.uri).await?;
-    let mut contents = ResourceContents::text(text, params.uri.clone());
-    if let ResourceContents::TextResourceContents { mime_type, .. } = &mut contents {
-        *mime_type = resource.mime_type.clone();
-    }
+    let body = content::resolve_resource_content(resource, &params.uri).await?;
+    let contents = match body {
+        content::ResolvedResourceBody::Text(text) => {
+            let mut contents = ResourceContents::text(text, params.uri.clone());
+            if let ResourceContents::TextResourceContents { mime_type, .. } = &mut contents {
+                *mime_type = resource.mime_type.clone();
+            }
+            contents
+        }
+        content::ResolvedResourceBody::Blob { base64 } => {
+            let mut contents = ResourceContents::blob(base64, params.uri.clone());
+            if let Some(mime_type) = &resource.mime_type {
+                contents = contents.with_mime_type(mime_type.clone());
+            }
+            contents
+        }
+    };
     Ok(ReadResourceResult::new(vec![contents]))
 }
 

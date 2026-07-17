@@ -4675,21 +4675,34 @@ mod tests {
 
     #[tokio::test]
     async fn test_resource_helpers_cover_builtin_custom_and_error_paths() {
-        let custom = vec![content::CustomResource {
-            uri: "test://dynamic".to_string(),
-            name: "dynamic".to_string(),
-            title: None,
-            description: Some("dynamic resource".to_string()),
-            mime_type: Some("text/plain".to_string()),
-            content: content::ResourceContent::Dynamic(Arc::new(TestResourceProvider {
-                response: Ok("dynamic body".to_string()),
-            })),
-        }];
+        let custom = vec![
+            content::CustomResource {
+                uri: "test://dynamic".to_string(),
+                name: "dynamic".to_string(),
+                title: None,
+                description: Some("dynamic resource".to_string()),
+                mime_type: Some("text/plain".to_string()),
+                content: content::ResourceContent::Dynamic(Arc::new(TestResourceProvider {
+                    response: Ok("dynamic body".to_string()),
+                })),
+            },
+            content::CustomResource {
+                uri: "test://static-binary".to_string(),
+                name: "static-binary".to_string(),
+                title: None,
+                description: Some("binary resource".to_string()),
+                mime_type: Some("image/png".to_string()),
+                content: content::ResourceContent::StaticBlob {
+                    base64: "iVBORw0KGgo=".into(),
+                },
+            },
+        ];
 
         let listed = list_resources_result(&custom);
-        assert_eq!(listed.resources.len(), 2);
+        assert_eq!(listed.resources.len(), 3);
         assert_eq!(listed.resources[0].uri, MCP_RESOURCE_URI_SCHEMA);
         assert_eq!(listed.resources[1].uri, "test://dynamic");
+        assert_eq!(listed.resources[2].uri, "test://static-binary");
 
         let schema_read = read_resource_result(
             "{\"name\":\"sample\"}",
@@ -4716,6 +4729,27 @@ mod tests {
             other => panic!("unexpected content: {other:?}"),
         };
         assert_eq!(text, "dynamic body");
+
+        let blob_read = read_resource_result(
+            "{}",
+            &custom,
+            ReadResourceRequestParams::new("test://static-binary"),
+        )
+        .await
+        .expect("blob resource should resolve");
+        match &blob_read.contents[0] {
+            ResourceContents::BlobResourceContents {
+                uri,
+                mime_type,
+                blob,
+                ..
+            } => {
+                assert_eq!(uri, "test://static-binary");
+                assert_eq!(mime_type.as_deref(), Some("image/png"));
+                assert_eq!(blob, "iVBORw0KGgo=");
+            }
+            other => panic!("expected blob contents, got: {other:?}"),
+        }
 
         let missing = read_resource_result(
             "{}",

@@ -19,8 +19,6 @@ server:
   - elicitation-sep1034-defaults
   # Same: elicitation enum variants (SEP-1330) not offered.
   - elicitation-sep1330-enums
-  # CustomResource is text String only; no blob/binary resource body API.
-  - resources-read-binary
   # No resource-templates list/read API (list_resource_templates stays empty).
   - resources-templates-read
   # resources/subscribe capability and handlers not implemented.
