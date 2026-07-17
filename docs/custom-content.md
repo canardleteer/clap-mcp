@@ -78,6 +78,16 @@ The built-in **`clap-mcp-logging-guide`** prompt is only listed when logging is
 enabled (`serve_options.log_rx.is_some()`). Custom prompts are always merged
 into the list.
 
+## Resource subscribe
+
+When resources are enabled, clap-mcp advertises `resources.subscribe` and
+accepts `resources/subscribe` and `resources/unsubscribe` for any URI. The
+server records subscribed URIs in memory and returns success.
+
+clap-mcp does **not** send `notifications/resources/updated` after subscribe.
+There is no clap-shaped invalidation or watch API yet; clients must re-read
+resources when they need fresh content.
+
 ## URI and name conventions
 
 Prefer a stable prefix (e.g. `myapp://`) for custom resource URIs so they don’t

@@ -156,6 +156,21 @@ async fn http_inprocess_resources_prompts_and_placeholder_tool() {
             .expect("placeholder tool");
     assert!(tool_text(&placeholder).contains("Would invoke clap command"));
 
+    client
+        .subscribe(rmcp::model::SubscribeRequestParams::new("clap://schema"))
+        .await
+        .expect("resources/subscribe should succeed");
+    client
+        .unsubscribe(rmcp::model::UnsubscribeRequestParams::new("clap://schema"))
+        .await
+        .expect("resources/unsubscribe should succeed");
+    client
+        .unsubscribe(rmcp::model::UnsubscribeRequestParams::new(
+            "clap://never-subscribed",
+        ))
+        .await
+        .expect("unsubscribe of unknown URI should still succeed");
+
     shutdown(client).await;
     server.abort();
 }
