@@ -20,7 +20,8 @@ use rmcp::{
         ListPromptsResult, ListResourcesResult, ListToolsResult, LoggingLevel,
         LoggingMessageNotification, LoggingMessageNotificationParam, Meta, PaginatedRequestParams,
         PromptMessage, ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents,
-        Role, ServerCapabilities, SetLevelRequestParams, Task, TaskStatus, Tool,
+        Role, ServerCapabilities, SetLevelRequestParams, SubscribeRequestParams, Task, TaskStatus,
+        Tool, UnsubscribeRequestParams,
     },
     service::{RequestContext, RoleServer, serve_directly},
     task_manager::{
@@ -185,6 +186,9 @@ pub(crate) struct ClapMcpServer {
     topic_lock_registry: Arc<TopicLockRegistry>,
     log_peer: Arc<Mutex<Option<Peer<RoleServer>>>>,
     processor: Arc<tokio::sync::Mutex<OperationProcessor>>,
+    /// URIs accepted via `resources/subscribe`. Bookkeeping only; update
+    /// notifications are not emitted.
+    subscribed_uris: Arc<Mutex<HashSet<String>>>,
 }
 
 impl ClapMcpServer {
@@ -193,16 +197,42 @@ impl ClapMcpServer {
             *guard = Some(context.peer.clone());
         }
     }
+
+    /// Record a resource subscription (no update notifications are sent).
+    pub(crate) fn track_resource_subscribe(&self, uri: impl Into<String>) {
+        if let Ok(mut guard) = self.subscribed_uris.lock() {
+            guard.insert(uri.into());
+        }
+    }
+
+    /// Remove a resource subscription. Unknown URIs are ignored.
+    pub(crate) fn track_resource_unsubscribe(&self, uri: &str) {
+        if let Ok(mut guard) = self.subscribed_uris.lock() {
+            guard.remove(uri);
+        }
+    }
+
+    /// Snapshot of currently subscribed resource URIs (test helper).
+    #[cfg(test)]
+    pub(crate) fn subscribed_resource_uris(&self) -> HashSet<String> {
+        self.subscribed_uris
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
 }
 
 impl ServerHandler for ClapMcpServer {
     fn get_info(&self) -> rmcp::model::ServerInfo {
         let logging_enabled = self.inner.logging_enabled;
         let task_augmented = self.inner.task_augmented_tools;
+        // resources.subscribe is advertised; handlers accept subscribe/unsubscribe
+        // but do not emit `notifications/resources/updated`.
         let capabilities = match (logging_enabled, task_augmented) {
             (true, true) => ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_resources_subscribe()
                 .enable_prompts()
                 .enable_logging()
                 .enable_tasks()
@@ -210,18 +240,21 @@ impl ServerHandler for ClapMcpServer {
             (true, false) => ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_resources_subscribe()
                 .enable_prompts()
                 .enable_logging()
                 .build(),
             (false, true) => ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_resources_subscribe()
                 .enable_prompts()
                 .enable_tasks()
                 .build(),
             (false, false) => ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_resources_subscribe()
                 .enable_prompts()
                 .build(),
         };
@@ -287,6 +320,26 @@ impl ServerHandler for ClapMcpServer {
         self.capture_peer(&context);
         let inner = self.inner.clone();
         async move { read_resource_result(&inner.schema_json, &inner.custom_resources, params).await }
+    }
+
+    fn subscribe(
+        &self,
+        request: SubscribeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send + '_ {
+        self.capture_peer(&context);
+        self.track_resource_subscribe(request.uri);
+        std::future::ready(Ok(()))
+    }
+
+    fn unsubscribe(
+        &self,
+        request: UnsubscribeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send + '_ {
+        self.capture_peer(&context);
+        self.track_resource_unsubscribe(&request.uri);
+        std::future::ready(Ok(()))
     }
 
     fn list_tools(
@@ -618,6 +671,7 @@ pub(crate) fn build_clap_mcp_server(
         topic_lock_registry: Arc::new(TopicLockRegistry::new()),
         log_peer: Arc::new(Mutex::new(None)),
         processor: Arc::new(tokio::sync::Mutex::new(OperationProcessor::new())),
+        subscribed_uris: Arc::new(Mutex::new(HashSet::new())),
     })
 }
 

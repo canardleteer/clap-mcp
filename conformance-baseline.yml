@@ -21,7 +21,3 @@ server:
   - elicitation-sep1330-enums
   # No resource-templates list/read API (list_resource_templates stays empty).
   - resources-templates-read
-  # resources/subscribe capability and handlers not implemented.
-  - resources-subscribe
-  # resources/unsubscribe not implemented (pairs with subscribe).
-  - resources-unsubscribe

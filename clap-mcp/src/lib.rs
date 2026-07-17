@@ -3425,6 +3425,7 @@ mod tests {
     };
     use serde::Deserialize;
     use serde_json::json;
+    use std::collections::HashSet;
     use std::error::Error;
     use std::sync::{Arc, Mutex};
 
@@ -5229,6 +5230,13 @@ mod tests {
         let info = with_logging.get_info();
         assert!(info.capabilities.logging.is_some());
         assert!(info.capabilities.tasks.is_none());
+        assert_eq!(
+            info.capabilities
+                .resources
+                .as_ref()
+                .and_then(|r| r.subscribe),
+            Some(true)
+        );
         assert_eq!(info.protocol_version.as_str(), "2025-11-25");
         assert_eq!(
             info.instructions.as_deref(),
@@ -5248,6 +5256,13 @@ mod tests {
         let info = with_tasks.get_info();
         assert!(info.capabilities.logging.is_none());
         assert!(info.capabilities.tasks.is_some());
+        assert_eq!(
+            info.capabilities
+                .resources
+                .as_ref()
+                .and_then(|r| r.subscribe),
+            Some(true)
+        );
         assert!(info.instructions.is_none());
 
         let with_both = build_test_server(
@@ -5267,9 +5282,47 @@ mod tests {
         assert!(info.capabilities.logging.is_some());
         assert!(info.capabilities.tasks.is_some());
         assert_eq!(
+            info.capabilities
+                .resources
+                .as_ref()
+                .and_then(|r| r.subscribe),
+            Some(true)
+        );
+        assert_eq!(
             info.instructions.as_deref(),
             Some(LOG_INTERPRETATION_INSTRUCTIONS)
         );
+    }
+
+    #[test]
+    fn test_resource_subscribe_unsubscribe_bookkeeping() {
+        let handler: InProcessToolHandler =
+            Arc::new(|_, _| Ok(ClapMcpToolOutput::Text("ok".into())));
+        let server = build_test_server(
+            ClapMcpConfig {
+                reinvocation_safe: true,
+                parallel_safe: true,
+                ..Default::default()
+            },
+            ClapMcpSchemaMetadata::default(),
+            ClapMcpServeOptions::default(),
+            Some(handler),
+            None,
+        );
+
+        assert!(server.subscribed_resource_uris().is_empty());
+        server.track_resource_subscribe("test://static-text");
+        assert_eq!(
+            server.subscribed_resource_uris(),
+            HashSet::from(["test://static-text".to_string()])
+        );
+        server.track_resource_unsubscribe("test://missing");
+        assert_eq!(
+            server.subscribed_resource_uris(),
+            HashSet::from(["test://static-text".to_string()])
+        );
+        server.track_resource_unsubscribe("test://static-text");
+        assert!(server.subscribed_resource_uris().is_empty());
     }
 
     #[test]
