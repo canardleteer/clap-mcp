@@ -23,6 +23,10 @@ ops-oriented sinks such as OpenTelemetry.
 > product risk; clap-mcp will keep the bridge until the protocol or SDK removes
 > the types, then document a successor path.
 
+> [!NOTE]
+> This was probably one of the most useful features of this crate... So the spec
+> deprecated it? I'm unaware of proposed alternatives.
+
 ## `tracing` feature
 
 Enable with `features = ["tracing"]`. `ClapMcpTracingLayer` is a standard
