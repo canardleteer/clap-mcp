@@ -1,4 +1,4 @@
-# Expected failures for active @ 2025-11-25.
+# Expected failures for active @ 2025-11-25 (MCP protocol version).
 # Rationale for every ID: docs/conformance-baseline.md#stable-baseline-inventory
 server:
   # Tool result ContentBlock::Image not in IntoClapMcpResult / derive path.

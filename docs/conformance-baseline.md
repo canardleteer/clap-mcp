@@ -20,8 +20,8 @@ Builds `clap-mcp-conformance-http`, starts it on an ephemeral port, and runs
 
 | Pass | Suite | `--spec-version` | Baseline |
 | --- | --- | --- | --- |
-| Stable | `active` | `2025-11-25` | [`conformance-baseline.yml`](../conformance-baseline.yml) |
-| Draft | `draft` | `draft` (`2026-07-28`) | [`conformance-baseline-draft.yml`](../conformance-baseline-draft.yml) |
+| Stable | `active` | `2025-11-25` | [`conformance-profiles/conformance-2025-11-25.yml`](../conformance-profiles/conformance-2025-11-25.yml) |
+| Draft | `draft` | `draft` (`2026-07-28`) | [`conformance-profiles/conformance-draft-2026-07-28.yml`](../conformance-profiles/conformance-draft-2026-07-28.yml) |
 
 Override with `--suite active|draft|all|…`, `--spec-version`, `--baseline`, or
 `--draft-baseline` when debugging a single pass.
@@ -35,6 +35,11 @@ The conformance binary is **maintainer-only** (not listed in
 [`subcommands_http`](../examples/servers/subcommands_http.rs).
 
 ## Baseline files
+
+Profiles live under [`conformance-profiles/`](../conformance-profiles/) and are
+named by MCP protocol version (`conformance-YYYY-MM-DD.yml`). The draft profile
+keeps `draft` in the filename and includes the draft protocol date
+(`conformance-draft-2026-07-28.yml`).
 
 The YAML files are the machine-readable allow-lists the harness consumes. Every
 ID in those files **must** appear in the inventories below with a concrete
@@ -74,7 +79,7 @@ since the last successful run) and on **workflow_dispatch** (always runs). Use
 
 ## Stable baseline inventory
 
-Source: [`conformance-baseline.yml`](../conformance-baseline.yml)
+Source: [`conformance-profiles/conformance-2025-11-25.yml`](../conformance-profiles/conformance-2025-11-25.yml)
 (`active` @ `2025-11-25`).
 
 | Scenario | What the harness requires | Why clap-mcp does not | Disposition |
@@ -106,7 +111,7 @@ Source: [`conformance-baseline.yml`](../conformance-baseline.yml)
 
 ## Draft baseline inventory
 
-Source: [`conformance-baseline-draft.yml`](../conformance-baseline-draft.yml)
+Source: [`conformance-profiles/conformance-draft-2026-07-28.yml`](../conformance-profiles/conformance-draft-2026-07-28.yml)
 (`draft` @ `2026-07-28`).
 
 These are draft-era protocol features. clap-mcp remains a dual-era server that
