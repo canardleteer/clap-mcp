@@ -26,8 +26,8 @@ const SPEC_STABLE: &str = "2025-11-25";
 /// Draft protocol alias in `@modelcontextprotocol/conformance` (`2026-07-28`).
 /// Keep aligned with `clap_mcp::protocol::PROTOCOL_VERSION_DRAFT`.
 const SPEC_DRAFT: &str = "draft";
-const DEFAULT_BASELINE: &str = "conformance-baseline.yml";
-const DEFAULT_DRAFT_BASELINE: &str = "conformance-baseline-draft.yml";
+const DEFAULT_BASELINE: &str = "conformance-profiles/conformance-2025-11-25.yml";
+const DEFAULT_DRAFT_BASELINE: &str = "conformance-profiles/conformance-draft-2026-07-28.yml";
 
 #[derive(Parser)]
 pub struct ConformanceArgs {

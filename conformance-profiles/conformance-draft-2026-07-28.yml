@@ -1,4 +1,4 @@
-# Expected failures for draft @ draft (2026-07-28).
+# Expected failures for draft @ draft (MCP protocol version 2026-07-28).
 # Rationale for every ID: docs/conformance-baseline.md#draft-baseline-inventory
 server:
   # SEP-2575 stateless HTTP (server/discover, per-request _meta) not implemented.

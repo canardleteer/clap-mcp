@@ -38,8 +38,8 @@ jobs:
               sha256sum .github/workflows/conformance.yml
               sha256sum docker/conformance/VERSION
               sha256sum docker/conformance/Dockerfile
-              sha256sum conformance-baseline.yml
-              sha256sum conformance-baseline-draft.yml
+              sha256sum conformance-profiles/conformance-2025-11-25.yml
+              sha256sum conformance-profiles/conformance-draft-2026-07-28.yml
               sha256sum xtask/src/conformance.rs
             } | sha256sum | awk '{print $1}'
           )
@@ -111,6 +111,6 @@ jobs:
           path: |
             target/conformance-server.log
             target/conformance-port
-            conformance-baseline.yml
-            conformance-baseline-draft.yml
+            conformance-profiles/conformance-2025-11-25.yml
+            conformance-profiles/conformance-draft-2026-07-28.yml
           retention-days: 14
