@@ -801,6 +801,78 @@ pub struct ClapMcpServeOptions {
 
     /// Custom MCP prompts (static or async dynamic). Merged with the built-in logging guide when logging is enabled.
     pub custom_prompts: Vec<content::CustomPrompt>,
+
+    /// Extra MCP tools appended after clap-derived tools in `tools/list`.
+    ///
+    /// Use for raw JSON Schema vocabulary clap cannot express (`$defs`, `allOf`,
+    /// `if`/`then`/`else`, `$anchor`, and similar). Schemas are listed verbatim.
+    /// `tools/call` for these names returns a fixed success text result (they are
+    /// not routed through clap execution). Prefer
+    /// [`json_schema_2020_12_tool`] for the
+    /// SEP-1613 / SEP-2106 conformance shape.
+    pub custom_tools: Vec<rmcp::model::Tool>,
+}
+
+/// JSON Schema dialect URI advertised on every tool `inputSchema` (`$schema`).
+///
+/// Matches the draft 2020-12 dialect URI that schemars 1.x emits for optional
+/// `outputSchema` values. clap-mcp builds `inputSchema` from clap, not schemars,
+/// so this marker is set explicitly.
+pub const INPUT_SCHEMA_DIALECT_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
+
+/// Tool name used by the MCP conformance scenario `json-schema-2020-12`.
+pub const JSON_SCHEMA_2020_12_TOOL_NAME: &str = "json_schema_2020_12_tool";
+
+/// Build the SEP-1613 / SEP-2106 demo tool with a rich JSON Schema 2020-12
+/// `inputSchema` (`$defs`, `$anchor`, `allOf`/`anyOf`, `if`/`then`/`else`,
+/// `additionalProperties`).
+///
+/// Register via [`ClapMcpServeOptions::custom_tools`]. The conformance harness
+/// checks keyword preservation on `tools/list`, not clap derivation.
+pub fn json_schema_2020_12_tool() -> rmcp::model::Tool {
+    use std::borrow::Cow;
+    use std::sync::Arc;
+
+    let input_schema = serde_json::json!({
+        "$schema": INPUT_SCHEMA_DIALECT_2020_12,
+        "type": "object",
+        "$defs": {
+            "address": {
+                "$anchor": "addressDef",
+                "type": "object",
+                "properties": {
+                    "street": { "type": "string" },
+                    "city": { "type": "string" }
+                }
+            }
+        },
+        "properties": {
+            "name": { "type": "string" },
+            "address": { "$ref": "#/$defs/address" },
+            "contactMethod": { "type": "string", "enum": ["phone", "email"] },
+            "phone": { "type": "string" },
+            "email": { "type": "string" }
+        },
+        "allOf": [
+            { "anyOf": [{ "required": ["phone"] }, { "required": ["email"] }] }
+        ],
+        "if": {
+            "properties": { "contactMethod": { "const": "phone" } },
+            "required": ["contactMethod"]
+        },
+        "then": { "required": ["phone"] },
+        "else": { "required": ["email"] },
+        "additionalProperties": false
+    });
+    let schema_map = input_schema
+        .as_object()
+        .expect("json_schema_2020_12_tool schema is an object")
+        .clone();
+    rmcp::model::Tool::new_with_raw(
+        JSON_SCHEMA_2020_12_TOOL_NAME,
+        Some(Cow::Borrowed("Tool with JSON Schema 2020-12 features")),
+        Arc::new(schema_map),
+    )
 }
 
 /// Log interpretation hint for MCP clients (included in `instructions` when logging is enabled).
@@ -1536,6 +1608,10 @@ fn command_to_tool_with_config(
         .collect();
 
     let mut input_schema = serde_json::Map::new();
+    input_schema.insert(
+        "$schema".into(),
+        serde_json::json!(INPUT_SCHEMA_DIALECT_2020_12),
+    );
     input_schema.insert("type".into(), serde_json::json!("object"));
     input_schema.insert(
         "properties".into(),
@@ -3688,6 +3764,12 @@ mod tests {
 
         assert_eq!(tool.name, "sample");
         assert_eq!(tool.description, None);
+        assert_eq!(
+            tool.input_schema
+                .get("$schema")
+                .and_then(|value| value.as_str()),
+            Some(INPUT_SCHEMA_DIALECT_2020_12)
+        );
 
         let props = tool
             .input_schema
@@ -3737,6 +3819,48 @@ mod tests {
                 .and_then(|value| value.get("shareRuntime"))
                 .and_then(|value| value.as_bool()),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn json_schema_2020_12_tool_preserves_sep_keywords() {
+        let tool = json_schema_2020_12_tool();
+        assert_eq!(tool.name, JSON_SCHEMA_2020_12_TOOL_NAME);
+        let schema = &*tool.input_schema;
+        assert_eq!(
+            schema.get("$schema").and_then(|v| v.as_str()),
+            Some(INPUT_SCHEMA_DIALECT_2020_12)
+        );
+        assert!(
+            schema
+                .get("$defs")
+                .and_then(|v| v.as_object())
+                .is_some_and(|defs| defs.contains_key("address"))
+        );
+        assert_eq!(
+            schema.get("additionalProperties").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        let all_of = schema
+            .get("allOf")
+            .and_then(|v| v.as_array())
+            .expect("allOf");
+        assert!(
+            all_of
+                .iter()
+                .any(|item| item.get("anyOf").and_then(|v| v.as_array()).is_some())
+        );
+        assert!(schema.get("if").is_some());
+        assert!(schema.get("then").is_some());
+        assert!(schema.get("else").is_some());
+        let address = schema
+            .get("$defs")
+            .and_then(|v| v.get("address"))
+            .and_then(|v| v.as_object())
+            .expect("address def");
+        assert_eq!(
+            address.get("$anchor").and_then(|v| v.as_str()),
+            Some("addressDef")
         );
     }
 

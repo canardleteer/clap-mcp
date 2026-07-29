@@ -42,6 +42,9 @@ subcommands when you want smaller per-tool schemas; use `#[clap_mcp(skip)]` on
 flattened groups you do not want agents to set over MCP. Runnable demo:
 **flat_struct_root** in [examples/README.md](../examples/README.md).
 
+Every tool `inputSchema` advertises JSON Schema draft 2020-12 via `$schema`
+(`INPUT_SCHEMA_DIALECT_2020_12`). See [tool-output.md](tool-output.md).
+
 ## Known limitations
 
 * Derive metadata (`skip`, `requires`, `serialize_topic`, `serialized = "..."`)

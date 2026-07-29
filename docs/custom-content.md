@@ -1,12 +1,13 @@
-# Custom resources and prompts
+# Custom resources, prompts, and tools
 
 > Guide for CLI authors adding clap-mcp. See [README](../README.md) to get started.
 
 [← Documentation index](../README.md#documentation)
 
 In addition to the built-in **`clap://schema`** resource and the optional
-**logging guide** prompt, you can expose custom MCP resources and prompts. Add
-them to [`ClapMcpServeOptions`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html)
+**logging guide** prompt, you can expose custom MCP resources, prompts, and
+raw-schema tools. Add them to
+[`ClapMcpServeOptions`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html)
 and pass that into `parse_or_serve_mcp_with`, [`ServeMcpBuilder`], or the
 lower-level [`serve_mcp`] / [`serve_mcp_blocking`] functions.
 
@@ -117,3 +118,26 @@ resources when they need fresh content.
 Prefer a stable prefix (e.g. `myapp://`) for custom resource URIs so they don’t
 clash with the built-in `clap://schema`. Prompt names must be unique; avoid
 `clap-mcp-logging-guide` for custom prompts.
+
+## Custom tools (raw `inputSchema`)
+
+Set [`custom_tools`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html#structfield.custom_tools)
+to append [`rmcp::model::Tool`](https://docs.rs/rmcp/latest/rmcp/model/struct.Tool.html)
+values after clap-derived tools in `tools/list`. Schemas are listed verbatim, so
+you can advertise JSON Schema 2020-12 vocabulary clap cannot express (`$defs`,
+`$anchor`, `allOf` / `anyOf`, `if` / `then` / `else`, `additionalProperties`).
+
+`tools/call` for custom tool names returns a fixed success text result; they are
+not routed through clap execution. Use
+[`json_schema_2020_12_tool`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.json_schema_2020_12_tool.html)
+for the SEP-1613 / SEP-2106 shape the MCP conformance harness expects:
+
+```rust
+use clap_mcp::{ClapMcpServeOptions, json_schema_2020_12_tool};
+
+let mut opts = ClapMcpServeOptions::default();
+opts.custom_tools.push(json_schema_2020_12_tool());
+```
+
+Clap-derived tools still advertise `"$schema": "https://json-schema.org/draft/2020-12/schema"`
+on every `inputSchema` (`INPUT_SCHEMA_DIALECT_2020_12`).

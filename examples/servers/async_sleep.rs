@@ -57,6 +57,7 @@ fn main() {
         custom_resources: vec![],
         custom_resource_templates: vec![],
         custom_prompts: vec![],
+        custom_tools: vec![],
     };
 
     let cli = clap_mcp::parse_or_serve_mcp_with::<Cli>(clap_mcp::ClapMcpRunOptions {

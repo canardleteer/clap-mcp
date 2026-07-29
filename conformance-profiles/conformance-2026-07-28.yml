@@ -8,8 +8,6 @@ server:
   - tools-call-embedded-resource
   - tools-call-mixed-content
   - tools-call-with-progress
-  # JSON Schema 2020-12 `$schema` / dialect expectations on tool inputSchema.
-  - json-schema-2020-12
   # SEP-2575 stateless HTTP (server/discover, per-request _meta) not implemented.
   - server-stateless
   # SEP-2243 custom Mcp-Param / x-mcp-header validation not implemented.

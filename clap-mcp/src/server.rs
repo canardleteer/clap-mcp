@@ -44,6 +44,8 @@ pub(crate) struct ServeHandlerInner {
     pub custom_resources: Vec<content::CustomResource>,
     pub custom_resource_templates: Vec<content::CustomResourceTemplate>,
     pub custom_prompts: Vec<content::CustomPrompt>,
+    /// Tool names from [`ClapMcpServeOptions::custom_tools`] (schema-only; not clap).
+    pub custom_tool_names: HashSet<String>,
     pub logging_enabled: bool,
     pub task_augmented_tools: bool,
     pub task_tool_filter: Option<HashSet<String>>,
@@ -77,6 +79,12 @@ impl ServeHandlerInner {
 
         let args_map = params.arguments.clone().unwrap_or_default();
         validate_tool_argument_names(tool, &params.name, &args_map)?;
+
+        if self.custom_tool_names.contains(params.name.as_ref()) {
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
+                "Custom tool acknowledged",
+            )]));
+        }
 
         if let Some(ref handler) = self.in_process_handler {
             let name = params.name.to_string();
@@ -586,6 +594,14 @@ pub(crate) fn build_clap_mcp_server(
         None
     };
 
+    let custom_tool_names: HashSet<String> = serve_options
+        .custom_tools
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    let mut tools = tools;
+    tools.extend(serve_options.custom_tools.iter().cloned());
+
     let inner = Arc::new(ServeHandlerInner {
         schema_json,
         tools,
@@ -596,6 +612,7 @@ pub(crate) fn build_clap_mcp_server(
         custom_resources: serve_options.custom_resources.clone(),
         custom_resource_templates: serve_options.custom_resource_templates.clone(),
         custom_prompts: serve_options.custom_prompts.clone(),
+        custom_tool_names,
         logging_enabled,
         task_augmented_tools: metadata.task_augmented_tools,
         task_tool_filter,

@@ -79,9 +79,11 @@ clap-mcp = "0.1.0-rc.1"
   `log` features). MCP protocol logging is deprecated by SEP-2577; clap-mcp
   still ships the bridge for agent-facing CLI diagnostics. See
   [logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md)
-* Structured tool output and optional JSON `outputSchema`; see
+* Structured tool output and optional JSON `outputSchema`; tool `inputSchema`
+  advertises JSON Schema draft 2020-12 (`$schema`). See
   [tool-output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md)
-* Custom MCP resources and prompts; see [custom-content](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md)
+* Custom MCP resources, prompts, and optional raw-schema tools (`custom_tools`);
+  see [custom-content](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md)
 * Agent Skills export (`--export-skills`); see
   [export-skills](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/export-skills.md)
 * Stateful in-process session tools; see
@@ -179,7 +181,7 @@ Every guide in [`docs/`](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs
 | --- | --- |
 | [Usage patterns](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md) | Derive (minimal / with attributes), imperative CLI, struct root, setup then serve (embedder) |
 | [Supported CLI shapes](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/supported-cli-shapes.md) | Pattern matrix, example binaries, non-goals |
-| [Custom resources and prompts](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md) | `ClapMcpServeOptions`, static/dynamic/blob content, URI templates, subscribe |
+| [Custom resources, prompts, and tools](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md) | `ClapMcpServeOptions`, static/dynamic/blob content, URI templates, subscribe, `custom_tools` |
 | [Exporting agent skills](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/export-skills.md) | `--export-skills`, SKILL.md generation |
 | [Execution safety](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/execution-safety.md) | `reinvocation_safe`, topical serialization, skip/requires, ArgGroup hints (`meta.clapMcp.argGroups`), nested metadata, dual derive, async embedders |
 | [MCP tasks support](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/mcp-tasks.md) | Task-augmented `tools/call`, examples, support matrix |
