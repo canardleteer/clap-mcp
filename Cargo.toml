@@ -7,4 +7,4 @@ version = "0.1.0-rc.1"
 
 [workspace.dependencies]
 clap-mcp-macros = { path = "clap-mcp/macros", version = "0.1.0-rc.1" }
-rmcp = { version = "2.2", default-features = false, features = ["server", "client", "macros", "transport-io", "transport-child-process"] }
+rmcp = { version = "3", default-features = false, features = ["server", "client", "macros", "transport-io", "transport-child-process"] }

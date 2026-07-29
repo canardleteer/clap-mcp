@@ -470,8 +470,8 @@ pattern. **task_tools_dedicated** uses
 tracing`.
 
 Use **task_augmented_client** to run an end-to-end client
-(`CallToolRequestParams` with `task: Some(...)`, poll `tasks/get`, then
-`tasks/result`):
+(client declares the tasks extension, server returns `CreateTaskResult`, poll
+`tasks/get` for the completed payload):
 
 ```bash
 cargo run -p clap-mcp-examples --bin task_tools_dedicated --features tracing -- sleep --ms 80
@@ -523,7 +523,7 @@ cargo run -p clap-mcp-examples --bin panic_catch_opt_in -- --mcp
 ### task_panic_catch
 
 Task-augmented `tools/call` with `catch_in_process_panics = true`. A panicking
-task tool returns an error payload on `tasks/result` (`is_error: true`); the
+task tool completes with an error payload on `tasks/get` (`isError: true`); the
 server stays up. Pair with **task_augmented_client** or integration tests.
 
 ```bash

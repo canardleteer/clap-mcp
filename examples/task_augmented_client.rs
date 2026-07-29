@@ -13,8 +13,9 @@ use clap::Parser;
 use rmcp::{
     ClientHandler, RoleClient, ServiceExt,
     model::{
-        CallToolRequestParams, ClientRequest, ContentBlock, CreateTaskResult, GetTaskParams,
-        GetTaskPayloadParams, Request, ServerResult, TaskMetadata, TaskStatus,
+        CallToolRequestParams, ClientCapabilities, ClientInfo, ClientRequest, ContentBlock,
+        CreateTaskResult, GetTaskParams, Implementation, Request, ServerResult, TaskPayload,
+        TaskStatus,
     },
     service::Peer,
     transport::{ConfigureCommandExt, TokioChildProcess},
@@ -47,10 +48,18 @@ fn example_binary_path(bin: &str) -> std::path::PathBuf {
 
 static BUILD_LOCK: Mutex<()> = Mutex::new(());
 
+/// Client that declares the SEP-2663 tasks extension so task-eligible tools enqueue.
 #[derive(Clone, Default)]
-struct NoOpHandler;
+struct TasksClientHandler;
 
-impl ClientHandler for NoOpHandler {}
+impl ClientHandler for TasksClientHandler {
+    fn get_info(&self) -> ClientInfo {
+        ClientInfo::new(
+            ClientCapabilities::builder().enable_tasks().build(),
+            Implementation::from_build_env(),
+        )
+    }
+}
 
 async fn call_tool_task(
     peer: &Peer<RoleClient>,
@@ -76,25 +85,6 @@ async fn get_task_info(
         .await?;
     match resp {
         ServerResult::GetTaskResult(result) => Ok(result),
-        _ => Err(rmcp::ServiceError::UnexpectedResponse),
-    }
-}
-
-async fn get_task_payload(
-    peer: &Peer<RoleClient>,
-    task_id: &str,
-) -> Result<rmcp::model::GetTaskPayloadResult, rmcp::ServiceError> {
-    let resp = peer
-        .send_request(ClientRequest::GetTaskPayloadRequest(Request::new(
-            GetTaskPayloadParams::new(task_id),
-        )))
-        .await?;
-    match resp {
-        ServerResult::GetTaskPayloadResult(result) => Ok(result),
-        ServerResult::CustomResult(value) => Ok(rmcp::model::GetTaskPayloadResult::new(value.0)),
-        ServerResult::CallToolResult(result) => Ok(rmcp::model::GetTaskPayloadResult::new(
-            serde_json::to_value(result).expect("task payload should serialize"),
-        )),
         _ => Err(rmcp::ServiceError::UnexpectedResponse),
     }
 }
@@ -125,46 +115,52 @@ async fn run_client(bin: &str) -> Result<(), rmcp::RmcpError> {
     )
     .map_err(rmcp::RmcpError::transport_creation::<TokioChildProcess>)?;
 
-    let client = NoOpHandler.serve(transport).await?;
+    let client = TasksClientHandler.serve(transport).await?;
 
     let peer = client.peer();
     let create = call_tool_task(
         peer,
-        CallToolRequestParams::new("sleep")
-            .with_arguments(serde_json::Map::from_iter([(
-                "ms".into(),
-                serde_json::json!(25),
-            )]))
-            .with_task(TaskMetadata::new()),
+        CallToolRequestParams::new("sleep").with_arguments(serde_json::Map::from_iter([(
+            "ms".into(),
+            serde_json::json!(25),
+        )])),
     )
     .await?;
 
     let task_id = create.task.task_id.clone();
     assert!(!task_id.is_empty(), "task id must be set");
 
-    let mut poll_ms = create.task.poll_interval.unwrap_or(50).clamp(5, 500);
+    let mut poll_ms = create.task.poll_interval_ms.unwrap_or(50).clamp(5, 500);
 
     loop {
         let st = get_task_info(peer, &task_id).await?;
-        match st.task.status {
+        match st.task.status() {
             TaskStatus::Completed => break,
             TaskStatus::Failed | TaskStatus::Cancelled => {
-                panic!("task ended with status {:?}", st.task.status);
+                panic!("task ended with status {:?}", st.task.status());
             }
             TaskStatus::Working | TaskStatus::InputRequired => {
-                if let Some(p) = st.task.poll_interval {
+                if let Some(p) = st.task.task.poll_interval_ms {
                     poll_ms = p.clamp(5, 500);
                 }
                 tokio::time::sleep(Duration::from_millis(poll_ms)).await;
             }
-            _ => panic!("task ended with status {:?}", st.task.status),
+            _ => panic!("task ended with status {:?}", st.task.status()),
         }
     }
 
-    let payload = get_task_payload(peer, &task_id).await?;
-    let tool_result: rmcp::model::CallToolResult =
-        serde_json::from_value(payload.0).expect("task payload should be CallToolResult");
-    let text = tool_result
+    let st = get_task_info(peer, &task_id).await?;
+    let result: rmcp::model::CallToolResult = match st.task.payload {
+        TaskPayload::Completed { result } => {
+            serde_json::from_value(serde_json::Value::Object(result))
+                .expect("task payload should be CallToolResult")
+        }
+        other => panic!(
+            "expected completed task payload, got status {:?}",
+            other.status()
+        ),
+    };
+    let text = result
         .content
         .iter()
         .filter_map(|block| match block {

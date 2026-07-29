@@ -7,15 +7,16 @@
 mod common;
 
 use common::{
-    ExampleClient, ExamplePeer, assert_create_task_meta, call_tool_task, example_binary_path,
-    get_task_payload, poll_until_completed, shutdown, task_call_params, tool_text,
+    ExampleClient, ExamplePeer, TasksExampleClient, assert_create_task_meta, call_tool_task,
+    example_binary_path, get_task_payload, poll_until_completed, shutdown, task_call_params,
+    tool_text,
 };
 use rmcp::model::CallToolResult;
 use rmcp::{
     ClientHandler, RoleClient, ServiceExt,
     model::{
-        CallToolRequestParams, LoggingLevel, LoggingMessageNotificationParam, Meta,
-        SetLevelRequestParams,
+        CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation, LoggingLevel,
+        LoggingMessageNotificationParam, NotificationMetaObject, SetLevelRequestParams,
     },
     service::NotificationContext,
     transport::{ConfigureCommandExt, TokioChildProcess},
@@ -139,14 +140,30 @@ struct LogCapturingHandler {
 }
 
 impl ClientHandler for LogCapturingHandler {
+    fn get_info(&self) -> ClientInfo {
+        ClientInfo::new(
+            ClientCapabilities::builder().enable_tasks().build(),
+            Implementation::from_build_env(),
+        )
+    }
+
     async fn on_logging_message(
         &self,
-        _params: LoggingMessageNotificationParam,
+        params: LoggingMessageNotificationParam,
         context: NotificationContext<RoleClient>,
     ) {
-        if let Some(meta) = context.extensions.get::<Meta>()
-            && let Some(tid) = meta.0.get("taskId").and_then(|v| v.as_str())
-        {
+        let tid = params
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("taskId").and_then(|v| v.as_str()))
+            .or_else(|| {
+                context
+                    .extensions
+                    .get::<NotificationMetaObject>()
+                    .and_then(|meta| meta.get("taskId").and_then(|v| v.as_str()))
+            })
+            .or_else(|| context.meta.get("taskId").and_then(|v| v.as_str()));
+        if let Some(tid) = tid {
             self.task_ids
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -224,8 +241,19 @@ async fn launch_with_noop(bin: &str) -> Result<ExampleClient, rmcp::RmcpError> {
     launch_task_example(bin, common::NoOpHandler, None).await
 }
 
+async fn launch_with_tasks(bin: &str) -> Result<TasksExampleClient, rmcp::RmcpError> {
+    launch_task_example(bin, common::TasksClientHandler, None).await
+}
+
 async fn launch_with_probe(bin: &str, probe_path: &Path) -> Result<ExampleClient, rmcp::RmcpError> {
     launch_task_example(bin, common::NoOpHandler, Some(probe_path)).await
+}
+
+async fn launch_with_tasks_probe(
+    bin: &str,
+    probe_path: &Path,
+) -> Result<TasksExampleClient, rmcp::RmcpError> {
+    launch_task_example(bin, common::TasksClientHandler, Some(probe_path)).await
 }
 
 async fn call_plain(
@@ -376,13 +404,13 @@ async fn assert_concurrent_probe_overlap(
 
 async fn task_payload_as_call_tool_result(peer: &ExamplePeer, task_id: &str) -> CallToolResult {
     let payload = get_task_payload(peer, task_id).await.expect("task payload");
-    serde_json::from_value(payload.0).expect("task payload should be CallToolResult")
+    serde_json::from_value(payload).expect("task payload should be CallToolResult")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_augmented_tools_call_dedicated_runtime() {
     let _serial = serial_test_guard();
-    let client = launch_with_noop("task_tools_dedicated")
+    let client = launch_with_tasks("task_tools_dedicated")
         .await
         .expect("client");
     let peer = client.peer();
@@ -400,7 +428,9 @@ async fn task_augmented_tools_call_dedicated_runtime() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_augmented_tools_call_shared_runtime() {
     let _serial = serial_test_guard();
-    let client = launch_with_noop("task_tools_shared").await.expect("client");
+    let client = launch_with_tasks("task_tools_shared")
+        .await
+        .expect("client");
     let peer = client.peer();
     let create = call_task_create(peer, 20).await.expect("call");
     assert_create_task_meta(&create);
@@ -434,7 +464,7 @@ async fn plain_tool_call_unchanged_shared() {
 async fn task_plus_task_concurrent_serializes_dedicated_probe() {
     let _serial = serial_test_guard();
     let probe = fresh_probe_path("tt_ded");
-    let client = launch_with_probe("task_serial_probe_dedicated", &probe)
+    let client = launch_with_tasks_probe("task_serial_probe_dedicated", &probe)
         .await
         .expect("client");
     assert_concurrent_probe_serialization(client.peer().clone(), &probe, true, true).await;
@@ -453,57 +483,13 @@ async fn plain_plus_plain_concurrent_serializes_dedicated_probe() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn plain_then_task_concurrent_serializes_dedicated_probe() {
-    let _serial = serial_test_guard();
-    let probe = fresh_probe_path("pt_ded");
-    let client = launch_with_probe("task_serial_probe_dedicated", &probe)
-        .await
-        .expect("client");
-    assert_concurrent_probe_serialization(client.peer().clone(), &probe, false, true).await;
-    shutdown(client).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn task_then_plain_concurrent_serializes_dedicated_probe() {
-    let _serial = serial_test_guard();
-    let probe = fresh_probe_path("tp_ded");
-    let client = launch_with_probe("task_serial_probe_dedicated", &probe)
-        .await
-        .expect("client");
-    assert_concurrent_probe_serialization(client.peer().clone(), &probe, true, false).await;
-    shutdown(client).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_plus_task_concurrent_serializes_shared_probe() {
     let _serial = serial_test_guard();
     let probe = fresh_probe_path("tt_shr");
-    let client = launch_with_probe("task_serial_probe_shared", &probe)
+    let client = launch_with_tasks_probe("task_serial_probe_shared", &probe)
         .await
         .expect("client");
     assert_concurrent_probe_serialization(client.peer().clone(), &probe, true, true).await;
-    shutdown(client).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn plain_then_task_concurrent_serializes_shared_probe() {
-    let _serial = serial_test_guard();
-    let probe = fresh_probe_path("pt_shr");
-    let client = launch_with_probe("task_serial_probe_shared", &probe)
-        .await
-        .expect("client");
-    assert_concurrent_probe_serialization(client.peer().clone(), &probe, false, true).await;
-    shutdown(client).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn task_then_plain_concurrent_serializes_shared_probe() {
-    let _serial = serial_test_guard();
-    let probe = fresh_probe_path("tp_shr");
-    let client = launch_with_probe("task_serial_probe_shared", &probe)
-        .await
-        .expect("client");
-    assert_concurrent_probe_serialization(client.peer().clone(), &probe, true, false).await;
     shutdown(client).await;
 }
 
@@ -553,7 +539,7 @@ async fn task_augmented_logging_meta_task_id_dedicated() {
 async fn task_plus_task_concurrent_overlaps_dedicated_probe() {
     let _serial = serial_test_guard();
     let probe = fresh_probe_path("tt_par_ded");
-    let client = launch_with_probe("task_parallel_probe_dedicated", &probe)
+    let client = launch_with_tasks_probe("task_parallel_probe_dedicated", &probe)
         .await
         .expect("client");
     assert_concurrent_probe_overlap(client.peer().clone(), &probe, true, true).await;
@@ -572,57 +558,13 @@ async fn plain_plus_plain_concurrent_overlaps_dedicated_probe() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn plain_then_task_concurrent_overlaps_dedicated_probe() {
-    let _serial = serial_test_guard();
-    let probe = fresh_probe_path("pt_par_ded");
-    let client = launch_with_probe("task_parallel_probe_dedicated", &probe)
-        .await
-        .expect("client");
-    assert_concurrent_probe_overlap(client.peer().clone(), &probe, false, true).await;
-    shutdown(client).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn task_then_plain_concurrent_overlaps_dedicated_probe() {
-    let _serial = serial_test_guard();
-    let probe = fresh_probe_path("tp_par_ded");
-    let client = launch_with_probe("task_parallel_probe_dedicated", &probe)
-        .await
-        .expect("client");
-    assert_concurrent_probe_overlap(client.peer().clone(), &probe, true, false).await;
-    shutdown(client).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_plus_task_concurrent_overlaps_shared_probe() {
     let _serial = serial_test_guard();
     let probe = fresh_probe_path("tt_par_shr");
-    let client = launch_with_probe("task_parallel_probe_shared", &probe)
+    let client = launch_with_tasks_probe("task_parallel_probe_shared", &probe)
         .await
         .expect("client");
     assert_concurrent_probe_overlap(client.peer().clone(), &probe, true, true).await;
-    shutdown(client).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn plain_then_task_concurrent_overlaps_shared_probe() {
-    let _serial = serial_test_guard();
-    let probe = fresh_probe_path("pt_par_shr");
-    let client = launch_with_probe("task_parallel_probe_shared", &probe)
-        .await
-        .expect("client");
-    assert_concurrent_probe_overlap(client.peer().clone(), &probe, false, true).await;
-    shutdown(client).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn task_then_plain_concurrent_overlaps_shared_probe() {
-    let _serial = serial_test_guard();
-    let probe = fresh_probe_path("tp_par_shr");
-    let client = launch_with_probe("task_parallel_probe_shared", &probe)
-        .await
-        .expect("client");
-    assert_concurrent_probe_overlap(client.peer().clone(), &probe, true, false).await;
     shutdown(client).await;
 }
 
@@ -687,7 +629,7 @@ async fn concurrent_task_logging_distinct_task_ids_parallel_probe() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_augmented_panic_caught_returns_error_payload() {
     let _serial = serial_test_guard();
-    let client = launch_with_noop("task_panic_catch").await.expect("client");
+    let client = launch_with_tasks("task_panic_catch").await.expect("client");
     let peer = client.peer();
     let create = call_tool_task(peer, task_call_params("panic-demo", serde_json::Map::new()))
         .await
@@ -717,7 +659,7 @@ async fn task_augmented_panic_caught_returns_error_payload() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_augmented_panic_caught_parallel_safe() {
     let _serial = serial_test_guard();
-    let client = launch_with_noop("task_panic_catch_parallel")
+    let client = launch_with_tasks("task_panic_catch_parallel")
         .await
         .expect("client");
     let peer = client.peer();

@@ -16,15 +16,26 @@ cargo xtask conformance
 
 Builds `clap-mcp-conformance-http`, starts it on an ephemeral port, and runs
 `@modelcontextprotocol/conformance` from the pinned Docker image
-([`docker/conformance/VERSION`](../docker/conformance/VERSION)) **twice**:
+([`docker/conformance/VERSION`](../docker/conformance/VERSION), currently
+`0.2.0-alpha.10`) **twice**:
 
 | Pass | Suite | `--spec-version` | Baseline |
 | --- | --- | --- | --- |
-| Stable | `active` | `2025-11-25` | [`conformance-profiles/conformance-2025-11-25.yml`](../conformance-profiles/conformance-2025-11-25.yml) |
-| Draft | `draft` | `draft` (`2026-07-28`) | [`conformance-profiles/conformance-draft-2026-07-28.yml`](../conformance-profiles/conformance-draft-2026-07-28.yml) |
+| Legacy | `active` | `2025-11-25` | [`conformance-profiles/conformance-2025-11-25.yml`](../conformance-profiles/conformance-2025-11-25.yml) |
+| Current | `all` | `2026-07-28` | [`conformance-profiles/conformance-2026-07-28.yml`](../conformance-profiles/conformance-2026-07-28.yml) |
 
 Override with `--suite active|draft|all|…`, `--spec-version`, `--baseline`, or
-`--draft-baseline` when debugging a single pass.
+`--current-baseline` when debugging a single pass.
+
+> [!NOTE]
+> The harness still puts scenarios with `introducedIn: 2026-07-28` in a suite
+> named `draft`, even though that protocol date is released. The default second
+> pass uses suite `all` with `--spec-version 2026-07-28` so those scenarios run
+> under the dated release identifier. Upstream `draft` as an evolving
+> specification directory remains separate; clap-mcp does not advertise a
+> `draft` protocol string. You may run
+> `cargo xtask conformance --suite draft --spec-version 2026-07-28` to exercise
+> only the harness's `introducedIn: 2026-07-28` bucket.
 
 CI jobs in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) and
 [`.github/workflows/conformance.yml`](../.github/workflows/conformance.yml) call
@@ -37,9 +48,8 @@ The conformance binary is **maintainer-only** (not listed in
 ## Baseline files
 
 Profiles live under [`conformance-profiles/`](../conformance-profiles/) and are
-named by MCP protocol version (`conformance-YYYY-MM-DD.yml`). The draft profile
-keeps `draft` in the filename and includes the draft protocol date
-(`conformance-draft-2026-07-28.yml`).
+named by MCP protocol version (`conformance-YYYY-MM-DD.yml`), for example
+`conformance-2026-07-28.yml` for the released `2026-07-28` pass.
 
 The YAML files are the machine-readable allow-lists the harness consumes. Every
 ID in those files **must** appear in the inventories below with a concrete
@@ -109,23 +119,31 @@ Source: [`conformance-profiles/conformance-2025-11-25.yml`](../conformance-profi
   pass-through, not tool-result media)
 * Transport: `server-sse-multiple-streams`, `dns-rebinding-protection`
 
-## Draft baseline inventory
+## 2026-07-28 baseline inventory
 
-Source: [`conformance-profiles/conformance-draft-2026-07-28.yml`](../conformance-profiles/conformance-draft-2026-07-28.yml)
-(`draft` @ `2026-07-28`).
+Source: [`conformance-profiles/conformance-2026-07-28.yml`](../conformance-profiles/conformance-2026-07-28.yml)
+(`all` @ `2026-07-28`).
 
-These are draft-era protocol features. clap-mcp remains a dual-era server that
-speaks legacy `initialize` for `2025-11-25` and accepts draft version
-negotiation, but does not implement the full draft server surface.
+These scenarios exercise the released `2026-07-28` protocol version. clap-mcp
+remains a dual-era server that negotiates `2025-11-25` or `2026-07-28` in
+`initialize`, but does not implement the full `2026-07-28` server surface.
+
+Shared with the legacy pass (still applicable under `2026-07-28`):
+
+| Scenario | Disposition |
+| --- | --- |
+| `tools-call-image` / `tools-call-audio` / `tools-call-embedded-resource` / `tools-call-mixed-content` | `out-of-scope` (text/JSON tools only) |
+| `tools-call-with-progress` | `deferred` |
+
+`2026-07-28`-introduced scenarios:
 
 | Scenario | What the harness requires | Why clap-mcp does not | Disposition |
 | --- | --- | --- | --- |
+| `json-schema-2020-12` | Tool `inputSchema` advertises JSON Schema 2020-12 dialect / `$schema` | clap-mcp emits plain JSON Schema objects without the 2020-12 `$schema` marker the harness expects | `deferred` |
 | `server-stateless` | SEP-2575: `server/discover`, per-request `_meta`, structural capability checks | Sessionful Streamable HTTP via rmcp; no `server/discover` or modern per-request metadata path | `deferred` (dual-era / stateless HTTP is a large transport project) |
-| `sep-2164-resource-not-found` | Unknown `resources/read` URI returns JSON-RPC error `-32602` with `data.uri` | Handler already returns `resource_not_found` with `data.uri`. Under draft HTTP the transport answers `422` with a non-JSON body, so the harness never sees the JSON-RPC error | `upstream` (keep until rmcp draft error encoding matches SEP-2164) |
-| `http-header-validation` | SEP-2243: validate `Mcp-Method` / `Mcp-Name` vs body | Validation lives in rmcp Streamable HTTP; clap-mcp does not add a second layer | `upstream` |
 | `http-custom-header-server-validation` | SEP-2243: `Mcp-Param` / `x-mcp-header` Base64 rules | No custom MCP header param mapping from clap args | `deferred` (needs clap↔header mapping design) |
 | `caching` | SEP-2549: `ttlMs` + `cacheScope` on list/read results | List/read results do not attach cache hints | `deferred` (optional cache metadata on list responses) |
-| `input-required-result-basic-elicitation` | SEP-2322 `InputRequiredResult` + elicitation input | Draft multi-turn input + elicitation; neither offered | `deferred` (depends on elicitation + draft result types) |
+| `input-required-result-basic-elicitation` | SEP-2322 `InputRequiredResult` + elicitation input | Multi-turn input + elicitation; neither offered | `deferred` (depends on elicitation + InputRequiredResult types) |
 | `input-required-result-basic-sampling` | SEP-2322 + sampling input request | Sampling not offered | `out-of-scope` / `deferred` with sampling |
 | `input-required-result-basic-list-roots` | SEP-2322 + `roots/list` input request | No InputRequiredResult surface | `deferred` |
 | `input-required-result-request-state` | SEP-2322 `requestState` round-trip | Same InputRequiredResult gap | `deferred` |
@@ -134,17 +152,29 @@ negotiation, but does not implement the full draft server surface.
 | `input-required-result-missing-input-response` | Re-request on missing/wrong `inputResponses` | Same | `deferred` |
 | `input-required-result-non-tool-request` | InputRequiredResult on `prompts/get` | Same | `deferred` |
 | `input-required-result-result-type` | Explicit `resultType` on InputRequiredResult | Same | `deferred` |
-| `input-required-result-unsupported-methods` | Must not emit InputRequiredResult on wrong methods | Same surface; scenario expects draft-aware refusal semantics | `deferred` |
 | `input-required-result-tampered-state` | Reject tampered integrity-protected `requestState` | Same | `deferred` |
 | `input-required-result-capability-check` | Only request inputs for client-declared caps | Same | `deferred` |
 | `input-required-result-ignore-extra-params` | Ignore unknown keys in `inputResponses` | Same | `deferred` |
-| `input-required-result-validate-input` | Validate malformed `inputResponses` | Same | `deferred` |
+
+### Passing on the 2026-07-28 pass (not baselined)
+
+Newly green under rmcp 3.0 (remove from baseline if they regress):
+
+* `sep-2164-resource-not-found`
+* `http-header-validation`
+* `input-required-result-unsupported-methods`
+* `input-required-result-validate-input`
+
+Also passing when applicable: `tools-call-simple-text`, `tools-call-error`,
+list/read resource and prompt scenarios shared with the legacy pass,
+`server-sse-multiple-streams`, `dns-rebinding-protection`.
 
 ### Partial progress (still baselined)
 
 | Scenario | Library status | Remaining gap |
 | --- | --- | --- |
-| `sep-2164-resource-not-found` | `read_resource` returns `resource_not_found` with `data.uri` | Draft Streamable HTTP surfaces the error as HTTP `422` instead of a JSON-RPC error body (`upstream`) |
+| `server-stateless` | Dual-era initialize path only | Full SEP-2575 discover / per-request `_meta` |
+| `json-schema-2020-12` | Tool schemas from schemars / clap | Emit JSON Schema 2020-12 `$schema` / dialect the harness expects |
 
 ### Feature backlog suggested by these baselines
 
@@ -154,12 +184,13 @@ Ordered by how close they are to clap-mcp’s product shape:
    tools/resources/prompts list results.
 2. **Progress notifications** (`tools-call-with-progress`) — optional bridge from
    long-running tools when embedders can supply a progress token.
-3. **Elicitation / InputRequiredResult** — revisit only with a clear clap UX
+3. **JSON Schema 2020-12 dialect** (`json-schema-2020-12`) — advertise `$schema`
+   on tool `inputSchema` when the harness dialect check requires it.
+4. **Elicitation / InputRequiredResult** — revisit only with a clear clap UX
    (confirm flags, interactive prompts); currently deferred after scaffolding
    removal.
-4. **Stateless / SEP-2575 HTTP**, **SEP-2243 header rules**, and **draft JSON-RPC
-   error encoding** (`sep-2164` under draft) — largely transport/`rmcp` work;
-   track upstream before inventing a clap-mcp layer.
+5. **Stateless / SEP-2575 HTTP** and **SEP-2243 custom header rules** — largely
+   transport/`rmcp` work; track upstream before inventing a clap-mcp layer.
 
 Shipped from this backlog: binary custom resources (`ResourceContent::StaticBlob`);
 resource subscribe/unsubscribe RPCs (no update notifications); simple `{param}`
@@ -219,11 +250,12 @@ GitHub Actions and local xtask both build and run that image.
 [`clap_mcp::protocol`](https://docs.rs/clap-mcp/latest/clap_mcp/protocol/) lists
 the MCP protocol versions the library accepts in `initialize` negotiation:
 
-* `2025-11-25` (stable advertise / fallback)
-* `2026-07-28` (draft; alias `draft` in the harness)
+* `PROTOCOL_VERSION_STABLE` = `2025-11-25` (primary advertise / fallback)
+* `PROTOCOL_VERSION_CURRENT` = `2026-07-28` (released protocol version)
 
-Those match the dual conformance passes above. Older rmcp-known dates are not
-echoed on stdio (clap-mcp uses `serve_directly` plus its own negotiation).
-Streamable HTTP still goes through rmcp `serve_server`, which may echo other
-known versions until upstream allows a custom supported set; clients that
-request `2025-11-25` or `2026-07-28` are unaffected.
+clap-mcp does not advertise a `draft` protocol string. Those constants match the
+dual conformance passes above. Older rmcp-known dates are not echoed on stdio
+(clap-mcp uses `serve_directly` plus its own negotiation). Streamable HTTP still
+goes through rmcp `serve_server`, which may echo other known versions until
+upstream allows a custom supported set; clients that request `2025-11-25` or
+`2026-07-28` are unaffected.

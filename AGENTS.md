@@ -35,7 +35,7 @@ priorities below.
 
 Early-stage warning: the crate is on the pre-stable `0.1.0` release line (see
 workspace `Cargo.toml`). See [migration notes](docs/migration-notes.md) for
-rmcp 2.2 and historical API slimming.
+rmcp 3.0, MCP `2026-07-28`, and historical API slimming.
 
 ## Repository layout
 
@@ -110,7 +110,7 @@ cargo xtask code-coverage-html          # HTML report in target/llvm-cov/html
 cargo xtask code-coverage-html --open   # same, then open in browser
 
 # MCP conformance harness (requires Docker; part of ci-gate)
-cargo xtask conformance                 # active@2025-11-25 + draft; stops stale servers first
+cargo xtask conformance                 # active@2025-11-25 + all@2026-07-28; stops stale servers first
 cargo xtask conformance-stop            # stop conformance-server / orphan fixture
 # conformance-server is debug-only — see docs/conformance-baseline.md#local-safety-conformance-server
 ```
@@ -216,7 +216,7 @@ Every file below must appear in the README Documentation table.
 | [docs/tool-output.md](docs/tool-output.md) | CLI authors | `run` return types, structured output, `output-schema` |
 | [docs/logging.md](docs/logging.md) | CLI authors | `tracing` / `log` bridges, MCP notifications |
 | [docs/http.md](docs/http.md) | CLI authors | Streamable HTTP listen (`--mcp-http`) |
-| [docs/migration-notes.md](docs/migration-notes.md) | CLI authors / maintainers | 0.1.0-rc.1 (rmcp 2.2), historical 0.0.3 → 0.0.4 |
+| [docs/migration-notes.md](docs/migration-notes.md) | CLI authors / maintainers | rmcp 3.0 / MCP 2026-07-28, historical 0.0.3 → 0.0.4 |
 | [docs/conformance-baseline.md](docs/conformance-baseline.md) | Maintainers | MCP conformance harness, baseline YAML |
 | [docs/maintainer-testing.md](docs/maintainer-testing.md) | Maintainers | Macro checklist, test filters, example contracts |
 | [docs/supported-cli-shapes.md](docs/supported-cli-shapes.md) | CLI authors | Pattern matrix, attributes per shape, non-goals |

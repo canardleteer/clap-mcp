@@ -5,9 +5,9 @@
 use rmcp::{
     ClientHandler, RoleClient, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResult, ClientRequest, ContentBlock, CreateTaskResult,
-        GetTaskParams, GetTaskPayloadParams, GetTaskPayloadResult, GetTaskResult,
-        ReadResourceResult, Request, ResourceContents, ServerResult, TaskMetadata, TaskStatus,
+        CallToolRequestParams, CallToolResult, ClientCapabilities, ClientInfo, ClientRequest,
+        ContentBlock, CreateTaskResult, GetTaskParams, GetTaskResult, Implementation,
+        ReadResourceResult, Request, ResourceContents, ServerResult, TaskPayload, TaskStatus,
     },
     service::Peer,
     transport::{ConfigureCommandExt, TokioChildProcess},
@@ -42,7 +42,23 @@ pub struct NoOpHandler;
 
 impl ClientHandler for NoOpHandler {}
 
+/// Test client that declares the SEP-2663 tasks extension.
+///
+/// Task-eligible tools return `CreateTaskResult` for this client.
+#[derive(Clone, Default)]
+pub struct TasksClientHandler;
+
+impl ClientHandler for TasksClientHandler {
+    fn get_info(&self) -> ClientInfo {
+        ClientInfo::new(
+            ClientCapabilities::builder().enable_tasks().build(),
+            Implementation::from_build_env(),
+        )
+    }
+}
+
 pub type ExampleClient = rmcp::service::RunningService<RoleClient, NoOpHandler>;
+pub type TasksExampleClient = rmcp::service::RunningService<RoleClient, TasksClientHandler>;
 pub type ExamplePeer = Peer<RoleClient>;
 
 pub async fn launch_example_with_args(
@@ -134,13 +150,12 @@ pub async fn shutdown<H: ClientHandler>(client: rmcp::service::RunningService<Ro
     let _ = client.cancel().await;
 }
 
+/// Params for a task-eligible `tools/call` (SEP-2663 is server-directed; no client task hint).
 pub fn task_call_params(
     name: impl Into<String>,
     args: serde_json::Map<String, serde_json::Value>,
 ) -> CallToolRequestParams {
-    CallToolRequestParams::new(name.into())
-        .with_arguments(args)
-        .with_task(TaskMetadata::new())
+    CallToolRequestParams::new(name.into()).with_arguments(args)
 }
 
 pub async fn call_tool_task(
@@ -171,22 +186,18 @@ pub async fn get_task_info(
     }
 }
 
+/// Terminal `tasks/get` payload (`result` object) after the task completes.
 pub async fn get_task_payload(
     peer: &ExamplePeer,
     task_id: &str,
-) -> Result<GetTaskPayloadResult, rmcp::ServiceError> {
-    let resp = peer
-        .send_request(ClientRequest::GetTaskPayloadRequest(Request::new(
-            GetTaskPayloadParams::new(task_id),
-        )))
-        .await?;
-    match resp {
-        ServerResult::GetTaskPayloadResult(result) => Ok(result),
-        ServerResult::CustomResult(value) => Ok(GetTaskPayloadResult::new(value.0)),
-        ServerResult::CallToolResult(result) => Ok(GetTaskPayloadResult::new(
-            serde_json::to_value(result).expect("task payload should serialize"),
-        )),
-        _ => Err(rmcp::ServiceError::UnexpectedResponse),
+) -> Result<serde_json::Value, rmcp::ServiceError> {
+    let st = get_task_info(peer, task_id).await?;
+    match st.task.payload {
+        TaskPayload::Completed { result } => Ok(serde_json::Value::Object(result)),
+        other => panic!(
+            "expected completed task payload for {task_id}, got status {:?}",
+            other.status()
+        ),
     }
 }
 
@@ -208,24 +219,24 @@ pub async fn poll_until_completed_within(
     let mut poll_ms = 50u64;
     loop {
         let st = get_task_info(peer, task_id).await?;
-        match st.task.status {
+        match st.task.status() {
             TaskStatus::Completed => return Ok(()),
             TaskStatus::Failed | TaskStatus::Cancelled => {
-                panic!("unexpected task status {:?}", st.task.status);
+                panic!("unexpected task status {:?}", st.task.status());
             }
             TaskStatus::Working | TaskStatus::InputRequired => {
                 if Instant::now() >= deadline {
                     panic!(
                         "task {task_id} did not complete within {timeout:?} (last status {:?})",
-                        st.task.status
+                        st.task.status()
                     );
                 }
-                if let Some(p) = st.task.poll_interval {
+                if let Some(p) = st.task.task.poll_interval_ms {
                     poll_ms = p.clamp(5, 500);
                 }
                 tokio::time::sleep(Duration::from_millis(poll_ms)).await;
             }
-            _ => panic!("unexpected task status {:?}", st.task.status),
+            _ => panic!("unexpected task status {:?}", st.task.status()),
         }
     }
 }

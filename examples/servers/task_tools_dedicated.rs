@@ -3,7 +3,7 @@
 //! Run: `cargo run -p clap-mcp-examples --bin task_tools_dedicated --features tracing -- sleep --ms 100`
 //! Run: `cargo run -p clap-mcp-examples --bin task_tools_dedicated --features tracing -- --mcp`
 //!
-//! Pair with `task_augmented_client` to exercise `task: Some(...)` and poll `tasks/result`.
+//! Pair with `task_augmented_client` to exercise SEP-2663 server-directed tasks and poll `tasks/get`.
 
 mod task_tools_common;
 

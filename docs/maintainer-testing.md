@@ -101,13 +101,13 @@ Current excludes:
 
 Prefer `cargo xtask conformance`. It stops stale
 `clap-mcp-conformance-http` processes before running the pinned Docker harness
-twice (`active` @ `2025-11-25`, then `draft` @ `draft`). Requires Docker.
+twice (`active` @ `2025-11-25`, then `all` @ `2026-07-28`). Requires Docker.
 
 | Command | Use |
 | --- | --- |
-| `cargo xtask conformance` | Dual pass (stable + draft); start → test → stop |
+| `cargo xtask conformance` | Dual pass (stable + current); start → test → stop |
 | `cargo xtask conformance --suite active` | Stable pass only (`2025-11-25`) |
-| `cargo xtask conformance --suite draft` | Draft pass only |
+| `cargo xtask conformance --suite draft` | Optional harness draft suite only (not default CI) |
 | `cargo xtask conformance-stop` | Stop `conformance-server` / orphan fixture; remove pid/log/port files |
 | `cargo xtask conformance-server` | Advanced debugging only; stale guard unless `--force` |
 

@@ -39,7 +39,7 @@ jobs:
               sha256sum docker/conformance/VERSION
               sha256sum docker/conformance/Dockerfile
               sha256sum conformance-profiles/conformance-2025-11-25.yml
-              sha256sum conformance-profiles/conformance-draft-2026-07-28.yml
+              sha256sum conformance-profiles/conformance-2026-07-28.yml
               sha256sum xtask/src/conformance.rs
             } | sha256sum | awk '{print $1}'
           )
@@ -81,7 +81,7 @@ jobs:
             echo "Skipping scheduled conformance: no commits since last success and harness unchanged."
           fi
 
-      - name: Run MCP conformance (2025-11-25 + draft)
+      - name: Run MCP conformance (2025-11-25 + 2026-07-28)
         if: steps.gate.outputs.run == 'true'
         id: conformance
         # Local/CI parity via cargo xtask (Docker image from docker/conformance/VERSION).
@@ -112,5 +112,5 @@ jobs:
             target/conformance-server.log
             target/conformance-port
             conformance-profiles/conformance-2025-11-25.yml
-            conformance-profiles/conformance-draft-2026-07-28.yml
+            conformance-profiles/conformance-2026-07-28.yml
           retention-days: 14

@@ -7,16 +7,56 @@
 ## 0.0.5 → 0.1.0-rc.1
 
 `0.1.0-rc.1` is a **breaking** release. It bumps workspace [`rmcp`](https://docs.rs/rmcp)
-from **1.7** to **2.2**, moves `output-schema` to **schemars 1.x**, and keeps the
-derive / `ServeMcpBuilder` public surface from the 0.0.4 line. Copy-paste
-dependency examples use `version = "0.1.0-rc.1"` (match the workspace RC).
+from **1.7** to **2.2** (historical baseline for that RC), moves `output-schema`
+to **schemars 1.x**, and keeps the derive / `ServeMcpBuilder` public surface
+from the 0.0.4 line. Copy-paste dependency examples use `version = "0.1.0-rc.1"`
+(match the workspace RC).
 
-Primary break for embedders: rmcp model types. See
+The workspace now pins **rmcp 3.0** and negotiates MCP **`2026-07-28`** as the
+current released protocol version. See [rmcp 2.2 → 3.0](#rmcp-22--30) for the
+current embedder port. Primary break for the original RC: rmcp model types. See
 [rmcp 1.7 → 2.2](#rmcp-17--22). Derive-only CLIs that do not construct rmcp
 types usually need only a dependency bump.
 
 Later sections document the historical `0.0.3-rc.1` → `0.0.4-rc.1` port from
 rust-mcp-sdk to rmcp 1.7.
+
+## rmcp 2.2 → 3.0
+
+The workspace pins **rmcp 3.0** and advertises MCP protocol versions
+`2025-11-25` (`PROTOCOL_VERSION_STABLE`) and **`2026-07-28`**
+(`PROTOCOL_VERSION_CURRENT`). MCP `2026-07-28` is a **released** dated protocol
+version, not the evolving upstream `draft` specification directory. clap-mcp
+does not negotiate or advertise a `draft` protocol string.
+
+Upstream guide: [rmcp CHANGELOG](https://github.com/modelcontextprotocol/rust-sdk/blob/main/crates/rmcp/CHANGELOG.md).
+
+If you only use clap-mcp derive entrypoints (`parse_or_serve_mcp*`) and do not
+construct rmcp types yourself, you typically only need to bump dependencies.
+If you build custom MCP task clients or inspect protocol negotiation, apply
+these changes:
+
+| Area | rmcp 2.x | rmcp 3.0 |
+| --- | --- | --- |
+| Protocol current version | MCP 2025-11-25 only in practice | MCP **`2026-07-28`** released; constants in `clap_mcp::protocol` |
+| Task enqueue on `tools/call` | Client `CallToolRequestParams::with_task(TaskMetadata::new())` | **Server-directed** ([SEP-2663](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2663)): client declares tasks extension; eligible server tools return `CreateTaskResult` |
+| Poll for tool output | `tasks/get` + `tasks/result` | `tasks/get` only; completed `CallToolResult` in `GetTaskResult` / `TaskPayload::Completed` |
+| `Tool.execution.taskSupport` | Optional/required hints in `list_tools` | Removed |
+| Task client requests | `GetTaskRequest`, `GetTaskPayloadRequest` / `tasks/result` | `GetTaskRequest` with payload on completed tasks |
+| MCP logging | Deprecated but present | Still present through clap-mcp bridge; see [logging.md](logging.md) |
+
+Conformance defaults: `cargo xtask conformance` runs `active` @ `2025-11-25` then
+`all` @ `2026-07-28` with baselines
+[`conformance-2025-11-25.yml`](../conformance-profiles/conformance-2025-11-25.yml)
+and
+[`conformance-2026-07-28.yml`](../conformance-profiles/conformance-2026-07-28.yml).
+The harness `draft` suite remains optional and separate from default CI. See
+[conformance-baseline.md](conformance-baseline.md).
+
+Paired example/client updates in this repo:
+[`task_augmented_client`](../examples/task_augmented_client.rs) (client declares
+`ClientCapabilities::enable_tasks()`; polls `tasks/get`), integration helpers in
+[`clap-mcp/tests/common/mod.rs`](../clap-mcp/tests/common/mod.rs).
 
 ## rmcp 1.7 → 2.2
 
@@ -112,10 +152,10 @@ Also removed: `parse_or_serve_mcp_with_config*` (use
 `ClapMcpConfig::task_augmented_tools`, public `tool_task_eligible`, public
 `ClapMcpServer` / `build_clap_mcp_server`.
 
-## Workspace dependency (rmcp 2.2)
+## Workspace dependency (rmcp 3.0)
 
 ```toml
-rmcp = { version = "2.2", default-features = false, features = [
+rmcp = { version = "3", default-features = false, features = [
   "server",
   "client",                 # example clients, integration tests
   "macros",
@@ -124,7 +164,7 @@ rmcp = { version = "2.2", default-features = false, features = [
 ] }
 ```
 
-Confirmed feature names in **rmcp 2.2.0** (HTTP/OAuth features exist
+Confirmed feature names in **rmcp 3.0** (HTTP/OAuth features exist
 separately):
 
 | Feature | Role |
@@ -249,9 +289,10 @@ Beyond the initial serialized baseline:
 * **`parallel_safe = true`** with `task_augmented_tools` — task and plain tool
   bodies may overlap.
 * **`catch_in_process_panics = true`** with `task_augmented_tools` — panics in
-  task-scheduled work map to `CallToolResult` error payloads on `tasks/result`;
-  sync panics in `run()` use `catch_unwind`; async panics on dedicated threads
-  are caught at join when `catch_in_process_panics` is enabled.
+  task-scheduled work map to `CallToolResult` error payloads in the completed
+  `tasks/get` payload; sync panics in `run()` use `catch_unwind`; async panics
+  on dedicated threads are caught at join when `catch_in_process_panics` is
+  enabled.
 
 Still **not supported:** subprocess (`reinvocation_safe = false`) + tasks
 (derive compile error).

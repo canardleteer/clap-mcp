@@ -20,30 +20,38 @@ const SERVER_PID_FILE: &str = "target/conformance-server.pid";
 const SERVER_LOG_FILE: &str = "target/conformance-server.log";
 const SERVER_PORT_FILE: &str = "target/conformance-port";
 
-/// Stable MCP protocol version under test. Keep aligned with
+/// Legacy MCP protocol version under test. Keep aligned with
 /// `clap_mcp::protocol::PROTOCOL_VERSION_STABLE` / `SUPPORTED_PROTOCOL_VERSIONS`.
-const SPEC_STABLE: &str = "2025-11-25";
-/// Draft protocol alias in `@modelcontextprotocol/conformance` (`2026-07-28`).
-/// Keep aligned with `clap_mcp::protocol::PROTOCOL_VERSION_DRAFT`.
-const SPEC_DRAFT: &str = "draft";
+const SPEC_LEGACY: &str = "2025-11-25";
+/// Released MCP protocol version under test. Keep aligned with
+/// `clap_mcp::protocol::PROTOCOL_VERSION_CURRENT`.
+///
+/// Do not pass the harness alias `draft` here. `draft` is a separate evolving
+/// suite/identifier; when it diverges from a dated release, add an explicit
+/// optional pass rather than treating it as `2026-07-28`.
+const SPEC_CURRENT: &str = "2026-07-28";
 const DEFAULT_BASELINE: &str = "conformance-profiles/conformance-2025-11-25.yml";
-const DEFAULT_DRAFT_BASELINE: &str = "conformance-profiles/conformance-draft-2026-07-28.yml";
+const DEFAULT_CURRENT_BASELINE: &str = "conformance-profiles/conformance-2026-07-28.yml";
 
 #[derive(Parser)]
 pub struct ConformanceArgs {
-    /// Harness suite: `both` (default) runs active@2025-11-25 then draft@draft.
+    /// Harness suite: `both` (default) runs active@2025-11-25 then all@2026-07-28.
     /// Single-suite values match the harness (`active`, `draft`, `all`, `pending`, `core`).
+    /// `draft` is only for the harness's evolving draft-spec scenarios, not for
+    /// the dated `2026-07-28` release.
     #[arg(long, default_value = "both")]
     pub suite: String,
-    /// Filter by MCP protocol version (`2025-11-25`, `draft`, …). Ignored for `--suite both`.
+    /// Filter by MCP protocol version (`2025-11-25`, `2026-07-28`, …). Ignored for `--suite both`.
+    /// The harness still accepts `draft` as an alias for its current draft identifier;
+    /// clap-mcp's default dual pass uses dated versions only.
     #[arg(long)]
     pub spec_version: Option<String>,
-    /// Expected-failures baseline for the stable (`2025-11-25` / `active`) pass.
+    /// Expected-failures baseline for the legacy (`2025-11-25` / `active`) pass.
     #[arg(long, default_value = DEFAULT_BASELINE)]
     pub baseline: PathBuf,
-    /// Expected-failures baseline for the draft pass (`--suite both` or `--suite draft`).
-    #[arg(long, default_value = DEFAULT_DRAFT_BASELINE)]
-    pub draft_baseline: PathBuf,
+    /// Expected-failures baseline for the current released (`2026-07-28`) pass.
+    #[arg(long, default_value = DEFAULT_CURRENT_BASELINE)]
+    pub current_baseline: PathBuf,
     #[arg(long)]
     pub port: Option<u16>,
     #[arg(long)]
@@ -125,47 +133,58 @@ pub fn run_conformance(args: ConformanceArgs) -> Result<()> {
 fn run_conformance_passes(root: &Path, port: u16, args: &ConformanceArgs) -> Result<()> {
     let suite = args.suite.to_ascii_lowercase();
     if suite == "both" {
-        eprintln!("=== Conformance pass 1/2: active @ {SPEC_STABLE} ===");
+        eprintln!("=== Conformance pass 1/2: active @ {SPEC_LEGACY} ===");
         run_conformance_docker(
             root,
             port,
             "active",
-            Some(SPEC_STABLE),
+            Some(SPEC_LEGACY),
             &args.baseline,
             args.verbose,
         )?;
-        eprintln!("=== Conformance pass 2/2: draft @ {SPEC_DRAFT} ===");
+        // Suite `all` (not `active`) so scenarios introduced in 2026-07-28 are
+        // included. The harness still buckets those under its `draft` suite name
+        // even though 2026-07-28 is a released protocol version.
+        eprintln!("=== Conformance pass 2/2: all @ {SPEC_CURRENT} ===");
         run_conformance_docker(
             root,
             port,
-            "draft",
-            Some(SPEC_DRAFT),
-            &args.draft_baseline,
+            "all",
+            Some(SPEC_CURRENT),
+            &args.current_baseline,
             args.verbose,
         )?;
-        eprintln!("Both conformance passes succeeded ({SPEC_STABLE} + {SPEC_DRAFT}).");
+        eprintln!("Both conformance passes succeeded ({SPEC_LEGACY} + {SPEC_CURRENT}).");
         return Ok(());
     }
 
     let (spec_version, baseline) = match suite.as_str() {
+        // Harness `draft` suite is currently "introducedIn == 2026-07-28" scenarios.
+        // Prefer dated `--spec-version 2026-07-28` when debugging that bucket.
         "draft" => (
             args.spec_version
                 .as_deref()
-                .unwrap_or(SPEC_DRAFT)
+                .unwrap_or(SPEC_CURRENT)
                 .to_string(),
-            &args.draft_baseline,
+            &args.current_baseline,
         ),
-        "active" | "core" => (
-            args.spec_version
+        "active" | "core" | "all" => {
+            let spec = args
+                .spec_version
                 .as_deref()
-                .unwrap_or(SPEC_STABLE)
-                .to_string(),
-            &args.baseline,
-        ),
+                .unwrap_or(SPEC_LEGACY)
+                .to_string();
+            let baseline = if spec == SPEC_CURRENT {
+                &args.current_baseline
+            } else {
+                &args.baseline
+            };
+            (spec, baseline)
+        }
         _ => (
             args.spec_version
                 .clone()
-                .unwrap_or_else(|| SPEC_STABLE.to_string()),
+                .unwrap_or_else(|| SPEC_LEGACY.to_string()),
             &args.baseline,
         ),
     };
@@ -466,7 +485,7 @@ fn run_conformance_docker(
     };
     if !baseline_abs.exists() {
         bail!(
-            "baseline file not found: {}; create it or pass --baseline / --draft-baseline",
+            "baseline file not found: {}; create it or pass --baseline / --current-baseline",
             baseline_abs.display()
         );
     }

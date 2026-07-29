@@ -6,9 +6,9 @@ mod common;
 use clap::Parser;
 use clap_mcp::{ClapMcp, ClapMcpServeOptions, McpListen, ServeMcpBuilder, logging};
 use common::{
-    call_tool_task, get_task_info, get_task_payload, shutdown, task_call_params, tool_text,
+    TasksClientHandler, call_tool_task, get_task_info, shutdown, task_call_params, tool_text,
 };
-use rmcp::model::{CallToolRequestParams, TaskStatus};
+use rmcp::model::{CallToolRequestParams, TaskPayload, TaskStatus};
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{ClientHandler, RoleClient, ServiceExt};
 use std::net::{Ipv4Addr, SocketAddr};
@@ -49,9 +49,10 @@ async fn launch_inprocess_http_server(builder: ServeMcpBuilder) -> tokio::task::
     })
 }
 
-async fn connect_http_client(
+async fn connect_http_client<H: ClientHandler + Clone + Send + Sync + 'static>(
     connect: SocketAddr,
-) -> rmcp::service::RunningService<RoleClient, NoOpHandler> {
+    handler: H,
+) -> rmcp::service::RunningService<RoleClient, H> {
     let mut connected = false;
     for _ in 0..100 {
         if tokio::net::TcpStream::connect(connect).await.is_ok() {
@@ -65,7 +66,7 @@ async fn connect_http_client(
         "in-process HTTP server not listening on {connect}"
     );
     let uri = format!("http://{connect}/mcp");
-    NoOpHandler
+    handler
         .serve(StreamableHttpClientTransport::from_uri(uri))
         .await
         .expect("connect")
@@ -83,20 +84,20 @@ async fn inprocess_http_get_task_info_unknown_task_errors() {
         McpListen::Http(addr),
     ))
     .await;
-    let client = connect_http_client(addr).await;
+    let client = connect_http_client(addr, TasksClientHandler).await;
     let peer = client.peer();
 
     let err = get_task_info(peer, "missing-task")
         .await
         .expect_err("unknown task should error");
-    assert!(format!("{err:?}").contains("task not found"));
+    assert!(format!("{err:?}").contains("unknown task"));
 
     shutdown(client).await;
     server.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inprocess_http_enqueue_task_rejects_non_augmented_tool() {
+async fn inprocess_http_non_augmented_tool_returns_sync_for_tasks_client() {
     let listener = tokio::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
         .await
         .unwrap();
@@ -107,22 +108,22 @@ async fn inprocess_http_enqueue_task_rejects_non_augmented_tool() {
         McpListen::Http(addr),
     ))
     .await;
-    let client = connect_http_client(addr).await;
+    let client = connect_http_client(addr, TasksClientHandler).await;
     let peer = client.peer();
 
-    let err = call_tool_task(
-        peer,
-        task_call_params(
-            "plain",
-            serde_json::Map::from_iter([("message".to_string(), serde_json::json!("x"))]),
-        ),
-    )
-    .await
-    .expect_err("non-augmented tool should reject task enqueue");
-    assert!(
-        format!("{err:?}").contains("task-augmented execution is not enabled")
-            || format!("{err:?}").contains("invalid params")
-    );
+    let args =
+        serde_json::Map::from_iter([("message".to_string(), serde_json::json!("sync-plain"))]);
+
+    let result = peer
+        .call_tool(CallToolRequestParams::new("plain").with_arguments(args.clone()))
+        .await
+        .expect("plain tool should complete synchronously");
+    assert!(tool_text(&result).contains("sync-plain"));
+
+    let err = call_tool_task(peer, task_call_params("plain", args))
+        .await
+        .expect_err("non-augmented tool must not return CreateTaskResult");
+    assert!(matches!(err, rmcp::ServiceError::UnexpectedResponse));
 
     shutdown(client).await;
     server.abort();
@@ -140,7 +141,7 @@ async fn inprocess_http_task_invalid_args_report_failed_status() {
         McpListen::Http(addr),
     ))
     .await;
-    let client = connect_http_client(addr).await;
+    let client = connect_http_client(addr, TasksClientHandler).await;
     let peer = client.peer();
 
     let create = call_tool_task(
@@ -159,7 +160,7 @@ async fn inprocess_http_task_invalid_args_report_failed_status() {
             .await
             .expect("task info")
             .task
-            .status;
+            .status();
         if status == TaskStatus::Failed {
             break;
         }
@@ -167,10 +168,10 @@ async fn inprocess_http_task_invalid_args_report_failed_status() {
     }
     assert_eq!(status, TaskStatus::Failed);
 
-    let payload_err = get_task_payload(peer, &create.task.task_id)
+    let st = get_task_info(peer, &create.task.task_id)
         .await
-        .expect_err("failed task payload should error");
-    assert!(format!("{payload_err:?}").contains("task failed"));
+        .expect("task info");
+    assert!(matches!(st.task.payload, TaskPayload::Failed { .. }));
 
     shutdown(client).await;
     server.abort();
@@ -203,7 +204,7 @@ async fn inprocess_http_logging_channel_forwards_after_client_connect() {
     .await
     .expect("queue log");
 
-    let client = connect_http_client(addr).await;
+    let client = connect_http_client(addr, NoOpHandler).await;
     tx.send(logging::log_params(
         rmcp::model::LoggingLevel::Info,
         Some("app".into()),
