@@ -68,7 +68,7 @@ jobs:
         with:
           shared-key: ci-conformance
 
-      - name: Run MCP conformance (2025-11-25 + draft)
+      - name: Run MCP conformance (2025-11-25 + 2026-07-28)
         # Local/CI parity: Docker image from docker/conformance/VERSION; xtask runs
-        # active@2025-11-25 then draft@draft with separate baselines.
+        # active@2025-11-25 then all@2026-07-28 with separate baselines.
         run: cargo xtask conformance --verbose

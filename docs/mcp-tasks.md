@@ -4,48 +4,50 @@
 
 [← Documentation index](../README.md#documentation)
 
-clap-mcp supports MCP tasks for server-side, task-augmented `tools/call`.
-Clients send `tools/call` with `task` metadata, receive a
+clap-mcp supports MCP tasks for server-side, task-augmented `tools/call` via the
+[SEP-2663 tasks extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2663).
+When the client declares the tasks extension in `initialize`, eligible tools
+return a
 [`CreateTaskResult`](https://docs.rs/rmcp/latest/rmcp/model/task/struct.CreateTaskResult.html)
-immediately, and poll `tasks/get` / `tasks/result` for completion. See the
-[MCP tasks specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks).
+immediately; the client polls `tasks/get` until the task completes and reads the
+tool result from the completed task payload. See the
+[MCP tasks specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks)
+and the [2026-07-28 release](https://modelcontextprotocol.io/specification/2026-07-28/).
 
 Requires `reinvocation_safe = true` (in-process execution). Subprocess mode
 (`reinvocation_safe = false`) does not support task-augmented calls.
 
 ## Task support matrix
 
-Workspace [`rmcp`](https://docs.rs/rmcp) is pinned at **2.2.x** (root
-[`Cargo.toml`](../Cargo.toml)). Protocol baseline: [MCP tasks
-(2025-11-25)](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks).
-
-Tasks are **bidirectional** in the spec: either peer can issue a
-task-augmented request and the other peer answers `tasks/*` polls. clap-mcp
-targets **CLI binaries as MCP servers**; the matrix below uses MCP method names
-and initiator → receiver flow. Implementation detail (derive attrs, examples,
-transports) is in [clap-mcp task implementation](#clap-mcp-task-implementation).
+Workspace [`rmcp`](https://docs.rs/rmcp) is pinned at **3.x** (root
+[`Cargo.toml`](../Cargo.toml)). clap-mcp targets **CLI binaries as MCP servers**;
+the matrix below uses MCP method names and initiator → receiver flow.
+Implementation detail (derive attrs, examples, transports) is in
+[clap-mcp task implementation](#clap-mcp-task-implementation).
 
 | MCP method / concept | Initiator → receiver | clap-mcp | rmcp (workspace) | Upstream |
 | --- | --- | --- | --- | --- |
-| Task-augmented `tools/call` (`task` on params → `CreateTaskResult`) | Client → server (your CLI) | Shipped (server) | **2.2.0+** ([#536](https://github.com/modelcontextprotocol/rust-sdk/pull/536)) | — |
-| `tasks/get` | Client → server | Shipped (server answers) | **2.2.0+** | — |
-| `tasks/result` | Client → server | Shipped (server answers) | **2.2.0+** | — |
-| `tasks/cancel` | Client → server | Shipped (rmcp handler; no clap-mcp override) | **2.2.0+** | — |
-| `tasks/list` | Client → server | Shipped (rmcp default `list_tasks`) | **2.2.0+** | — |
-| `Tool.execution.taskSupport` (`optional` / `required` / `forbidden`) | Server advertises per tool | Optional only via derive; `required` not exposed | **2.2.0+** (`required` via rmcp `#[tool]` macros) | — |
-| `capabilities.tasks` on server | Server capability negotiation | Shipped when `task_augmented_tools` is on | **2.2.0+** | — |
-| Client task poll sequence (`tools/call` + `tasks/get` + `tasks/result`) | MCP client → your CLI server | Examples only (not a clap-mcp crate feature) | **2.2.0+** ([#839](https://github.com/modelcontextprotocol/rust-sdk/pull/839) examples) | [rmcp `task_stdio` client](https://github.com/modelcontextprotocol/rust-sdk/blob/main/examples/clients/src/task_stdio.rs) |
-| Task-augmented `sampling/createMessage` | Server → client | Not offered | Not in **2.2.0** | [PR #816](https://github.com/modelcontextprotocol/rust-sdk/pull/816) — still open; next rmcp release after merge (TBD) |
-| Task-augmented `elicitation/create` | Server → client | Not offered | Not in **2.2.0** | Same as #816 |
-| `tasks/get` / `tasks/result` / `tasks/cancel` / `tasks/list` on **client** | Server → client | Not offered (CLI server role) | Not in **2.2.0** | #816 adds `ClientHandler` receive path |
+| SEP-2663 tasks extension on client | Client → server | Required for task enqueue (examples declare `ClientCapabilities::enable_tasks`) | **3.0+** | [SEP-2663](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2663) |
+| Task-eligible `tools/call` → `CreateTaskResult` (server-directed) | Client → server (your CLI) | Shipped (server) | **3.0+** | No client `task` hint on `CallToolRequestParams` |
+| `tasks/get` (status + completed payload) | Client → server | Shipped (server answers) | **3.0+** | Replaces separate `tasks/result` poll from rmcp 2.x |
+| `tasks/cancel` | Client → server | Shipped (rmcp handler; no clap-mcp override) | **3.0+** | — |
+| `tasks/list` | Client → server | Shipped (rmcp default `list_tasks`) | **3.0+** | — |
+| `Tool.execution.taskSupport` in `list_tools` | Server advertises per tool | Not used (SEP-2663 server-directed model) | Removed in **3.0** | Was rmcp 2.x optional/required hints |
+| Client `CallToolRequestParams::with_task` / `TaskMetadata` | Client → server | Not used | Removed in **3.0** | Server decides enqueue from extension + tool eligibility |
+| `tasks/result` RPC | Client → server | Not used | Removed in **3.0** | Completed tool output lives in `tasks/get` payload |
+| `capabilities.tasks` on server | Server capability negotiation | Shipped when `task_augmented_tools` is on | **3.0+** | — |
+| Client poll sequence (`tools/call` + `tasks/get`) | MCP client → your CLI server | Examples only (not a clap-mcp crate feature) | **3.0+** | [task_augmented_client](../examples/task_augmented_client.rs) |
+| Task-augmented `sampling/createMessage` | Server → client | Not offered | Not in **3.0** | [PR #816](https://github.com/modelcontextprotocol/rust-sdk/pull/816) |
+| Task-augmented `elicitation/create` | Server → client | Not offered | Not in **3.0** | Same as #816 |
+| `tasks/get` / `tasks/cancel` / `tasks/list` on **client** | Server → client | Not offered (CLI server role) | Not in **3.0** | #816 adds `ClientHandler` receive path |
 
 ### clap-mcp task implementation
 
 | Area | Status | Execution constraints | Surface |
 | --- | --- | --- | --- |
 | Enable server task-augmented `tools/call` | Shipped | [`reinvocation_safe`](execution-safety.md) required (`task_augmented_tools` compile error otherwise) | `#[clap_mcp(task_augmented_tools)]`; optional `#[clap_mcp(task)]` per subcommand |
-| `TaskSupport::Optional` in `list_tools` | Shipped | Same as above | Set on eligible tools; see derive attrs above |
-| `TaskSupport::Required` | Not offered | — | Use [rmcp `task_demo`](https://github.com/modelcontextprotocol/rust-sdk/blob/main/examples/servers/src/common/task_demo.rs) outside the clap derive path |
+| Server-directed enqueue (SEP-2663) | Shipped | Client must declare tasks extension; eligible tools return `CreateTaskResult` without a client task hint | `meta.clapMcp.taskAugmented` on eligible tools |
+| `TaskSupport` / per-tool `taskSupport` in `list_tools` | Not used | SEP-2663 removed client hints and `Tool.execution.taskSupport` | Derive marks eligibility via `task_augmented_tools` / `#[clap_mcp(task)]` only |
 | Subprocess MCP + tasks | Not supported | `reinvocation_safe = false` | Compile error without `reinvocation_safe` |
 | stdio transport (`--mcp`) | Shipped | `reinvocation_safe` required | `parse_or_serve_mcp*`; **task_tools_*** examples |
 | HTTP transport (`--mcp-http`) | Shipped | `reinvocation_safe` required | `http` feature; **task_tools_http** |
@@ -133,8 +135,8 @@ cargo run -p clap-mcp-examples --bin task_tools_dedicated --features tracing -- 
 cargo run -p clap-mcp-examples --bin task_tools_dedicated --features tracing -- --mcp
 ```
 
-Client (spawns the server, sends `task: Some(...)`, polls `tasks/get` and
-`tasks/result`):
+Client (spawns the server, declares the tasks extension, polls `tasks/get` for
+completion):
 
 ```shell
 cargo run -p clap-mcp-examples --bin task_augmented_client --features tracing -- task_tools_dedicated

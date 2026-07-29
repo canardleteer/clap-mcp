@@ -1,4 +1,6 @@
 #![cfg(feature = "http")]
+// resources/subscribe|unsubscribe remain for legacy protocol peers (deprecated in rmcp 3).
+#![allow(deprecated)]
 mod common;
 
 use clap::Parser;

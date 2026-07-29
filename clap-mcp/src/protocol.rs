@@ -1,21 +1,30 @@
 //! When you add a version here, run `cargo xtask conformance` for that version
 //! as far as the harness and baseline allow. Do not advertise versions that
 //! have not been exercised.
+//!
+//! `draft` is a separate, evolving MCP specification directory and harness
+//! suite. It is not an alias for a dated release. After MCP `2026-07-28`
+//! shipped, clap-mcp treats that date as a released protocol version. Do not
+//! negotiate or advertise a `draft` protocol string until it is
+//! conformance-tested as its own identifier.
 
 use rmcp::model::ProtocolVersion;
 
-/// Stable MCP protocol version (primary advertise / fallback).
+/// Legacy MCP protocol version (initialize handshake; primary advertise / fallback).
 pub const PROTOCOL_VERSION_STABLE: ProtocolVersion = ProtocolVersion::V_2025_11_25;
 
-/// Draft MCP protocol version clap-mcp accepts during negotiation.
-pub const PROTOCOL_VERSION_DRAFT: ProtocolVersion = ProtocolVersion::V_2026_07_28;
+/// Released MCP protocol version `2026-07-28` (stateless core).
+///
+/// This is the dated release published on 2026-07-28, not the evolving `draft`
+/// specification tree.
+pub const PROTOCOL_VERSION_CURRENT: ProtocolVersion = ProtocolVersion::V_2026_07_28;
 
 /// Protocol versions clap-mcp advertises and accepts in `initialize` negotiation.
 ///
 /// Clients that request a version outside this set receive
 /// [`PROTOCOL_VERSION_STABLE`].
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[ProtocolVersion] =
-    &[PROTOCOL_VERSION_STABLE, PROTOCOL_VERSION_DRAFT];
+    &[PROTOCOL_VERSION_STABLE, PROTOCOL_VERSION_CURRENT];
 
 /// Negotiate a protocol version for clap-mcp servers.
 ///
@@ -42,13 +51,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn echoes_stable_and_draft() {
+    fn echoes_stable_and_current() {
         assert_eq!(
             negotiate_protocol_version(&PROTOCOL_VERSION_STABLE).as_str(),
             "2025-11-25"
         );
         assert_eq!(
-            negotiate_protocol_version(&PROTOCOL_VERSION_DRAFT).as_str(),
+            negotiate_protocol_version(&PROTOCOL_VERSION_CURRENT).as_str(),
             "2026-07-28"
         );
     }
@@ -73,5 +82,16 @@ mod tests {
         let odd = serde_json::from_value::<ProtocolVersion>(serde_json::json!("2099-01-01"))
             .expect("parse");
         assert_eq!(negotiate_protocol_version(&odd).as_str(), "2025-11-25");
+    }
+
+    #[test]
+    fn does_not_treat_draft_string_as_supported() {
+        let draft =
+            serde_json::from_value::<ProtocolVersion>(serde_json::json!("draft")).expect("parse");
+        assert_eq!(
+            negotiate_protocol_version(&draft).as_str(),
+            "2025-11-25",
+            "draft is a separate evolving identifier, not a dated release clap-mcp advertises"
+        );
     }
 }

@@ -1,6 +1,6 @@
 //! MCP server transport and handler (rmcp `ServerHandler` + stdio).
 
-// Logging types remain functional in rmcp 2.x but are deprecated by SEP-2577.
+// Logging types remain functional in rmcp 3.x but are deprecated by SEP-2577.
 #![allow(deprecated)]
 
 use crate::{
@@ -14,20 +14,18 @@ use crate::{
 use rmcp::{
     ErrorData as McpError, Peer, ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResult, ContentBlock, CreateTaskResult,
-        GetPromptRequestParams, GetPromptResult, GetTaskParams, GetTaskPayloadParams,
-        GetTaskPayloadResult, GetTaskResult, Implementation, InitializeRequestParams,
-        ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
-        LoggingLevel, LoggingMessageNotification, LoggingMessageNotificationParam, Meta,
-        PaginatedRequestParams, PromptMessage, ReadResourceRequestParams, ReadResourceResult,
-        Resource, ResourceContents, Role, ServerCapabilities, SetLevelRequestParams,
-        SubscribeRequestParams, Task, TaskStatus, Tool, UnsubscribeRequestParams,
+        CallToolRequestParams, CallToolResponse, CallToolResult, CancelTaskParams, ContentBlock,
+        CreateTaskResult, GetPromptRequestParams, GetPromptResponse, GetPromptResult,
+        GetTaskParams, GetTaskResult, Implementation, InitializeRequestParams, ListPromptsResult,
+        ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, LoggingLevel,
+        LoggingMessageNotification, LoggingMessageNotificationParam, NotificationMetaObject,
+        PaginatedRequestParams, PromptMessage, ReadResourceRequestParams, ReadResourceResponse,
+        ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities,
+        SetLevelRequestParams, SubscribeRequestParams, Tool, UnsubscribeRequestParams,
+        UpdateTaskParams,
     },
     service::{RequestContext, RoleServer, serve_directly},
-    task_manager::{
-        OperationDescriptor, OperationMessage, OperationProcessor, ToolCallTaskResult,
-        current_timestamp,
-    },
+    task_manager::{TaskExit, TaskManager, TaskOptions},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -186,7 +184,7 @@ pub(crate) struct ClapMcpServer {
     tool_execution_lock: Option<Arc<tokio::sync::Mutex<()>>>,
     topic_lock_registry: Arc<TopicLockRegistry>,
     log_peer: Arc<Mutex<Option<Peer<RoleServer>>>>,
-    processor: Arc<tokio::sync::Mutex<OperationProcessor>>,
+    task_manager: TaskManager,
     /// URIs accepted via `resources/subscribe`. Bookkeeping only; update
     /// notifications are not emitted.
     subscribed_uris: Arc<Mutex<HashSet<String>>>,
@@ -317,7 +315,7 @@ impl ServerHandler for ClapMcpServer {
         &self,
         params: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
+    ) -> impl std::future::Future<Output = Result<ReadResourceResponse, McpError>> + Send + '_ {
         self.capture_peer(&context);
         let inner = self.inner.clone();
         async move {
@@ -328,6 +326,7 @@ impl ServerHandler for ClapMcpServer {
                 params,
             )
             .await
+            .map(Into::into)
         }
     }
 
@@ -392,18 +391,22 @@ impl ServerHandler for ClapMcpServer {
         &self,
         params: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<GetPromptResult, McpError>> + Send + '_ {
+    ) -> impl std::future::Future<Output = Result<GetPromptResponse, McpError>> + Send + '_ {
         self.capture_peer(&context);
         let logging_enabled = self.inner.logging_enabled;
         let custom_prompts = self.inner.custom_prompts.clone();
-        async move { get_prompt_result(logging_enabled, &custom_prompts, params).await }
+        async move {
+            get_prompt_result(logging_enabled, &custom_prompts, params)
+                .await
+                .map(Into::into)
+        }
     }
 
     fn call_tool(
         &self,
         params: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<CallToolResult, McpError>> + Send + '_ {
+    ) -> impl std::future::Future<Output = Result<CallToolResponse, McpError>> + Send + '_ {
         self.capture_peer(&context);
         let inner = self.inner.clone();
         let lock = self.tool_execution_lock.clone();
@@ -411,7 +414,80 @@ impl ServerHandler for ClapMcpServer {
         let topic_registry = self.topic_lock_registry.clone();
         let serialize_tools = self.inner.serialize_tools.clone();
         let serialize_topic_args = self.inner.serialize_topic_args.clone();
+        let task_manager = self.task_manager.clone();
         async move {
+            let client_tasks = context
+                .client_capabilities()
+                .is_some_and(|caps| caps.supports_tasks());
+            // SEP-2663: tasks are server-directed. Eligible tools return
+            // CreateTaskResult when the client declared the tasks extension.
+            if inner.allows_task_tool(&params.name) && client_tasks {
+                let future_request = params.clone();
+                let future_context = context.clone();
+                let future_inner = inner.clone();
+                let future_lock = lock.clone();
+                let future_parallel_safe = parallel_safe;
+                let future_topic_registry = topic_registry.clone();
+                let future_serialize_tools = serialize_tools.clone();
+                let future_serialize_topic_args = serialize_topic_args.clone();
+                let task_args = params.arguments.clone().unwrap_or_default();
+                let catch_panics = future_inner.catch_in_process_panics;
+                let tool_name = future_request.name.clone();
+
+                let task = task_manager.spawn(
+                    TaskOptions::new().with_status_message("Task accepted"),
+                    move |task_ctx| {
+                        let task_id = task_ctx.task_id().to_string();
+                        Box::pin(async move {
+                            let guard_ctx = ExecutionGuardContext {
+                                parallel_safe: future_parallel_safe,
+                                global_lock: &future_lock,
+                                topic_registry: &future_topic_registry,
+                                serialize_tools: &future_serialize_tools,
+                                serialize_topic_args: &future_serialize_topic_args,
+                            };
+                            let result = with_execution_guard(
+                                &guard_ctx,
+                                &tool_name,
+                                &task_args,
+                                || async move {
+                                    let run_body = async move {
+                                        crate::logging::run_with_mcp_task_id(task_id, async move {
+                                            future_inner
+                                                .call_tool(&future_request, &future_context)
+                                                .await
+                                        })
+                                        .await
+                                    };
+                                    if catch_panics {
+                                        match tokio::task::spawn(run_body).await {
+                                            Ok(r) => r,
+                                            Err(join_err) if join_err.is_panic() => {
+                                                Ok(call_tool_result_from_panic(
+                                                    join_err.into_panic().as_ref(),
+                                                ))
+                                            }
+                                            Err(join_err) => Err(McpError::internal_error(
+                                                format!("task body join error: {join_err}"),
+                                                None,
+                                            )),
+                                        }
+                                    } else {
+                                        run_body.await
+                                    }
+                                },
+                            )
+                            .await;
+                            match result {
+                                Ok(call_tool) => Ok(call_tool),
+                                Err(err) => Err(TaskExit::Error(err)),
+                            }
+                        })
+                    },
+                );
+                return Ok(CreateTaskResult::new(task).into());
+            }
+
             let args = params.arguments.clone().unwrap_or_default();
             let guard_ctx = ExecutionGuardContext {
                 parallel_safe,
@@ -424,204 +500,43 @@ impl ServerHandler for ClapMcpServer {
                 inner.call_tool(&params, &context)
             })
             .await
+            .map(Into::into)
         }
     }
 
-    fn enqueue_task(
-        &self,
-        request: CallToolRequestParams,
-        context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<CreateTaskResult, McpError>> + Send + '_ {
-        self.capture_peer(&context);
-        let inner = self.inner.clone();
-        let lock = self.tool_execution_lock.clone();
-        let parallel_safe = self.parallel_safe;
-        let topic_registry = self.topic_lock_registry.clone();
-        let serialize_tools = self.inner.serialize_tools.clone();
-        let serialize_topic_args = self.inner.serialize_topic_args.clone();
-        let processor = self.processor.clone();
-        async move {
-            if !inner.allows_task_tool(&request.name) {
-                return Err(McpError::invalid_params(
-                    "task-augmented execution is not enabled for this tool (see list_tools meta.clapMcp.taskAugmented)",
-                    None,
-                ));
-            }
-
-            let task_id = context.id.to_string();
-            let descriptor = OperationDescriptor::new(task_id.clone(), request.name.to_string())
-                .with_context(context.clone());
-
-            let future_request = request.clone();
-            let future_context = context.clone();
-            let future_inner = inner.clone();
-            let future_lock = lock.clone();
-            let future_parallel_safe = parallel_safe;
-            let future_topic_registry = topic_registry.clone();
-            let future_serialize_tools = serialize_tools.clone();
-            let future_serialize_topic_args = serialize_topic_args.clone();
-            let task_id_for_body = task_id.clone();
-            let task_args = request.arguments.clone().unwrap_or_default();
-
-            let catch_panics = future_inner.catch_in_process_panics;
-            let task_id_result = task_id_for_body.clone();
-            let tool_name = future_request.name.clone();
-            let future = Box::pin(async move {
-                let guard_ctx = ExecutionGuardContext {
-                    parallel_safe: future_parallel_safe,
-                    global_lock: &future_lock,
-                    topic_registry: &future_topic_registry,
-                    serialize_tools: &future_serialize_tools,
-                    serialize_topic_args: &future_serialize_topic_args,
-                };
-                let result =
-                    with_execution_guard(&guard_ctx, &tool_name, &task_args, || async move {
-                        let run_body = async move {
-                            crate::logging::run_with_mcp_task_id(task_id_for_body, async move {
-                                future_inner
-                                    .call_tool(&future_request, &future_context)
-                                    .await
-                            })
-                            .await
-                        };
-                        if catch_panics {
-                            match tokio::task::spawn(run_body).await {
-                                Ok(r) => r,
-                                Err(join_err) if join_err.is_panic() => {
-                                    Ok(call_tool_result_from_panic(join_err.into_panic().as_ref()))
-                                }
-                                Err(join_err) => Err(McpError::internal_error(
-                                    format!("task body join error: {join_err}"),
-                                    None,
-                                )),
-                            }
-                        } else {
-                            run_body.await
-                        }
-                    })
-                    .await;
-                Ok(Box::new(ToolCallTaskResult::new(task_id_result, result))
-                    as Box<dyn rmcp::task_manager::OperationResultTransport>)
-            });
-
-            processor
-                .lock()
-                .await
-                .submit_operation(OperationMessage::new(descriptor, future))
-                .map_err(|err| {
-                    McpError::internal_error(format!("failed to enqueue task: {err}"), None)
-                })?;
-
-            let timestamp = current_timestamp();
-            let task = Task::new(task_id, TaskStatus::Working, timestamp.clone(), timestamp)
-                .with_status_message("Task accepted");
-
-            Ok(CreateTaskResult::new(task))
-        }
-    }
-
-    fn get_task_info(
+    fn get_task(
         &self,
         request: GetTaskParams,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<GetTaskResult, McpError>> + Send + '_ {
-        let processor = self.processor.clone();
+        let task_manager = self.task_manager.clone();
         async move {
-            let task_id = request.task_id.clone();
-            let mut processor = processor.lock().await;
-
-            let completed = processor
-                .peek_completed()
-                .iter()
-                .rev()
-                .find(|r| r.descriptor.operation_id == task_id);
-            if let Some(completed_result) = completed {
-                let status = match &completed_result.result {
-                    Ok(boxed) => {
-                        if let Some(tool) = boxed.as_any().downcast_ref::<ToolCallTaskResult>() {
-                            match &tool.result {
-                                Ok(_) => TaskStatus::Completed,
-                                Err(_) => TaskStatus::Failed,
-                            }
-                        } else {
-                            TaskStatus::Completed
-                        }
-                    }
-                    Err(_) => TaskStatus::Failed,
-                };
-                let timestamp = current_timestamp();
-                let task = Task::new(task_id, status, timestamp.clone(), timestamp);
-                return Ok(GetTaskResult::new(task));
-            }
-
-            let running = processor.list_running();
-            if running.into_iter().any(|id| id == task_id) {
-                let timestamp = current_timestamp();
-                let task = Task::new(task_id, TaskStatus::Working, timestamp.clone(), timestamp);
-                return Ok(GetTaskResult::new(task));
-            }
-
-            Err(McpError::resource_not_found(
-                format!("task not found: {task_id}"),
-                None,
-            ))
+            let detailed = task_manager.get_task(&request.task_id)?;
+            Ok(GetTaskResult::new(detailed))
         }
     }
 
-    fn get_task_result(
+    fn update_task(
         &self,
-        request: GetTaskPayloadParams,
+        request: UpdateTaskParams,
         _context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<GetTaskPayloadResult, McpError>> + Send + '_ {
-        let processor = self.processor.clone();
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send + '_ {
+        let task_manager = self.task_manager.clone();
         async move {
-            let task_id = request.task_id.clone();
-            loop {
-                {
-                    let mut processor = processor.lock().await;
-                    if let Some(task_result) = processor.take_completed_result(&task_id) {
-                        match task_result.result {
-                            Ok(boxed) => {
-                                if let Some(tool) =
-                                    boxed.as_any().downcast_ref::<ToolCallTaskResult>()
-                                {
-                                    match &tool.result {
-                                        Ok(call_tool) => {
-                                            let value =
-                                                serde_json::to_value(call_tool).unwrap_or_default();
-                                            return Ok(GetTaskPayloadResult::new(value));
-                                        }
-                                        Err(err) => {
-                                            return Err(McpError::internal_error(
-                                                format!("task failed: {err}"),
-                                                None,
-                                            ));
-                                        }
-                                    }
-                                }
-                                return Err(McpError::internal_error(
-                                    "unsupported task result transport",
-                                    None,
-                                ));
-                            }
-                            Err(err) => {
-                                return Err(McpError::internal_error(
-                                    format!("task execution error: {err}"),
-                                    None,
-                                ));
-                            }
-                        }
-                    }
-                    let running = processor.list_running();
-                    if !running.iter().any(|id| id == &task_id) {
-                        return Err(McpError::resource_not_found(
-                            format!("task not found: {task_id}"),
-                            None,
-                        ));
-                    }
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
+            task_manager.update_task(&request.task_id, request.input_responses)?;
+            Ok(())
+        }
+    }
+
+    fn cancel_task(
+        &self,
+        request: CancelTaskParams,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send + '_ {
+        let task_manager = self.task_manager.clone();
+        async move {
+            task_manager.cancel_task(&request.task_id)?;
+            Ok(())
         }
     }
 }
@@ -694,7 +609,7 @@ pub(crate) fn build_clap_mcp_server(
         tool_execution_lock,
         topic_lock_registry: Arc::new(TopicLockRegistry::new()),
         log_peer: Arc::new(Mutex::new(None)),
-        processor: Arc::new(tokio::sync::Mutex::new(OperationProcessor::new())),
+        task_manager: TaskManager::new(),
         subscribed_uris: Arc::new(Mutex::new(HashSet::new())),
     })
 }
@@ -769,7 +684,9 @@ async fn notify_log(
     }
     let mut notification = LoggingMessageNotification::new(param);
     if let Some(meta_map) = params.meta {
-        notification.extensions.insert(Meta(meta_map));
+        notification
+            .extensions
+            .insert(NotificationMetaObject::from(meta_map));
     }
     peer.send_notification(rmcp::model::ServerNotification::LoggingMessageNotification(
         notification,

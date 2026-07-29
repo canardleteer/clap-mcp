@@ -28,7 +28,7 @@ cargo xtask conformance
 ```
 
 `cargo xtask conformance` requires Docker. It runs the pinned harness twice:
-`active` @ `2025-11-25`, then `draft` @ `draft` (`2026-07-28`). See
+`active` @ `2025-11-25`, then `all` @ `2026-07-28`. See
 [docs/conformance-baseline.md](../../docs/conformance-baseline.md).
 
 On Ubuntu CI only (optional locally): `rumdl check` (uses [`.rumdl.toml`](../../.rumdl.toml)

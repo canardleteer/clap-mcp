@@ -14,7 +14,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Build server, run pinned conformance harness in Docker (active@2025-11-25 + draft by default).
+    /// Build server, run pinned conformance harness in Docker (active@2025-11-25 + all@2026-07-28 by default).
     Conformance(conformance::ConformanceArgs),
     /// Stop a running conformance-server and remove pid/log/port artifacts.
     ConformanceStop(conformance::ConformanceStopArgs),

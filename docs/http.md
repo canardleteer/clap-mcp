@@ -121,5 +121,5 @@ directly.
 ## Conformance
 
 Maintainers run `cargo xtask conformance` to execute the official MCP conformance
-harness against the HTTP fixture (`active` @ `2025-11-25` and `draft`). See
-[conformance-baseline.md](conformance-baseline.md).
+harness against the HTTP fixture (`active` @ `2025-11-25`, then `all` @
+`2026-07-28`). See [conformance-baseline.md](conformance-baseline.md).

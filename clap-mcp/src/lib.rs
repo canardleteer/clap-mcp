@@ -33,7 +33,7 @@
 //! Run with `--mcp` to start the MCP server instead of executing the CLI.
 
 use clap::{Arg, ArgAction, Command};
-use rmcp::model::{Meta, TaskSupport, Tool, ToolExecution};
+use rmcp::model::{MetaObject, Tool};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
@@ -1637,15 +1637,9 @@ fn command_to_tool_with_config(
         {
             clap_mcp.insert("argGroups".into(), value);
         }
-        let mut m = Meta::default();
+        let mut m = MetaObject::new();
         m.0.insert("clapMcp".into(), serde_json::Value::Object(clap_mcp));
         Some(m)
-    };
-
-    let execution = if tool_task_eligible(&cmd.name, metadata) {
-        Some(ToolExecution::from_raw(Some(TaskSupport::Optional)))
-    } else {
-        None
     };
 
     let mut tool = Tool::new_with_raw(
@@ -1658,9 +1652,6 @@ fn command_to_tool_with_config(
     }
     if let Some(meta) = meta {
         tool = tool.with_meta(meta);
-    }
-    if let Some(execution) = execution {
-        tool = tool.with_execution(execution);
     }
     if let Some(output_schema) = output_schema.cloned().and_then(|v| v.as_object().cloned()) {
         tool = tool.with_raw_output_schema(Arc::new(output_schema));
@@ -5317,7 +5308,7 @@ mod tests {
         );
         let info = with_logging.get_info();
         assert!(info.capabilities.logging.is_some());
-        assert!(info.capabilities.tasks.is_none());
+        assert!(!info.capabilities.supports_tasks());
         assert_eq!(
             info.capabilities
                 .resources
@@ -5343,7 +5334,7 @@ mod tests {
         );
         let info = with_tasks.get_info();
         assert!(info.capabilities.logging.is_none());
-        assert!(info.capabilities.tasks.is_some());
+        assert!(info.capabilities.supports_tasks());
         assert_eq!(
             info.capabilities
                 .resources
@@ -5368,7 +5359,7 @@ mod tests {
         );
         let info = with_both.get_info();
         assert!(info.capabilities.logging.is_some());
-        assert!(info.capabilities.tasks.is_some());
+        assert!(info.capabilities.supports_tasks());
         assert_eq!(
             info.capabilities
                 .resources

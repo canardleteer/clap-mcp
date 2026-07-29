@@ -188,7 +188,7 @@ Every guide in [`docs/`](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs
 | [Tool output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md) | `run` return types, structured output, `output-schema` |
 | [Logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md) | `tracing` / `log` bridges, MCP notifications, SEP-2577 deprecation note |
 | [Streamable HTTP](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/http.md) | `--mcp-http`, listen env vars |
-| [Migration notes](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/migration-notes.md) | 0.1.0-rc.1 (rmcp 2.2), historical 0.0.3 → 0.0.4 |
+| [Migration notes](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/migration-notes.md) | rmcp 3.0 / MCP 2026-07-28, historical 0.0.3 → 0.0.4 |
 
 ### Maintainer notes
 
