@@ -10,6 +10,11 @@ function** (`#[clap_mcp_output_from = "run"]`): one `run` implements both CLI
 and MCP behavior so you avoid duplicating logic. Per-variant attributes are
 available for edge cases but are not the default.
 
+Tool `inputSchema` is built from clap (not schemars) and always includes
+`"$schema": "https://json-schema.org/draft/2020-12/schema"`
+(`INPUT_SCHEMA_DIALECT_2020_12`). Optional `outputSchema` under the
+`output-schema` feature uses schemars 1.x, which advertises the same dialect.
+
 ## `#[clap_mcp_output_from = "run"]` — single output function (recommended)
 
 Put **one function** in charge of all tool output. The macro generates

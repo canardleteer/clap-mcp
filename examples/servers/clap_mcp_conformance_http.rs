@@ -187,6 +187,7 @@ fn conformance_serve_options() -> clap_mcp::ClapMcpServeOptions {
         custom_resources: vec![],
         custom_resource_templates: vec![],
         custom_prompts: vec![],
+        custom_tools: vec![clap_mcp::json_schema_2020_12_tool()],
     };
 
     serve_options.custom_resources.push(CustomResource {

@@ -30,5 +30,6 @@ pub fn serve_options_with_logging() -> clap_mcp::ClapMcpServeOptions {
         custom_resources: vec![],
         custom_resource_templates: vec![],
         custom_prompts: vec![],
+        custom_tools: vec![],
     }
 }
