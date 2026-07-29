@@ -141,7 +141,6 @@ Shared with the legacy pass (still applicable under `2026-07-28`):
 | --- | --- | --- | --- |
 | `server-stateless` | SEP-2575: `server/discover`, per-request `_meta`, structural capability checks | Sessionful Streamable HTTP via rmcp; no `server/discover` or modern per-request metadata path | `deferred` (dual-era / stateless HTTP is a large transport project) |
 | `http-custom-header-server-validation` | SEP-2243: `Mcp-Param` / `x-mcp-header` Base64 rules | No custom MCP header param mapping from clap args | `deferred` (needs clap↔header mapping design) |
-| `caching` | SEP-2549: `ttlMs` + `cacheScope` on list/read results | List/read results do not attach cache hints | `deferred` (optional cache metadata on list responses) |
 | `input-required-result-basic-elicitation` | SEP-2322 `InputRequiredResult` + elicitation input | Multi-turn input + elicitation; neither offered | `deferred` (depends on elicitation + InputRequiredResult types) |
 | `input-required-result-basic-sampling` | SEP-2322 + sampling input request | Sampling not offered | `out-of-scope` / `deferred` with sampling |
 | `input-required-result-basic-list-roots` | SEP-2322 + `roots/list` input request | No InputRequiredResult surface | `deferred` |
@@ -166,6 +165,8 @@ Newly green under rmcp 3.0 (remove from baseline if they regress):
 * `json-schema-2020-12` (clap tools advertise `$schema`; fixture registers
   `json_schema_2020_12_tool` via `custom_tools` for SEP-1613 / SEP-2106 keyword
   preservation)
+* `caching` (SEP-2549 `ttlMs` / `cacheScope` via [`CacheHints`] on
+  [`ClapMcpServeOptions`]; defaults `ttl_ms: 0`, `cacheScope: public`)
 
 Also passing when applicable: `tools-call-simple-text`, `tools-call-error`,
 list/read resource and prompt scenarios shared with the legacy pass,
@@ -181,21 +182,19 @@ list/read resource and prompt scenarios shared with the legacy pass,
 
 Ordered by how close they are to clap-mcp’s product shape:
 
-1. **List-result cache hints** (`caching`) — optional `ttlMs` / `cacheScope` on
-   tools/resources/prompts list results.
-2. **Progress notifications** (`tools-call-with-progress`) — optional bridge from
+1. **Progress notifications** (`tools-call-with-progress`) — optional bridge from
    long-running tools when embedders can supply a progress token.
-3. **Elicitation / InputRequiredResult** — revisit only with a clear clap UX
+2. **Elicitation / InputRequiredResult** — revisit only with a clear clap UX
    (confirm flags, interactive prompts); currently deferred after scaffolding
    removal.
-4. **Stateless / SEP-2575 HTTP** and **SEP-2243 custom header rules** — largely
+3. **Stateless / SEP-2575 HTTP** and **SEP-2243 custom header rules** — largely
    transport/`rmcp` work; track upstream before inventing a clap-mcp layer.
 
 Shipped from this backlog: binary custom resources (`ResourceContent::StaticBlob`);
 resource subscribe/unsubscribe RPCs (no update notifications); simple `{param}`
 URI templates (`CustomResourceTemplate`); JSON Schema 2020-12 `$schema` on clap
 tool `inputSchema` plus `custom_tools` / `json_schema_2020_12_tool` for rich
-vocabulary preservation.
+vocabulary preservation; SEP-2549 list/read cache hints (`CacheHints`).
 
 ## Remote CI debugging
 

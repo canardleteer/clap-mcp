@@ -205,6 +205,29 @@ Stateful CLIs can use
 [`ServeMcpBuilder::for_cli_with_state`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.for_cli_with_state)
 after `parse` and setup; see [Stateful MCP tools](stateful-tools.md).
 
+### SEP-2549 cache hints
+
+List and read results include `ttlMs` and `cacheScope` by default
+(`ttl_ms: 0`, `cacheScope: public`). Override via
+[`ClapMcpServeOptions::cache_hints`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html#structfield.cache_hints)
+or builder helpers [`.cache_hints`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.cache_hints)
+/ [`.resource_read_cache_hints`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.resource_read_cache_hints)
+(read-only override). See [`CacheHints`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.CacheHints.html).
+
+```rust
+use clap_mcp::{CacheHints, CacheScope, ClapMcpServeOptions};
+
+let mut opts = ClapMcpServeOptions::default();
+opts.cache_hints = CacheHints {
+    ttl_ms: 60_000,
+    cache_scope: CacheScope::Public,
+};
+opts.resource_read_cache_hints = Some(CacheHints {
+    ttl_ms: 0,
+    cache_scope: CacheScope::Private,
+});
+```
+
 Runnable demos: **setup_then_serve**, **async_embedder_serve**, and
 **placeholder_server** in [examples/README.md](../examples/README.md).
 

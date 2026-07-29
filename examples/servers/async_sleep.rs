@@ -52,12 +52,7 @@ fn main() {
 
     let serve_options = clap_mcp::ClapMcpServeOptions {
         log_rx: Some(log_rx),
-        #[cfg(unix)]
-        capture_stdout: false,
-        custom_resources: vec![],
-        custom_resource_templates: vec![],
-        custom_prompts: vec![],
-        custom_tools: vec![],
+        ..Default::default()
     };
 
     let cli = clap_mcp::parse_or_serve_mcp_with::<Cli>(clap_mcp::ClapMcpRunOptions {

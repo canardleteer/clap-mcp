@@ -44,6 +44,8 @@ mod http;
 
 mod serve;
 
+/// Re-export of [`rmcp::model::CacheScope`] for SEP-2549 [`CacheHints`].
+pub use rmcp::model::CacheScope;
 pub use rmcp::model::ErrorData as ClapMcpErrorData;
 
 pub mod logging;
@@ -811,6 +813,89 @@ pub struct ClapMcpServeOptions {
     /// [`json_schema_2020_12_tool`] for the
     /// SEP-1613 / SEP-2106 conformance shape.
     pub custom_tools: Vec<rmcp::model::Tool>,
+
+    /// SEP-2549 cache hints for `tools/list`, `prompts/list`, `resources/list`,
+    /// and `resources/templates/list`.
+    ///
+    /// Defaults to `ttl_ms: 0` and [`CacheScope::Public`] (immediately stale,
+    /// shareable process-static catalogs).
+    pub cache_hints: CacheHints,
+
+    /// Optional override for `resources/read` only. When `None`, uses
+    /// [`cache_hints`](Self::cache_hints).
+    pub resource_read_cache_hints: Option<CacheHints>,
+}
+
+/// SEP-2549 `ttlMs` / `cacheScope` hints for list and read results.
+///
+/// Defaults to immediately stale (`ttl_ms: 0`) and [`CacheScope::Public`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheHints {
+    /// Milliseconds clients may treat the result as fresh (`ttlMs`).
+    pub ttl_ms: u64,
+    /// Whether cached results may be shared across users (`cacheScope`).
+    pub cache_scope: CacheScope,
+}
+
+impl Default for CacheHints {
+    fn default() -> Self {
+        Self {
+            ttl_ms: 0,
+            cache_scope: CacheScope::Public,
+        }
+    }
+}
+
+impl CacheHints {
+    /// Apply these hints to a result that supports SEP-2549 builders.
+    pub fn apply_to_tools(
+        self,
+        result: rmcp::model::ListToolsResult,
+    ) -> rmcp::model::ListToolsResult {
+        result
+            .with_ttl_ms(self.ttl_ms)
+            .with_cache_scope(self.cache_scope)
+    }
+
+    /// Apply these hints to a `resources/list` result.
+    pub fn apply_to_resources(
+        self,
+        result: rmcp::model::ListResourcesResult,
+    ) -> rmcp::model::ListResourcesResult {
+        result
+            .with_ttl_ms(self.ttl_ms)
+            .with_cache_scope(self.cache_scope)
+    }
+
+    /// Apply these hints to a `resources/templates/list` result.
+    pub fn apply_to_resource_templates(
+        self,
+        result: rmcp::model::ListResourceTemplatesResult,
+    ) -> rmcp::model::ListResourceTemplatesResult {
+        result
+            .with_ttl_ms(self.ttl_ms)
+            .with_cache_scope(self.cache_scope)
+    }
+
+    /// Apply these hints to a `prompts/list` result.
+    pub fn apply_to_prompts(
+        self,
+        result: rmcp::model::ListPromptsResult,
+    ) -> rmcp::model::ListPromptsResult {
+        result
+            .with_ttl_ms(self.ttl_ms)
+            .with_cache_scope(self.cache_scope)
+    }
+
+    /// Apply these hints to a `resources/read` result.
+    pub fn apply_to_read(
+        self,
+        result: rmcp::model::ReadResourceResult,
+    ) -> rmcp::model::ReadResourceResult {
+        result
+            .with_ttl_ms(self.ttl_ms)
+            .with_cache_scope(self.cache_scope)
+    }
 }
 
 /// JSON Schema dialect URI advertised on every tool `inputSchema` (`$schema`).
@@ -4821,7 +4906,9 @@ mod tests {
             },
         ];
 
-        let listed = list_resources_result(&custom);
+        let listed = list_resources_result(&custom, CacheHints::default());
+        assert_eq!(listed.ttl_ms, Some(0));
+        assert_eq!(listed.cache_scope, Some(CacheScope::Public));
         assert_eq!(listed.resources.len(), 3);
         assert_eq!(listed.resources[0].uri, MCP_RESOURCE_URI_SCHEMA);
         assert_eq!(listed.resources[1].uri, "test://dynamic");
@@ -4831,6 +4918,7 @@ mod tests {
             "{\"name\":\"sample\"}",
             &custom,
             &[],
+            CacheHints::default(),
             ReadResourceRequestParams::new(MCP_RESOURCE_URI_SCHEMA),
         )
         .await
@@ -4845,6 +4933,7 @@ mod tests {
             "{}",
             &custom,
             &[],
+            CacheHints::default(),
             ReadResourceRequestParams::new("test://dynamic"),
         )
         .await
@@ -4859,6 +4948,7 @@ mod tests {
             "{}",
             &custom,
             &[],
+            CacheHints::default(),
             ReadResourceRequestParams::new("test://static-binary"),
         )
         .await
@@ -4881,6 +4971,7 @@ mod tests {
             "{}",
             &custom,
             &[],
+            CacheHints::default(),
             ReadResourceRequestParams::new("test://missing"),
         )
         .await
@@ -4905,11 +4996,39 @@ mod tests {
             "{}",
             &failing_resources,
             &[],
+            CacheHints::default(),
             ReadResourceRequestParams::new("test://broken"),
         )
         .await
         .expect_err("provider failure should map to rpc error");
         assert_eq!(failing.message, "read failed");
+    }
+
+    #[tokio::test]
+    async fn resource_read_cache_hints_override_applies_only_to_read() {
+        let list_hints = CacheHints {
+            ttl_ms: 1_000,
+            cache_scope: CacheScope::Public,
+        };
+        let read_hints = CacheHints {
+            ttl_ms: 5,
+            cache_scope: CacheScope::Private,
+        };
+        let listed = list_resources_result(&[], list_hints);
+        assert_eq!(listed.ttl_ms, Some(1_000));
+        assert_eq!(listed.cache_scope, Some(CacheScope::Public));
+
+        let schema_read = read_resource_result(
+            "{}",
+            &[],
+            &[],
+            read_hints,
+            ReadResourceRequestParams::new(MCP_RESOURCE_URI_SCHEMA),
+        )
+        .await
+        .expect("schema read");
+        assert_eq!(schema_read.ttl_ms, Some(5));
+        assert_eq!(schema_read.cache_scope, Some(CacheScope::Private));
     }
 
     #[tokio::test]
@@ -4933,7 +5052,9 @@ mod tests {
             content: content::ResourceContent::Static("exact wins".into()),
         }];
 
-        let listed = list_resource_templates_result(&templates);
+        let listed = list_resource_templates_result(&templates, CacheHints::default());
+        assert_eq!(listed.ttl_ms, Some(0));
+        assert_eq!(listed.cache_scope, Some(CacheScope::Public));
         assert_eq!(listed.resource_templates.len(), 1);
         assert_eq!(
             listed.resource_templates[0].uri_template,
@@ -4945,6 +5066,7 @@ mod tests {
             "{}",
             &exact,
             &templates,
+            CacheHints::default(),
             ReadResourceRequestParams::new("test://template/123/data"),
         )
         .await
@@ -4963,6 +5085,7 @@ mod tests {
             "{}",
             &exact,
             &templates,
+            CacheHints::default(),
             ReadResourceRequestParams::new("test://template/exact/data"),
         )
         .await
@@ -4977,6 +5100,7 @@ mod tests {
             "{}",
             &exact,
             &templates,
+            CacheHints::default(),
             ReadResourceRequestParams::new("test://template/123/other"),
         )
         .await
@@ -5002,7 +5126,9 @@ mod tests {
             content: content::PromptContent::Dynamic(provider.clone()),
         }];
 
-        let listed = list_prompts_result(true, &prompts);
+        let listed = list_prompts_result(true, &prompts, CacheHints::default());
+        assert_eq!(listed.ttl_ms, Some(0));
+        assert_eq!(listed.cache_scope, Some(CacheScope::Public));
         assert_eq!(listed.prompts.len(), 2);
         assert_eq!(listed.prompts[0].name, PROMPT_LOGGING_GUIDE);
         assert_eq!(listed.prompts[1].name, "dynamic");

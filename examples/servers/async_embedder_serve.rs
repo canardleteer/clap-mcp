@@ -54,12 +54,7 @@ async fn main() -> Result<(), clap_mcp::ClapMcpError> {
 
     let serve_options = clap_mcp::ClapMcpServeOptions {
         log_rx: Some(log_rx),
-        #[cfg(unix)]
-        capture_stdout: false,
-        custom_resources: vec![],
-        custom_resource_templates: vec![],
-        custom_prompts: vec![],
-        custom_tools: vec![],
+        ..Default::default()
     };
 
     let cmd = command_with_mcp_flag(Cli::command());

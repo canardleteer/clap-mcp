@@ -215,9 +215,24 @@ impl ServeMcpBuilder {
         self
     }
 
-    /// Optional serve behavior (logging, custom resources, etc.).
+    /// Optional serve behavior (logging, custom resources, cache hints, etc.).
     pub fn serve_options(mut self, serve_options: ClapMcpServeOptions) -> Self {
         self.serve_options = serve_options;
+        self
+    }
+
+    /// SEP-2549 cache hints for list results (and `resources/read` when no read override).
+    pub fn cache_hints(mut self, cache_hints: crate::CacheHints) -> Self {
+        self.serve_options.cache_hints = cache_hints;
+        self
+    }
+
+    /// Optional SEP-2549 cache hints for `resources/read` only.
+    pub fn resource_read_cache_hints(
+        mut self,
+        resource_read_cache_hints: Option<crate::CacheHints>,
+    ) -> Self {
+        self.serve_options.resource_read_cache_hints = resource_read_cache_hints;
         self
     }
 
