@@ -4,9 +4,10 @@
 #![allow(deprecated)]
 
 use crate::{
-    ClapMcpConfig, ClapMcpError, ClapMcpSchemaMetadata, ClapMcpSerializeScope, ClapMcpServeOptions,
-    ClapMcpToolError, ClapMcpToolOutput, InProcessToolHandler, LOG_INTERPRETATION_INSTRUCTIONS,
-    LOGGING_GUIDE_CONTENT, MCP_RESOURCE_URI_SCHEMA, PROMPT_LOGGING_GUIDE, content,
+    CacheHints, ClapMcpConfig, ClapMcpError, ClapMcpSchemaMetadata, ClapMcpSerializeScope,
+    ClapMcpServeOptions, ClapMcpToolError, ClapMcpToolOutput, InProcessToolHandler,
+    LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, MCP_RESOURCE_URI_SCHEMA,
+    PROMPT_LOGGING_GUIDE, content,
     logging::LoggingMessageNotificationParams,
     protocol::{PROTOCOL_VERSION_STABLE, negotiate_protocol_version},
     serialize_lock_key,
@@ -46,6 +47,8 @@ pub(crate) struct ServeHandlerInner {
     pub custom_prompts: Vec<content::CustomPrompt>,
     /// Tool names from [`ClapMcpServeOptions::custom_tools`] (schema-only; not clap).
     pub custom_tool_names: HashSet<String>,
+    pub cache_hints: CacheHints,
+    pub resource_read_cache_hints: Option<CacheHints>,
     pub logging_enabled: bool,
     pub task_augmented_tools: bool,
     pub task_tool_filter: Option<HashSet<String>>,
@@ -316,7 +319,12 @@ impl ServerHandler for ClapMcpServer {
         context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListResourcesResult, McpError>> + Send + '_ {
         self.capture_peer(&context);
-        async move { Ok(list_resources_result(&self.inner.custom_resources)) }
+        async move {
+            Ok(list_resources_result(
+                &self.inner.custom_resources,
+                self.inner.cache_hints,
+            ))
+        }
     }
 
     fn read_resource(
@@ -331,6 +339,7 @@ impl ServerHandler for ClapMcpServer {
                 &inner.schema_json,
                 &inner.custom_resources,
                 &inner.custom_resource_templates,
+                inner.resource_read_cache_hints.unwrap_or(inner.cache_hints),
                 params,
             )
             .await
@@ -348,6 +357,7 @@ impl ServerHandler for ClapMcpServer {
         async move {
             Ok(list_resource_templates_result(
                 &self.inner.custom_resource_templates,
+                self.inner.cache_hints,
             ))
         }
     }
@@ -378,7 +388,12 @@ impl ServerHandler for ClapMcpServer {
         context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
         self.capture_peer(&context);
-        async move { Ok(ListToolsResult::with_all_items(self.inner.tools.clone())) }
+        async move {
+            Ok(self
+                .inner
+                .cache_hints
+                .apply_to_tools(ListToolsResult::with_all_items(self.inner.tools.clone())))
+        }
     }
 
     fn list_prompts(
@@ -391,6 +406,7 @@ impl ServerHandler for ClapMcpServer {
             Ok(list_prompts_result(
                 self.inner.logging_enabled,
                 &self.inner.custom_prompts,
+                self.inner.cache_hints,
             ))
         }
     }
@@ -613,6 +629,8 @@ pub(crate) fn build_clap_mcp_server(
         custom_resource_templates: serve_options.custom_resource_templates.clone(),
         custom_prompts: serve_options.custom_prompts.clone(),
         custom_tool_names,
+        cache_hints: serve_options.cache_hints,
+        resource_read_cache_hints: serve_options.resource_read_cache_hints,
         logging_enabled,
         task_augmented_tools: metadata.task_augmented_tools,
         task_tool_filter,
@@ -858,22 +876,24 @@ fn clap_schema_resource() -> Resource {
 
 pub(crate) fn list_resources_result(
     custom_resources: &[content::CustomResource],
+    cache_hints: CacheHints,
 ) -> ListResourcesResult {
     let mut resources = vec![clap_schema_resource()];
     for resource in custom_resources {
         resources.push(resource.to_list_resource());
     }
-    ListResourcesResult::with_all_items(resources)
+    cache_hints.apply_to_resources(ListResourcesResult::with_all_items(resources))
 }
 
 pub(crate) fn list_resource_templates_result(
     custom_resource_templates: &[content::CustomResourceTemplate],
+    cache_hints: CacheHints,
 ) -> ListResourceTemplatesResult {
     let templates = custom_resource_templates
         .iter()
         .map(|template| template.to_list_resource_template())
         .collect();
-    ListResourceTemplatesResult::with_all_items(templates)
+    cache_hints.apply_to_resource_templates(ListResourceTemplatesResult::with_all_items(templates))
 }
 
 fn resource_contents_from_body(
@@ -906,33 +926,30 @@ pub(crate) async fn read_resource_result(
     schema_json: &str,
     custom_resources: &[content::CustomResource],
     custom_resource_templates: &[content::CustomResourceTemplate],
+    cache_hints: CacheHints,
     params: ReadResourceRequestParams,
 ) -> Result<ReadResourceResult, McpError> {
     if params.uri == MCP_RESOURCE_URI_SCHEMA {
-        return Ok(ReadResourceResult::new(vec![
+        return Ok(cache_hints.apply_to_read(ReadResourceResult::new(vec![
             ResourceContents::text(schema_json, params.uri).with_mime_type("application/json"),
-        ]));
+        ])));
     }
     if let Some(resource) = custom_resources
         .iter()
         .find(|resource| resource.uri == params.uri)
     {
         let body = content::resolve_resource_content(resource, &params.uri).await?;
-        return Ok(ReadResourceResult::new(vec![resource_contents_from_body(
-            body,
-            params.uri,
-            &resource.mime_type,
-        )]));
+        return Ok(cache_hints.apply_to_read(ReadResourceResult::new(vec![
+            resource_contents_from_body(body, params.uri, &resource.mime_type),
+        ])));
     }
     for template in custom_resource_templates {
         if let Some(captures) = content::match_uri_template(&template.uri_template, &params.uri) {
             let body = content::resolve_template_resource_content(template, &params.uri, &captures)
                 .await?;
-            return Ok(ReadResourceResult::new(vec![resource_contents_from_body(
-                body,
-                params.uri,
-                &template.mime_type,
-            )]));
+            return Ok(cache_hints.apply_to_read(ReadResourceResult::new(vec![
+                resource_contents_from_body(body, params.uri, &template.mime_type),
+            ])));
         }
     }
     // SEP-2164: include the requested URI in error `data` (rmcp upgrades
@@ -955,6 +972,7 @@ fn logging_guide_prompt() -> rmcp::model::Prompt {
 pub(crate) fn list_prompts_result(
     logging_enabled: bool,
     custom_prompts: &[content::CustomPrompt],
+    cache_hints: CacheHints,
 ) -> ListPromptsResult {
     let mut prompts = Vec::new();
     if logging_enabled {
@@ -963,7 +981,7 @@ pub(crate) fn list_prompts_result(
     for prompt in custom_prompts {
         prompts.push(prompt.to_list_prompt());
     }
-    ListPromptsResult::with_all_items(prompts)
+    cache_hints.apply_to_prompts(ListPromptsResult::with_all_items(prompts))
 }
 
 pub(crate) async fn get_prompt_result(

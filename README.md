@@ -84,6 +84,9 @@ clap-mcp = "0.1.0-rc.1"
   [tool-output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md)
 * Custom MCP resources, prompts, and optional raw-schema tools (`custom_tools`);
   see [custom-content](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md)
+* SEP-2549 list/read cache hints (`CacheHints` on `ClapMcpServeOptions`; default
+  `ttl_ms: 0`, `public`); see
+  [usage](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md)
 * Agent Skills export (`--export-skills`); see
   [export-skills](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/export-skills.md)
 * Stateful in-process session tools; see

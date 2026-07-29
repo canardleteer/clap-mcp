@@ -12,8 +12,6 @@ server:
   - server-stateless
   # SEP-2243 custom Mcp-Param / x-mcp-header validation not implemented.
   - http-custom-header-server-validation
-  # SEP-2549 list-result caching hints (ttlMs / cacheScope) not emitted.
-  - caching
   # SEP-2322 InputRequiredResult + elicitation (2026-07-28; needs elicitation).
   - input-required-result-basic-elicitation
   # SEP-2322 InputRequiredResult + sampling (2026-07-28; sampling not offered).

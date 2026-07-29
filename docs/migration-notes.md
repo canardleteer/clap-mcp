@@ -44,6 +44,8 @@ these changes:
 | `Tool.execution.taskSupport` | Optional/required hints in `list_tools` | Removed |
 | Task client requests | `GetTaskRequest`, `GetTaskPayloadRequest` / `tasks/result` | `GetTaskRequest` with payload on completed tasks |
 | MCP logging | Deprecated but present | Still present through clap-mcp bridge; see [logging.md](logging.md) |
+| List/read cache hints | Not emitted | SEP-2549 `ttlMs` / `cacheScope` via `CacheHints` on `ClapMcpServeOptions` (default `ttl_ms: 0`, `public`); see [usage.md](usage.md) |
+| Tool `inputSchema` dialect | Plain object schema | Always advertises JSON Schema 2020-12 `$schema`; optional [`custom_tools`](custom-content.md) for rich vocabulary |
 
 Conformance defaults: `cargo xtask conformance` runs `active` @ `2025-11-25` then
 `all` @ `2026-07-28` with baselines
