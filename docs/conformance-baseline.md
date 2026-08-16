@@ -17,7 +17,8 @@ cargo xtask conformance
 Builds `clap-mcp-conformance-http`, starts it on an ephemeral port, and runs
 `@modelcontextprotocol/conformance` from the pinned Docker image
 ([`docker/conformance/VERSION`](../docker/conformance/VERSION), currently
-`0.2.0-alpha.10`) **twice**:
+git SHA `c321dd32035556e6769d3724a8ee97d87c3faaac`, untagged
+`0.2.0-alpha.11`) **twice**:
 
 | Pass | Suite | `--spec-version` | Baseline |
 | --- | --- | --- | --- |
@@ -74,11 +75,24 @@ cargo xtask conformance --verbose
 | --- | --- |
 | `out-of-scope` | Conflicts with clap-mcp as a CLI→MCP bridge (text/JSON tools, no agent loop) |
 | `deferred` | Plausible product feature; needs design or larger rmcp surface |
-| `upstream` | Blocked on rmcp / Streamable HTTP transport behavior |
+| `upstream` | Blocked on rmcp / Streamable HTTP, or an unmerged conformance harness defect |
 | `fixture-only` | Library already supports it; only the maintainer fixture is incomplete |
 
 When a scenario becomes shipped clap-mcp behavior, remove it from the YAML and
 from the table in the same change.
+
+## Known unmerged harness defects
+
+These open [modelcontextprotocol/conformance](https://github.com/modelcontextprotocol/conformance)
+PRs are defects in the harness, not in clap-mcp. Do not treat related
+failures, warnings, or missing scenarios as product regressions. Re-vet after
+they merge; do not "fix" clap-mcp to satisfy the broken check.
+
+| PR | Defect | clap-mcp impact on this pin |
+| --- | --- | --- |
+| [#381](https://github.com/modelcontextprotocol/conformance/pull/381) | Missing `json-rpc-batch-rejection` (Streamable HTTP MUST reject a JSON-RPC batch array) | Scenario is not in SHA `c321dd32035556e6769d3724a8ee97d87c3faaac`. When it lands, a fail is a transport/rmcp question, not a clap CLI gap |
+| [#380](https://github.com/modelcontextprotocol/conformance/pull/380) | `tools-name-format` on `tools-list` uses stale SEP-986 rules and MUST-level failure instead of 2025-11-25 SHOULD + `WARNING` | `tools-list` is green on this pin. A later warning from the old check is harness, not a clap-mcp name bug |
+| [#346](https://github.com/modelcontextprotocol/conformance/pull/346) | Client CLI / everything-client drift (`elicitation-sep1034-client-defaults`, `sse-retry`) | clap-mcp runs **server** scenarios only. Ignore client-suite fallout from this |
 
 ## Schedule
 
@@ -106,8 +120,8 @@ Source: [`conformance-profiles/conformance-2025-11-25.yml`](../conformance-profi
 
 ### Passing on the stable pass (not baselined)
 
-* Lifecycle/utilities: `server-initialize`, `logging-set-level`, `ping`,
-  `completion-complete`
+* Lifecycle/utilities: `server-initialize`, `server-session-lifecycle`,
+  `logging-set-level`, `ping`, `completion-complete`
 * Lists: `tools-list`, `resources-list`, `prompts-list`
 * Shipped capabilities: `tools-call-simple-text`, `tools-call-with-logging`,
   `tools-call-error`, `resources-read-text`, `resources-read-binary`
@@ -147,12 +161,12 @@ Shared with the legacy pass (still applicable under `2026-07-28`):
 | `input-required-result-request-state` | SEP-2322 `requestState` round-trip | Same InputRequiredResult gap | `deferred` |
 | `input-required-result-multiple-input-requests` | Multiple `inputRequests` in one result | Same | `deferred` |
 | `input-required-result-multi-round` | Multi-round InputRequiredResult | Same | `deferred` |
-| `input-required-result-missing-input-response` | Re-request on missing/wrong `inputResponses` | Same | `deferred` |
+| `input-required-result-missing-input-response` | Re-request on missing/wrong `inputResponses` | Same InputRequiredResult gap. Harness `0.2.0-alpha.11` scores this as a warning, not a hard fail; it still must stay in the expected-failures list | `deferred` |
 | `input-required-result-non-tool-request` | InputRequiredResult on `prompts/get` | Same | `deferred` |
 | `input-required-result-result-type` | Explicit `resultType` on InputRequiredResult | Same | `deferred` |
 | `input-required-result-tampered-state` | Reject tampered integrity-protected `requestState` | Same | `deferred` |
 | `input-required-result-capability-check` | Only request inputs for client-declared caps | Same | `deferred` |
-| `input-required-result-ignore-extra-params` | Ignore unknown keys in `inputResponses` | Same | `deferred` |
+| `input-required-result-ignore-extra-params` | Ignore unknown keys in `inputResponses` | Same InputRequiredResult gap. Harness `0.2.0-alpha.11` scores this as a warning; keep it in the expected-failures list | `deferred` |
 
 ### Passing on the 2026-07-28 pass (not baselined)
 
@@ -241,9 +255,14 @@ rm -f target/conformance-server.log target/conformance-server.pid target/conform
 
 ## Version pin
 
-[`docker/conformance/VERSION`](../docker/conformance/VERSION) is the npm package
-version for the local Docker image (`@modelcontextprotocol/conformance@…`).
-GitHub Actions and local xtask both build and run that image.
+[`docker/conformance/VERSION`](../docker/conformance/VERSION) is the harness pin
+for the local Docker image. A 40-character hex SHA clones
+`modelcontextprotocol/conformance` at that commit, builds it, and installs the
+result (current pin is untagged `0.2.0-alpha.11` at
+`c321dd32035556e6769d3724a8ee97d87c3faaac`). Any other value is an npm version
+or dist-tag (`@modelcontextprotocol/conformance@…`). xtask tags the image
+`clap-mcp-conformance:<pin>` so changing the pin rebuilds. GitHub Actions and
+local xtask both build and run that image.
 
 ## Protocol versions clap-mcp advertises
 
@@ -254,8 +273,8 @@ the MCP protocol versions the library accepts in `initialize` negotiation:
 * `PROTOCOL_VERSION_CURRENT` = `2026-07-28` (released protocol version)
 
 clap-mcp does not advertise a `draft` protocol string. Those constants match the
-dual conformance passes above. Older rmcp-known dates are not echoed on stdio
-(clap-mcp uses `serve_directly` plus its own negotiation). Streamable HTTP still
-goes through rmcp `serve_server`, which may echo other known versions until
-upstream allows a custom supported set; clients that request `2025-11-25` or
-`2026-07-28` are unaffected.
+dual conformance passes above. Older rmcp-known dates are not echoed. Stdio
+uses `serve_directly` plus clap-mcp's `initialize` negotiation. Streamable HTTP
+uses rmcp 3.1 `ServerHandler::supported_protocol_versions`, which returns the
+same [`SUPPORTED_PROTOCOL_VERSIONS`](https://docs.rs/clap-mcp/latest/clap_mcp/protocol/constant.SUPPORTED_PROTOCOL_VERSIONS.html)
+set for discover, initialize, and per-request version checks.

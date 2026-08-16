@@ -17,7 +17,7 @@ ops-oriented sinks such as OpenTelemetry.
 > MCP protocol logging (`notifications/message`, `logging/setLevel`,
 > `ServerCapabilities.logging`) is deprecated by
 > [SEP-2577](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2577).
-> clap-mcp’s bridge still works on rmcp 3.0 and remains the supported way to
+> clap-mcp’s bridge still works on rmcp 3.1 and remains the supported way to
 > push live CLI diagnostics to MCP clients. Spec migration advice (stderr /
 > OpenTelemetry) does not replace that client-visible stream. Track this as a
 > product risk; clap-mcp will keep the bridge until the protocol or SDK removes

@@ -12,22 +12,26 @@ to **schemars 1.x**, and keeps the derive / `ServeMcpBuilder` public surface
 from the 0.0.4 line. Copy-paste dependency examples use `version = "0.1.0-rc.1"`
 (match the workspace RC).
 
-The workspace now pins **rmcp 3.0** and negotiates MCP **`2026-07-28`** as the
-current released protocol version. See [rmcp 2.2 → 3.0](#rmcp-22--30) for the
-current embedder port. Primary break for the original RC: rmcp model types. See
-[rmcp 1.7 → 2.2](#rmcp-17--22). Derive-only CLIs that do not construct rmcp
-types usually need only a dependency bump.
+The workspace now pins **rmcp 3.1** (`version = "3"` in root `Cargo.toml`) and
+negotiates MCP **`2026-07-28`** as the current released protocol version. See
+[rmcp 2.2 → 3.0](#rmcp-22--30) for the current embedder port. Primary break for
+the original RC: rmcp model types. See [rmcp 1.7 → 2.2](#rmcp-17--22).
+Derive-only CLIs that do not construct rmcp types usually need only a
+dependency bump.
 
 Later sections document the historical `0.0.3-rc.1` → `0.0.4-rc.1` port from
 rust-mcp-sdk to rmcp 1.7.
 
 ## rmcp 2.2 → 3.0
 
-The workspace pins **rmcp 3.0** and advertises MCP protocol versions
+The workspace pins **rmcp 3.1** and advertises MCP protocol versions
 `2025-11-25` (`PROTOCOL_VERSION_STABLE`) and **`2026-07-28`**
 (`PROTOCOL_VERSION_CURRENT`). MCP `2026-07-28` is a **released** dated protocol
 version, not the evolving upstream `draft` specification directory. clap-mcp
-does not negotiate or advertise a `draft` protocol string.
+does not negotiate or advertise a `draft` protocol string. rmcp 3.1 adds
+`ServerHandler::supported_protocol_versions`; clap-mcp returns
+[`SUPPORTED_PROTOCOL_VERSIONS`](https://docs.rs/clap-mcp/latest/clap_mcp/protocol/constant.SUPPORTED_PROTOCOL_VERSIONS.html)
+so Streamable HTTP discover/negotiate matches stdio.
 
 Upstream guide: [rmcp CHANGELOG](https://github.com/modelcontextprotocol/rust-sdk/blob/main/crates/rmcp/CHANGELOG.md).
 
@@ -154,7 +158,7 @@ Also removed: `parse_or_serve_mcp_with_config*` (use
 `ClapMcpConfig::task_augmented_tools`, public `tool_task_eligible`, public
 `ClapMcpServer` / `build_clap_mcp_server`.
 
-## Workspace dependency (rmcp 3.0)
+## Workspace dependency (rmcp 3.1)
 
 ```toml
 rmcp = { version = "3", default-features = false, features = [
@@ -166,7 +170,7 @@ rmcp = { version = "3", default-features = false, features = [
 ] }
 ```
 
-Confirmed feature names in **rmcp 3.0** (HTTP/OAuth features exist
+Confirmed feature names in **rmcp 3.1** (HTTP/OAuth features exist
 separately):
 
 | Feature | Role |

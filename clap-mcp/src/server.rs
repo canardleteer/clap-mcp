@@ -9,7 +9,7 @@ use crate::{
     LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, MCP_RESOURCE_URI_SCHEMA,
     PROMPT_LOGGING_GUIDE, content,
     logging::LoggingMessageNotificationParams,
-    protocol::{PROTOCOL_VERSION_STABLE, negotiate_protocol_version},
+    protocol::{PROTOCOL_VERSION_STABLE, SUPPORTED_PROTOCOL_VERSIONS, negotiate_protocol_version},
     serialize_lock_key,
 };
 use rmcp::{
@@ -20,15 +20,16 @@ use rmcp::{
         GetTaskParams, GetTaskResult, Implementation, InitializeRequestParams, ListPromptsResult,
         ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, LoggingLevel,
         LoggingMessageNotification, LoggingMessageNotificationParam, NotificationMetaObject,
-        PaginatedRequestParams, PromptMessage, ReadResourceRequestParams, ReadResourceResponse,
-        ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities,
-        SetLevelRequestParams, SubscribeRequestParams, Tool, UnsubscribeRequestParams,
-        UpdateTaskParams,
+        PaginatedRequestParams, PromptMessage, ProtocolVersion, ReadResourceRequestParams,
+        ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, Role,
+        ServerCapabilities, SetLevelRequestParams, SubscribeRequestParams, Tool,
+        UnsubscribeRequestParams, UpdateTaskParams,
     },
     service::{RequestContext, RoleServer, serve_directly},
     task_manager::{TaskExit, TaskManager, TaskOptions},
 };
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -280,6 +281,10 @@ impl ServerHandler for ClapMcpServer {
         info
     }
 
+    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+        Cow::Borrowed(SUPPORTED_PROTOCOL_VERSIONS)
+    }
+
     fn initialize(
         &self,
         mut request: InitializeRequestParams,
@@ -287,9 +292,9 @@ impl ServerHandler for ClapMcpServer {
     ) -> impl std::future::Future<Output = Result<rmcp::model::InitializeResult, McpError>> + Send + '_
     {
         // Restrict negotiation to conformance-tested versions. Stdio uses
-        // `serve_directly` so rmcp cannot overwrite this with full KNOWN_VERSIONS.
-        // Streamable HTTP still goes through rmcp `serve_server`, which may echo
-        // older known versions; see `protocol` module docs.
+        // `serve_directly`, so this handler must negotiate (and stamp peer_info)
+        // itself. Streamable HTTP uses `supported_protocol_versions` for
+        // discover, initialize, and per-request version checks (rmcp 3.1+).
         let negotiated = negotiate_protocol_version(&request.protocol_version);
         request.protocol_version = negotiated.clone();
         context.peer.set_peer_info(request);
@@ -696,8 +701,8 @@ pub(crate) async fn serve_schema_json_over_stdio(
 
     use rmcp::transport::IntoTransport;
 
-    // `serve_directly` so `initialize` negotiation is not rewritten by rmcp's
-    // post-handshake echo of every `ProtocolVersion::KNOWN_VERSIONS` entry.
+    // `serve_directly` so stdio `initialize` uses this handler (and its
+    // conformance-tested version set) instead of rmcp's default handshake.
     let service = match stdio_io {
         crate::serve::McpStdioIo::Process => serve_directly(server, rmcp::transport::stdio(), None),
         crate::serve::McpStdioIo::Custom { read, write } => {

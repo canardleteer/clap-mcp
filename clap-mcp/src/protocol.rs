@@ -19,9 +19,11 @@ pub const PROTOCOL_VERSION_STABLE: ProtocolVersion = ProtocolVersion::V_2025_11_
 /// specification tree.
 pub const PROTOCOL_VERSION_CURRENT: ProtocolVersion = ProtocolVersion::V_2026_07_28;
 
-/// Protocol versions clap-mcp advertises and accepts in `initialize` negotiation.
+/// Protocol versions clap-mcp advertises and accepts.
 ///
-/// Clients that request a version outside this set receive
+/// Returned from `ServerHandler::supported_protocol_versions` so stdio
+/// `initialize`, Streamable HTTP discover/negotiate, and per-request version
+/// checks share this set. Clients that request a version outside it receive
 /// [`PROTOCOL_VERSION_STABLE`].
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[ProtocolVersion] =
     &[PROTOCOL_VERSION_STABLE, PROTOCOL_VERSION_CURRENT];
