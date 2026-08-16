@@ -24,7 +24,7 @@ server:
   - input-required-result-multiple-input-requests
   # SEP-2322 multi-round InputRequiredResult + evolving requestState.
   - input-required-result-multi-round
-  # SEP-2322 missing/wrong inputResponses re-request behavior.
+  # SEP-2322 missing/wrong inputResponses re-request (WARNING under 0.2.0-alpha.11).
   - input-required-result-missing-input-response
   # SEP-2322 InputRequiredResult on prompts/get (non-tool).
   - input-required-result-non-tool-request
@@ -34,5 +34,5 @@ server:
   - input-required-result-tampered-state
   # SEP-2322 gate inputRequests on client-declared capabilities.
   - input-required-result-capability-check
-  # SEP-2322 ignore unknown keys in inputResponses.
+  # SEP-2322 ignore unknown keys in inputResponses (WARNING under 0.2.0-alpha.11).
   - input-required-result-ignore-extra-params

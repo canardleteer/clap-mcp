@@ -13,7 +13,6 @@ use std::{
 };
 
 const CONFORMANCE_BIN: &str = "clap-mcp-conformance-http";
-const DOCKER_IMAGE: &str = "clap-mcp-conformance:local";
 const DEFAULT_LOG_MAX_MB: u64 = 10;
 const INITIALIZE_BODY: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0"}}}"#;
 const SERVER_PID_FILE: &str = "target/conformance-server.pid";
@@ -291,12 +290,17 @@ fn ensure_docker() -> Result<()> {
     }
 }
 
+fn docker_image_name(version: &str) -> String {
+    format!("clap-mcp-conformance:{version}")
+}
+
 fn ensure_conformance_image(rebuild: bool) -> Result<()> {
     let root = workspace_root()?;
     let version = conformance_version()?;
+    let image = docker_image_name(&version);
     if !rebuild {
         let inspect = Command::new("docker")
-            .args(["image", "inspect", DOCKER_IMAGE])
+            .args(["image", "inspect", &image])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
@@ -311,7 +315,7 @@ fn ensure_conformance_image(rebuild: bool) -> Result<()> {
         .args([
             "build",
             "-t",
-            DOCKER_IMAGE,
+            &image,
             "--build-arg",
             &format!("CONFORMANCE_VERSION={version}"),
             dockerfile_dir.to_str().context("non-utf8 docker path")?,
@@ -509,10 +513,11 @@ fn run_conformance_docker(
         docker.arg("--add-host=host.docker.internal:host-gateway");
     }
 
+    let image = docker_image_name(&conformance_version()?);
     docker
         .arg("-v")
         .arg(format!("{}:/baseline.yml:ro", baseline_abs.display()))
-        .arg(DOCKER_IMAGE)
+        .arg(&image)
         .args(["server", "--url", &url, "--suite", suite])
         .arg("--expected-failures")
         .arg("/baseline.yml");

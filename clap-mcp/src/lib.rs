@@ -53,7 +53,7 @@ pub mod logging;
 /// Custom MCP resources and prompts, and skill export.
 pub mod content;
 
-/// MCP protocol versions clap-mcp advertises and accepts in `initialize`.
+/// MCP protocol versions clap-mcp advertises and accepts in `initialize` and discover.
 pub mod protocol;
 
 #[cfg(feature = "derive")]
@@ -5620,6 +5620,26 @@ mod tests {
         assert_eq!(
             info.instructions.as_deref(),
             Some(LOG_INTERPRETATION_INSTRUCTIONS)
+        );
+    }
+
+    #[test]
+    fn test_supported_protocol_versions_matches_conformance_set() {
+        let handler: InProcessToolHandler =
+            Arc::new(|_, _| Ok(ClapMcpToolOutput::Text("ok".into())));
+        let server = build_test_server(
+            ClapMcpConfig {
+                reinvocation_safe: true,
+                ..Default::default()
+            },
+            ClapMcpSchemaMetadata::default(),
+            ClapMcpServeOptions::default(),
+            Some(handler),
+            None,
+        );
+        assert_eq!(
+            server.supported_protocol_versions().as_ref(),
+            protocol::SUPPORTED_PROTOCOL_VERSIONS
         );
     }
 
