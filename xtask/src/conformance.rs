@@ -19,10 +19,10 @@ const SERVER_PID_FILE: &str = "target/conformance-server.pid";
 const SERVER_LOG_FILE: &str = "target/conformance-server.log";
 const SERVER_PORT_FILE: &str = "target/conformance-port";
 
-/// Legacy MCP protocol version under test. Keep aligned with
+/// Previous released MCP protocol version under test. Keep aligned with
 /// `clap_mcp::protocol::PROTOCOL_VERSION_STABLE` / `SUPPORTED_PROTOCOL_VERSIONS`.
 const SPEC_LEGACY: &str = "2025-11-25";
-/// Released MCP protocol version under test. Keep aligned with
+/// Current released MCP protocol version under test. Keep aligned with
 /// `clap_mcp::protocol::PROTOCOL_VERSION_CURRENT`.
 ///
 /// Do not pass the harness alias `draft` here. `draft` is a separate evolving
@@ -45,7 +45,7 @@ pub struct ConformanceArgs {
     /// clap-mcp's default dual pass uses dated versions only.
     #[arg(long)]
     pub spec_version: Option<String>,
-    /// Expected-failures baseline for the legacy (`2025-11-25` / `active`) pass.
+    /// Expected-failures baseline for the previous-release (`2025-11-25` / `active`) pass.
     #[arg(long, default_value = DEFAULT_BASELINE)]
     pub baseline: PathBuf,
     /// Expected-failures baseline for the current released (`2026-07-28`) pass.

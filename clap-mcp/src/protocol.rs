@@ -2,21 +2,20 @@
 //! as far as the harness and baseline allow. Do not advertise versions that
 //! have not been exercised.
 //!
-//! `draft` is a separate, evolving MCP specification directory and harness
-//! suite. It is not an alias for a dated release. After MCP `2026-07-28`
-//! shipped, clap-mcp treats that date as a released protocol version. Do not
-//! negotiate or advertise a `draft` protocol string until it is
-//! conformance-tested as its own identifier.
+//! MCP `2026-07-28` is the current released protocol version. `draft` is a
+//! separate, evolving specification directory and harness suite, not an alias
+//! for that dated release. Do not negotiate or advertise a `draft` protocol
+//! string until it is conformance-tested as its own identifier.
 
 use rmcp::model::ProtocolVersion;
 
-/// Legacy MCP protocol version (initialize handshake; primary advertise / fallback).
+/// Previous released MCP protocol version `2025-11-25` (initialize fallback).
 pub const PROTOCOL_VERSION_STABLE: ProtocolVersion = ProtocolVersion::V_2025_11_25;
 
-/// Released MCP protocol version `2026-07-28` (stateless core).
+/// Current released MCP protocol version `2026-07-28` (stateless core).
 ///
-/// This is the dated release published on 2026-07-28, not the evolving `draft`
-/// specification tree.
+/// This is the dated release published on 2026-07-28. It is not the evolving
+/// `draft` specification tree or harness suite.
 pub const PROTOCOL_VERSION_CURRENT: ProtocolVersion = ProtocolVersion::V_2026_07_28;
 
 /// Protocol versions clap-mcp advertises and accepts.

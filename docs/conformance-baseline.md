@@ -22,8 +22,8 @@ git SHA `c321dd32035556e6769d3724a8ee97d87c3faaac`, untagged
 
 | Pass | Suite | `--spec-version` | Baseline |
 | --- | --- | --- | --- |
-| Legacy | `active` | `2025-11-25` | [`conformance-profiles/conformance-2025-11-25.yml`](../conformance-profiles/conformance-2025-11-25.yml) |
-| Current | `all` | `2026-07-28` | [`conformance-profiles/conformance-2026-07-28.yml`](../conformance-profiles/conformance-2026-07-28.yml) |
+| Previous release | `active` | `2025-11-25` | [`conformance-profiles/conformance-2025-11-25.yml`](../conformance-profiles/conformance-2025-11-25.yml) |
+| Current released | `all` | `2026-07-28` | [`conformance-profiles/conformance-2026-07-28.yml`](../conformance-profiles/conformance-2026-07-28.yml) |
 
 Override with `--suite active|draft|all|…`, `--spec-version`, `--baseline`, or
 `--current-baseline` when debugging a single pass.
@@ -142,7 +142,7 @@ These scenarios exercise the released `2026-07-28` protocol version. clap-mcp
 remains a dual-era server that negotiates `2025-11-25` or `2026-07-28` in
 `initialize`, but does not implement the full `2026-07-28` server surface.
 
-Shared with the legacy pass (still applicable under `2026-07-28`):
+Shared with the previous-release pass (still applicable under `2026-07-28`):
 
 | Scenario | Disposition |
 | --- | --- |
@@ -183,7 +183,7 @@ Newly green under rmcp 3.0 (remove from baseline if they regress):
   [`ClapMcpServeOptions`]; defaults `ttl_ms: 0`, `cacheScope: public`)
 
 Also passing when applicable: `tools-call-simple-text`, `tools-call-error`,
-list/read resource and prompt scenarios shared with the legacy pass,
+list/read resource and prompt scenarios shared with the previous-release pass,
 `server-sse-multiple-streams`, `dns-rebinding-protection`.
 
 ### Partial progress (still baselined)
@@ -269,8 +269,10 @@ local xtask both build and run that image.
 [`clap_mcp::protocol`](https://docs.rs/clap-mcp/latest/clap_mcp/protocol/) lists
 the MCP protocol versions the library accepts in `initialize` negotiation:
 
-* `PROTOCOL_VERSION_STABLE` = `2025-11-25` (primary advertise / fallback)
-* `PROTOCOL_VERSION_CURRENT` = `2026-07-28` (released protocol version)
+* `PROTOCOL_VERSION_STABLE` = `2025-11-25` (previous released version;
+  initialize fallback)
+* `PROTOCOL_VERSION_CURRENT` = `2026-07-28` (current released protocol
+  version; not `draft`)
 
 clap-mcp does not advertise a `draft` protocol string. Those constants match the
 dual conformance passes above. Older rmcp-known dates are not echoed. Stdio
