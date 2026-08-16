@@ -7,9 +7,10 @@
 
 ## Usage
 
-This is still a draft, and we're exposing a rapidly evolving specification (MCP)
-through a relatively stable one (`clap`). That mismatch in velocity will err
-towards instability of the public API surface.
+This crate is still a draft. MCP **`2026-07-28`** is the current released
+protocol version (not `draft`); clap-mcp also negotiates the previous release
+**`2025-11-25`**. Exposing that protocol through a relatively stable `clap`
+surface still errs toward instability of the public API.
 
 > **In general, you should be able to adapt any `clap` CLI binary to use
 > `clap-mcp` with natural API semantics.**
