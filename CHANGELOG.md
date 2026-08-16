@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+## `clap-mcp` - [0.1.0-rc.1](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.0.5...clap-mcp-v0.1.0-rc.1) - 2026-08-16
+
+### Added
+- *(server)* absorb rmcp 3.1 and pin conformance to 0.2.0-alpha.11- *(server)* emit SEP-2549 ttlMs and cacheScope on list and read- *(schema)* advertise JSON Schema 2020-12 on tool inputSchema- *(server)* absorb rmcp 3.0 and released MCP 2026-07-28- *(content)* simple URI templates for custom resources- *(server)* accept resources subscribe and unsubscribe RPCs- *(content)* support binary custom resources for MCP blob reads- *(conformance)* dual-protocol harness and documented baselines- [**breaking**] bump to 0.1.0-rc.1 with rmcp 2.2 and schemars 1
+
+### Fixed
+- *(tests)* harden conformance HTTP teardown on macOS CI
+
+### Other
+- *(protocol)* treat 2026-07-28 as the current released MCP version- *(protocol)* drop broken rustdoc link and stale harness notes
 ## `clap-mcp` - [0.0.5](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.0.4...clap-mcp-v0.0.5) - 2026-06-12
 
 ### Added
