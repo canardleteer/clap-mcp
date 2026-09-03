@@ -1,0 +1,2 @@
+# rmcp::RmcpError is ~376 bytes, exceeding the default 128-byte threshold for clippy::result_large_err
+large-error-threshold = 512

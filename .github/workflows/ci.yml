@@ -32,6 +32,9 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Check minimal features
+        run: cargo check -p clap-mcp --no-default-features
+
       - name: Check rustdoc (no warnings)
         env:
           RUSTDOCFLAGS: "-D warnings"

@@ -16,7 +16,7 @@ chrono = "0.4"
 default = ["derive"]
 derive = ["dep:clap-mcp-macros"]
 output-schema = ["dep:schemars"]
-tracing = ["dep:tracing", "dep:tracing-subscriber"]
+tracing = ["dep:tracing-subscriber"]
 log = ["dep:log"]
 http = ["dep:axum", "rmcp/transport-streamable-http-server", "rmcp/transport-streamable-http-client-reqwest", "tokio/net"]
 
@@ -28,12 +28,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util"] }
+tracing = "0.1"
 libc = "0.2"
 
 # Optional dependencies
 clap-mcp-macros = { workspace = true, optional = true }
 schemars = { version = "1", optional = true }
-tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, features = ["registry", "fmt"] }
 log = { version = "0.4", optional = true }
 axum = { version = "0.8", optional = true }
