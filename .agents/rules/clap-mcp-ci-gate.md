@@ -21,6 +21,7 @@ Mirror [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) in order:
 ```shell
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
+cargo check -p clap-mcp --no-default-features
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p clap-mcp --all-features
 cargo test --all-features
 cargo xtask examples-help
