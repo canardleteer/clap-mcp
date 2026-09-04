@@ -384,8 +384,18 @@ async fn downstream_catalog_initialize_discover_and_tools_list() {
     assert_eq!(tags.get("minItems"), Some(&json!(1)));
     assert_eq!(tags.get("maxItems"), Some(&json!(3)));
     assert!(
-        apply.input_schema.get("dependentSchemas").is_some(),
-        "apply should encode conflicts"
+        apply.input_schema.get("allOf").is_some()
+            || apply.input_schema.get("anyOf").is_some()
+            || serde_json::to_string(apply.input_schema.as_ref())
+                .unwrap()
+                .contains("\"const\":true"),
+        "apply should encode conflicts with const:true flag semantics"
+    );
+    let dry_run = apply_props.get("dry_run").expect("dry_run");
+    assert_eq!(dry_run.get("type"), Some(&json!("boolean")));
+    assert!(
+        dry_run.get("enum").is_none(),
+        "boolean dry_run must not advertise string enum: {dry_run}"
     );
 
     let doctor = tools.iter().find(|t| t.name == "doctor").unwrap();

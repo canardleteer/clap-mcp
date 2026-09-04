@@ -412,6 +412,24 @@ them from advertised MCP `inputSchema`:
 Native `clap` parsing is unchanged; only MCP schemas and argv built from tool
 calls omit the filtered ids.
 
+### Input schema fidelity notes
+
+Tool `inputSchema` properties mirror clap actions (`boolean` for `SetTrue` /
+`SetFalse`, enums for `value_parser` lists, defaults, cardinality, and closed
+objects). Boolean flags do **not** advertise string `enum` values. Conflicts,
+`requires`, `required_unless`, and required `ArgGroup`s use JSON Schema
+`if` / `then` / `anyOf` with `const: true` (or `const: false` for `SetFalse`)
+so `false` does not count as an active flag.
+
+Conflict and requirement edges that clap does not expose via public getters are
+read from clap's Debug representation as a best-effort fallback. Prefer public
+clap APIs when they become available; Debug field names can change across patch
+releases.
+
+Absolute or host-computed clap defaults may still appear in schemas when clap
+surfaces them as default values. Review advertised defaults for multi-host
+deployments.
+
 ## Preserve CLI parse
 
 `parse_or_serve_mcp` and `parse_or_serve_mcp_with` use clap-mcp's argv

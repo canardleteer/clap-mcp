@@ -123,13 +123,21 @@ output.
 | Mode | How structured output reaches MCP clients |
 | --- | --- |
 | **In-process** (`reinvocation_safe = true`) | Return `AsStructured<T>`, a type implementing `IntoClapMcpResult`, or use `Result<AsStructured<T>, E>`. clap-mcp sets `CallToolResult.structuredContent`. |
-| **Subprocess** (`reinvocation_safe = false`) | The child process stdout is captured as **text** unless the CLI prints JSON to stdout (for example `-o json`). There is no automatic `structuredContent` from return types in the child. |
+| **Subprocess** (`reinvocation_safe = false`) | The child process stdout is captured as **text**. There is no automatic `structuredContent` from return types in the child. |
+
+> [!WARNING]
+> MCP requires `structuredContent` when a tool advertises `outputSchema`. The
+> default subprocess path still returns text-only results, so do **not** attach
+> root-wide or per-tool `outputSchema` / `output_type` on subprocess-only servers
+> until you either enable in-process execution for those tools or clap-mcp gains
+> a structured subprocess result envelope. Advertising `outputSchema` without
+> structured results is invalid for clients that enforce the tools specification.
 
 For subprocess parity with in-process structured tools, print JSON from the CLI
-path your subprocess uses (same schema you document with `output_type` when
-enabled). `capture_stdout` merges human-oriented stdout into text results for
-in-process calls; it does not replace `structuredContent` from `run`'s return
-type.
+path your subprocess uses only as a temporary text convention; it does not
+satisfy `outputSchema`. `capture_stdout` merges human-oriented stdout into text
+results for in-process calls; it does not replace `structuredContent` from
+`run`'s return type.
 
 ## `#[clap_mcp_output_type = "TypeName"]`
 
@@ -189,4 +197,6 @@ single root-wide `output_type`:
 Tools without an entry keep no `outputSchema` (or fall back to the root-wide
 schema when you set one). Return [`ClapMcpToolOutput::Structured`] or
 `AsStructured<T>` so `structuredContent` matches the advertised schema; text-only
-tools should omit the schema.
+tools should omit the schema. Do not advertise `outputSchema` for tools that
+stay on the default subprocess path; see
+[Subprocess vs in-process structured output](#subprocess-vs-in-process-structured-output).
