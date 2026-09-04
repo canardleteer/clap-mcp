@@ -3490,7 +3490,11 @@ fn parse_arg_debug_constraints(arg: &clap::Arg) -> (Vec<String>, Vec<String>, Ve
         Vec::new()
     };
 
-    let conflicts = parse_quoted_strings("blacklist:");
+    // clap_builder <= 4.6.5 Debug field is `blacklist:`; 4.6.6+ renamed it to `conflicts:`.
+    let mut conflicts = parse_quoted_strings("conflicts:");
+    if conflicts.is_empty() {
+        conflicts = parse_quoted_strings("blacklist:");
+    }
     let requires = parse_quoted_strings("requires:");
     let required_unless = parse_quoted_strings("r_unless:");
     (conflicts, requires, required_unless)
@@ -6592,7 +6596,12 @@ mod tests {
         assert_eq!(tags.get("type"), Some(&json!("array")));
         assert_eq!(tags.get("minItems"), Some(&json!(1)));
         assert_eq!(tags.get("maxItems"), Some(&json!(3)));
-        assert!(input.get("dependentSchemas").is_some() || input.get("anyOf").is_some());
+        let dep = input
+            .get("dependentSchemas")
+            .and_then(|v| v.as_object())
+            .expect("conflicts should encode dependentSchemas");
+        assert!(dep.contains_key("force") || dep.contains_key("dry_run"));
+        assert!(input.get("anyOf").is_some());
     }
 
     #[test]
