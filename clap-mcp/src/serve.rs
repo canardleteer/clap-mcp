@@ -5,8 +5,9 @@ use crate::http;
 use crate::{
     ClapMcpConfig, ClapMcpConfigProvider, ClapMcpError, ClapMcpSchemaMetadata,
     ClapMcpSchemaMetadataProvider, ClapMcpServeOptions, ClapMcpToolExecutor,
-    ClapMcpToolExecutorWithState, InProcessToolHandler, McpListen, build_mcp_blocking_runtime,
-    prepare_derive_mcp_serve, prepare_derive_mcp_serve_with_state, server,
+    ClapMcpToolExecutorWithState, InProcessToolHandler, McpListen, SubprocessStderr,
+    build_mcp_blocking_runtime, prepare_derive_mcp_serve, prepare_derive_mcp_serve_with_state,
+    server,
 };
 use clap::CommandFactory;
 use std::{path::PathBuf, pin::Pin, sync::Arc};
@@ -277,6 +278,65 @@ impl ServeMcpBuilder {
         self
     }
 
+    /// Set the subprocess stderr policy.
+    pub fn subprocess_stderr(mut self, policy: SubprocessStderr) -> Self {
+        self.serve_options.subprocess_stderr = policy;
+        self
+    }
+
+    /// Set a per-tool output schema override.
+    pub fn tool_output_schema(
+        mut self,
+        tool_name: impl Into<String>,
+        schema: serde_json::Value,
+    ) -> Self {
+        self.serve_options
+            .tool_output_schemas
+            .insert(tool_name.into(), schema);
+        self
+    }
+
+    /// Exclude a global argument id from all advertised MCP tool schemas.
+    pub fn skip_global_arg(mut self, arg_id: impl Into<String>) -> Self {
+        self.serve_options.skip_global_args.push(arg_id.into());
+        self
+    }
+
+    /// Exclude multiple global argument ids from all advertised MCP tool schemas.
+    pub fn skip_global_args(
+        mut self,
+        arg_ids: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.serve_options
+            .skip_global_args
+            .extend(arg_ids.into_iter().map(Into::into));
+        self
+    }
+
+    /// Exclude an argument id from a specific tool's schema.
+    pub fn skip_arg(mut self, command_name: impl Into<String>, arg_id: impl Into<String>) -> Self {
+        self.serve_options
+            .skip_args
+            .entry(command_name.into())
+            .or_default()
+            .push(arg_id.into());
+        self
+    }
+
+    /// Exclude argument ids from a specific tool's schema.
+    pub fn skip_args(
+        mut self,
+        command_name: impl Into<String>,
+        arg_ids: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.serve_options
+            .skip_args
+            .entry(command_name.into())
+            .or_default()
+            .extend(arg_ids.into_iter().map(Into::into));
+        self
+    }
+
     /// Subprocess executable for tool calls when not in-process.
     pub fn executable_path(mut self, executable_path: Option<PathBuf>) -> Self {
         self.executable_path = executable_path;
@@ -320,7 +380,22 @@ impl ServeMcpBuilder {
             .schema_json
             .ok_or_else(|| missing_field("schema_json"))?;
         let config = self.config.ok_or_else(|| missing_field("config"))?;
-        let metadata = self.metadata.ok_or_else(|| missing_field("metadata"))?;
+        let mut metadata = self.metadata.ok_or_else(|| missing_field("metadata"))?;
+        for (k, v) in &self.serve_options.tool_output_schemas {
+            metadata.tool_output_schemas.insert(k.clone(), v.clone());
+        }
+        for g in &self.serve_options.skip_global_args {
+            if !metadata.skip_global_args.contains(g) {
+                metadata.skip_global_args.push(g.clone());
+            }
+        }
+        for (k, v) in &self.serve_options.skip_args {
+            metadata
+                .skip_args
+                .entry(k.clone())
+                .or_default()
+                .extend(v.clone());
+        }
         Ok(ServeMcp {
             listen,
             schema_json,

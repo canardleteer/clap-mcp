@@ -36,6 +36,7 @@ applies:
 | Struct executor path change | Struct `output_from` receives full root; default still delegates | `complex_cli_struct_output_from_*`, `struct_subcommand_globals` example |
 | Struct-root metadata delegate (light path) | Root flags OR onto nested metadata (`task_augmented_tools`, `skip_root_when_subcommands`, `output_schema`) | `test_struct_root_task_augmented_tools_metadata_delegate` |
 | Leaf tool schema / argv / validation | Root `#[arg(global)]` on struct roots appear on nested leaf tools | `complex_cli_leaf_tool_schema_includes_root_global`, `example_contract_struct_subcommand_globals_*` |
+| Downstream catalog follow-ups | Stderr policy, schema fidelity, per-tool `outputSchema`, `skip_global` | `downstream_catalog_acceptance_tests` |
 | `#[clap_mcp(skip)]` on `#[command(flatten)]` | `Args::augment_args` probe skips every flattened arg id | `test_skip_flattened_args_excludes_all_arg_ids`, `test_skip_explicit_arg_id_list`, `tests/ui/pass/skip_arg_list.rs` |
 | `#[clap_mcp(skip)]` on `#[command(subcommand)]` | `Subcommand::augment_subcommands` probe → `skip_commands` | `test_skip_flattened_subcommands_*`, `test_skip_explicit_subcommand_name_list`, `tests/ui/pass/skip_flatten_subcommands.rs` |
 | Nested `serialize_topic` in flattened `Args` | `#[clap_mcp(args_metadata)]` + merge into `serialize_topic_args` | `test_nested_flatten_args_serialize_topic_*`, `tests/ui/pass/serialize_topic_flattened_args.rs` |

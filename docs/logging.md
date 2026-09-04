@@ -98,6 +98,22 @@ That channel is separate from:
 * Log notifications — sent as MCP `notifications/message` on the transport
   channel when `log_rx` is configured.
 
+## Subprocess stderr policy
+
+When tools run as subprocesses, set
+[`SubprocessStderr`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.SubprocessStderr.html)
+on `ClapMcpServeOptions` or `ServeMcpBuilder::subprocess_stderr`:
+
+| Policy | Successful tool result | `notifications/message` | Logging capability |
+| --- | --- | --- | --- |
+| `Capture` (default) | Non-empty stderr appended to result text | No | Only if `log_rx` is set |
+| `Notify` | Stderr also in result text | Yes (`logger: "stderr"`) | Advertised |
+| `Ignore` | Stderr omitted from success text | No | Only if `log_rx` is set |
+
+On non-zero exit, stderr remains in the error result for diagnostics under every
+policy. Initialization instructions and tool descriptions are never sent as
+logging notifications.
+
 When multiplexing MCP over an existing JSON-RPC pipe, pass that pipe to
 `stdio_io`; do not assume `capture_stdout` or `println!` in tools shares the
 same I/O.

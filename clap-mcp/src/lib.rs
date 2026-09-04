@@ -299,6 +299,12 @@ impl IntoClapMcpResult for &str {
     }
 }
 
+impl IntoClapMcpResult for ClapMcpToolOutput {
+    fn into_tool_result(self) -> std::result::Result<ClapMcpToolOutput, ClapMcpToolError> {
+        Ok(self)
+    }
+}
+
 /// Wrapper for structured (JSON) output when using `#[clap_mcp_output_from]`.
 /// Use when your `run` function returns a type that implements `Serialize` but is not `String`/`&str`.
 ///
@@ -767,7 +773,24 @@ pub enum McpListen {
     Http(std::net::SocketAddr),
 }
 
-/// Optional configuration for MCP serve behavior (logging, etc.).
+/// Policy for handling tool subprocess standard error output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubprocessStderr {
+    /// Non-empty stderr is captured in the tool result text (or error message);
+    /// does not emit MCP `notifications/message` and does not advertise the logging capability.
+    #[default]
+    Capture,
+    /// Non-empty stderr is forwarded to the client as MCP `notifications/message`
+    /// (with `logger: "stderr"`) and included in the tool result; advertises the MCP logging capability.
+    Notify,
+    /// Non-empty stderr is omitted from successful tool results and not emitted
+    /// as `notifications/message`. On non-zero process exit, stderr is still included
+    /// in the error result for diagnostics.
+    Ignore,
+}
+
+/// Optional configuration for MCP serve behavior (logging, stderr policy, schema filters).
 ///
 /// Pass to [`parse_or_serve_mcp_with`], [`ServeMcpBuilder::serve_options`],
 /// or the lower-level [`serve_mcp`] / [`serve_mcp_blocking`] functions.
@@ -838,6 +861,20 @@ pub struct ClapMcpServeOptions {
 
     /// Per-tool annotation overrides keyed by final advertised tool name/path.
     pub tool_annotations: std::collections::HashMap<String, rmcp::model::ToolAnnotations>,
+
+    /// Policy for handling subprocess stderr during tool execution.
+    ///
+    /// Defaults to [`SubprocessStderr::Capture`].
+    pub subprocess_stderr: SubprocessStderr,
+
+    /// Per-tool output schema overrides keyed by final advertised tool name.
+    pub tool_output_schemas: std::collections::HashMap<String, serde_json::Value>,
+
+    /// Global CLI argument ids to omit from all MCP tool schemas.
+    pub skip_global_args: Vec<String>,
+
+    /// Per-command argument ids to omit from tool schemas (command_name -> arg_ids).
+    pub skip_args: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl ClapMcpServeOptions {
@@ -881,6 +918,64 @@ impl ClapMcpServeOptions {
     /// Add custom (schema-only) MCP tools.
     pub fn with_custom_tools(mut self, tools: impl IntoIterator<Item = rmcp::model::Tool>) -> Self {
         self.custom_tools.extend(tools);
+        self
+    }
+
+    /// Set the subprocess stderr policy.
+    pub fn with_subprocess_stderr(mut self, policy: SubprocessStderr) -> Self {
+        self.subprocess_stderr = policy;
+        self
+    }
+
+    /// Set a per-tool output schema.
+    pub fn with_tool_output_schema(
+        mut self,
+        tool_name: impl Into<String>,
+        schema: serde_json::Value,
+    ) -> Self {
+        self.tool_output_schemas.insert(tool_name.into(), schema);
+        self
+    }
+
+    /// Exclude a global argument id from all advertised MCP tool schemas.
+    pub fn with_skip_global_arg(mut self, arg_id: impl Into<String>) -> Self {
+        self.skip_global_args.push(arg_id.into());
+        self
+    }
+
+    /// Exclude multiple global argument ids from all advertised MCP tool schemas.
+    pub fn with_skip_global_args(
+        mut self,
+        arg_ids: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.skip_global_args
+            .extend(arg_ids.into_iter().map(Into::into));
+        self
+    }
+
+    /// Exclude an argument id from a specific tool's schema.
+    pub fn with_skip_arg(
+        mut self,
+        command_name: impl Into<String>,
+        arg_id: impl Into<String>,
+    ) -> Self {
+        self.skip_args
+            .entry(command_name.into())
+            .or_default()
+            .push(arg_id.into());
+        self
+    }
+
+    /// Exclude argument ids from a specific tool's schema.
+    pub fn with_skip_args(
+        mut self,
+        command_name: impl Into<String>,
+        arg_ids: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.skip_args
+            .entry(command_name.into())
+            .or_default()
+            .extend(arg_ids.into_iter().map(Into::into));
         self
     }
 }
@@ -1104,6 +1199,10 @@ pub struct ClapMcpSchemaMetadata {
     /// Per-tool annotations keyed by command/tool name. Populated by derive attributes
     /// or set imperatively.
     pub tool_annotations: std::collections::HashMap<String, rmcp::model::ToolAnnotations>,
+    /// Per-tool output schema overrides keyed by tool name.
+    pub tool_output_schemas: std::collections::HashMap<String, serde_json::Value>,
+    /// Global CLI argument ids to omit from all MCP tool schemas.
+    pub skip_global_args: Vec<String>,
 }
 
 impl ClapMcpSchemaMetadata {
@@ -1134,9 +1233,43 @@ impl ClapMcpSchemaMetadata {
         for (k, v) in other.tool_annotations {
             self.tool_annotations.insert(k, v);
         }
+        for (k, v) in other.tool_output_schemas {
+            self.tool_output_schemas.insert(k, v);
+        }
+        for g in other.skip_global_args {
+            if !self.skip_global_args.contains(&g) {
+                self.skip_global_args.push(g);
+            }
+        }
         if other.output_schema.is_some() {
             self.output_schema = other.output_schema;
         }
+    }
+
+    /// Set a per-tool output schema.
+    pub fn with_tool_output_schema(
+        mut self,
+        tool_name: impl Into<String>,
+        schema: serde_json::Value,
+    ) -> Self {
+        self.tool_output_schemas.insert(tool_name.into(), schema);
+        self
+    }
+
+    /// Exclude a global argument id from all advertised MCP tool schemas.
+    pub fn with_skip_global_arg(mut self, arg_id: impl Into<String>) -> Self {
+        self.skip_global_args.push(arg_id.into());
+        self
+    }
+
+    /// Exclude multiple global argument ids from all advertised MCP tool schemas.
+    pub fn with_skip_global_args(
+        mut self,
+        arg_ids: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.skip_global_args
+            .extend(arg_ids.into_iter().map(Into::into));
+        self
     }
 
     /// Attach annotations to an advertised tool by name.
@@ -1593,7 +1726,17 @@ fn mcp_visible_arg_ids_on_command(
     cmd.get_arguments()
         .filter(|a| !is_omitted_schema_clap_arg(a))
         .map(|a| a.get_id().to_string())
-        .filter(|id| !skip_args.contains(id))
+        .filter(|id| {
+            if metadata.skip_global_args.contains(id) {
+                return false;
+            }
+            if let Some(wildcard) = metadata.skip_args.get("*")
+                && wildcard.contains(id)
+            {
+                return false;
+            }
+            !skip_args.contains(id)
+        })
         .collect()
 }
 
@@ -1694,7 +1837,11 @@ pub fn tools_from_schema_with_metadata(
 }
 
 /// Args exposed for an MCP tool: leaf command args plus ancestor `#[arg(global)]` args.
-fn effective_args_for_tool(schema: &ClapSchema, command_name: &str) -> Vec<ClapArg> {
+pub(crate) fn effective_args_for_tool(
+    schema: &ClapSchema,
+    command_name: &str,
+    metadata: Option<&ClapMcpSchemaMetadata>,
+) -> Vec<ClapArg> {
     let Some(path) = command_path(schema, command_name) else {
         return Vec::new();
     };
@@ -1708,6 +1855,21 @@ fn effective_args_for_tool(schema: &ClapSchema, command_name: &str) -> Vec<ClapA
         for arg in &cmd.args {
             if is_builtin_arg(arg.id.as_str()) {
                 continue;
+            }
+            if let Some(m) = metadata {
+                if m.skip_global_args.iter().any(|g| g == &arg.id) {
+                    continue;
+                }
+                if let Some(wildcard) = m.skip_args.get("*")
+                    && wildcard.iter().any(|w| w == &arg.id)
+                {
+                    continue;
+                }
+                if let Some(cmd_skips) = m.skip_args.get(command_name)
+                    && cmd_skips.iter().any(|s| s == &arg.id)
+                {
+                    continue;
+                }
             }
             if is_leaf || arg.global {
                 by_id.insert(arg.id.clone(), arg.clone());
@@ -1735,17 +1897,73 @@ fn command_to_tool_with_config(
     metadata: &ClapMcpSchemaMetadata,
     output_schema: Option<&serde_json::Value>,
 ) -> Tool {
-    let effective_args = effective_args_for_tool(schema, &cmd.name);
+    let effective_args = effective_args_for_tool(schema, &cmd.name, Some(metadata));
 
     let mut properties: BTreeMap<String, serde_json::Map<String, serde_json::Value>> =
         BTreeMap::new();
     for arg in &effective_args {
         let mut prop = serde_json::Map::new();
-        let (json_type, items) = mcp_type_for_arg(arg);
-        prop.insert("type".to_string(), json_type);
+        let (json_type, mut items) = mcp_type_for_arg(arg);
+        prop.insert("type".to_string(), json_type.clone());
+
+        if json_type.as_str() == Some("array") {
+            if let Some(items_map) = items.as_mut().and_then(|v| v.as_object_mut()) {
+                if !arg.possible_values.is_empty() {
+                    items_map.insert("enum".to_string(), serde_json::json!(arg.possible_values));
+                }
+            } else if !arg.possible_values.is_empty() {
+                items = Some(serde_json::json!({
+                    "type": "string",
+                    "enum": arg.possible_values
+                }));
+            }
+            if let Some(min) = arg.min_items
+                && min > 0
+            {
+                prop.insert("minItems".to_string(), serde_json::json!(min));
+            }
+            if let Some(max) = arg.max_items {
+                prop.insert("maxItems".to_string(), serde_json::json!(max));
+            }
+        } else if !arg.possible_values.is_empty() {
+            prop.insert("enum".to_string(), serde_json::json!(arg.possible_values));
+        }
+
         if let Some(items) = items {
             prop.insert("items".to_string(), items);
         }
+
+        if !arg.default_values.is_empty() {
+            if json_type.as_str() == Some("array") {
+                prop.insert("default".to_string(), serde_json::json!(arg.default_values));
+            } else if json_type.as_str() == Some("boolean") {
+                let b = arg
+                    .default_values
+                    .first()
+                    .map(|s| s == "true")
+                    .unwrap_or(false);
+                prop.insert("default".to_string(), serde_json::Value::Bool(b));
+            } else if json_type.as_str() == Some("integer") {
+                if let Some(i) = arg
+                    .default_values
+                    .first()
+                    .and_then(|s| s.parse::<i64>().ok())
+                {
+                    prop.insert("default".to_string(), serde_json::json!(i));
+                } else {
+                    prop.insert(
+                        "default".to_string(),
+                        serde_json::json!(arg.default_values.first()),
+                    );
+                }
+            } else {
+                prop.insert(
+                    "default".to_string(),
+                    serde_json::json!(arg.default_values.first()),
+                );
+            }
+        }
+
         let desc = arg
             .long_help
             .as_deref()
@@ -1782,6 +2000,11 @@ fn command_to_tool_with_config(
                 .collect(),
         ),
     );
+    input_schema.insert(
+        "additionalProperties".into(),
+        serde_json::Value::Bool(false),
+    );
+
     if !required.is_empty() {
         input_schema.insert(
             "required".into(),
@@ -1792,6 +2015,128 @@ fn command_to_tool_with_config(
                     .collect(),
             ),
         );
+    }
+
+    let visible_ids: std::collections::HashSet<&str> =
+        effective_args.iter().map(|a| a.id.as_str()).collect();
+
+    // dependentRequired
+    let mut dependent_required: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for arg in &effective_args {
+        let reqs: Vec<String> = arg
+            .requires
+            .iter()
+            .filter(|r| visible_ids.contains(r.as_str()) && r.as_str() != arg.id.as_str())
+            .cloned()
+            .collect();
+        if !reqs.is_empty() {
+            dependent_required.insert(arg.id.clone(), reqs);
+        }
+    }
+    if !dependent_required.is_empty() {
+        input_schema.insert(
+            "dependentRequired".into(),
+            serde_json::json!(dependent_required),
+        );
+    }
+
+    // dependentSchemas (conflicts and non-multiple ArgGroups)
+    let mut conflicts_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for arg in &effective_args {
+        for conflict in &arg.conflicts_with {
+            if visible_ids.contains(conflict.as_str()) && conflict != &arg.id {
+                let entry = conflicts_map.entry(arg.id.clone()).or_default();
+                if !entry.contains(conflict) {
+                    entry.push(conflict.clone());
+                }
+            }
+        }
+    }
+    for group in &cmd.arg_groups {
+        if !group.multiple && group.args.len() > 1 {
+            for (i, a) in group.args.iter().enumerate() {
+                if !visible_ids.contains(a.as_str()) {
+                    continue;
+                }
+                for (j, b) in group.args.iter().enumerate() {
+                    if i != j && visible_ids.contains(b.as_str()) {
+                        let entry = conflicts_map.entry(a.clone()).or_default();
+                        if !entry.contains(b) {
+                            entry.push(b.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !conflicts_map.is_empty() {
+        let mut dep_schemas = serde_json::Map::new();
+        for (arg_id, targets) in conflicts_map {
+            let not_schema = if targets.len() == 1 {
+                serde_json::json!({
+                    "not": { "required": [targets[0]] }
+                })
+            } else {
+                let any_ofs: Vec<_> = targets
+                    .into_iter()
+                    .map(|t| serde_json::json!({ "required": [t] }))
+                    .collect();
+                serde_json::json!({
+                    "not": { "anyOf": any_ofs }
+                })
+            };
+            dep_schemas.insert(arg_id, not_schema);
+        }
+        input_schema.insert(
+            "dependentSchemas".into(),
+            serde_json::Value::Object(dep_schemas),
+        );
+    }
+
+    // anyOf (conditional requirements: required_unless and required ArgGroups)
+    let mut any_of_conditions: Vec<serde_json::Value> = Vec::new();
+    for arg in &effective_args {
+        for target in &arg.required_unless {
+            if visible_ids.contains(target.as_str()) && target != &arg.id {
+                let pair = serde_json::json!({
+                    "anyOf": [
+                        { "required": [&arg.id] },
+                        { "required": [target] }
+                    ]
+                });
+                if !any_of_conditions.contains(&pair) {
+                    any_of_conditions.push(pair);
+                }
+            }
+        }
+    }
+    for group in &cmd.arg_groups {
+        if group.required && group.args.len() > 1 {
+            let vis: Vec<_> = group
+                .args
+                .iter()
+                .filter(|a| visible_ids.contains(a.as_str()))
+                .collect();
+            if vis.len() > 1 {
+                let reqs: Vec<_> = vis
+                    .into_iter()
+                    .map(|a| serde_json::json!({ "required": [a] }))
+                    .collect();
+                let cond = serde_json::json!({ "anyOf": reqs });
+                if !any_of_conditions.contains(&cond) {
+                    any_of_conditions.push(cond);
+                }
+            }
+        }
+    }
+    if !any_of_conditions.is_empty() {
+        if any_of_conditions.len() == 1 {
+            if let Some(arr) = any_of_conditions[0].get("anyOf").and_then(|v| v.as_array()) {
+                input_schema.insert("anyOf".into(), serde_json::Value::Array(arr.clone()));
+            }
+        } else {
+            input_schema.insert("allOf".into(), serde_json::Value::Array(any_of_conditions));
+        }
     }
 
     let mut description = cmd
@@ -1889,7 +2234,14 @@ fn command_to_tool_with_config(
     if let Some(meta) = meta {
         tool = tool.with_meta(meta);
     }
-    if let Some(output_schema) = output_schema.cloned().and_then(|v| v.as_object().cloned()) {
+    let tool_out_schema = metadata
+        .tool_output_schemas
+        .get(&cmd.name)
+        .or(output_schema);
+    if let Some(output_schema) = tool_out_schema
+        .cloned()
+        .and_then(|v| v.as_object().cloned())
+    {
         tool = tool.with_raw_output_schema(Arc::new(output_schema));
     }
     if let Some(annotations) = metadata.tool_annotations.get(&cmd.name) {
@@ -1902,7 +2254,7 @@ fn command_to_tool_with_config(
 }
 
 /// Serializable representation of a clap argument.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClapArg {
     pub id: String,
     pub long: Option<String>,
@@ -1915,6 +2267,20 @@ pub struct ClapArg {
     pub action: Option<String>,
     pub value_names: Vec<String>,
     pub num_args: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub possible_values: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub default_values: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts_with: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_unless: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_items: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_items: Option<usize>,
 }
 
 /// Returns the MCP input schema type for an argument based on its action (and num_args).
@@ -1928,6 +2294,7 @@ pub struct ClapArg {
 fn mcp_type_for_arg(arg: &ClapArg) -> (serde_json::Value, Option<serde_json::Value>) {
     let action = arg.action.as_deref().unwrap_or("Set");
     let is_multi = matches!(action, "Append")
+        || arg.max_items.is_some_and(|m| m > 1)
         || arg
             .num_args
             .as_deref()
@@ -2789,7 +3156,11 @@ where
     let schema_json = serde_json::to_string_pretty(&schema).expect("schema should serialize");
     let capture_stdout = capture_stdout_for_serve(serve_options);
     let in_process_handler = if config.reinvocation_safe {
-        Some(make_in_process_handler::<T>(schema, capture_stdout))
+        Some(make_in_process_handler::<T>(
+            schema,
+            capture_stdout,
+            Some(metadata.clone()),
+        ))
     } else {
         None
     };
@@ -2818,6 +3189,7 @@ where
             schema,
             state,
             capture_stdout,
+            Some(metadata.clone()),
         ))
     } else {
         None
@@ -3087,11 +3459,77 @@ where
     }
 }
 
+fn parse_arg_debug_constraints(arg: &clap::Arg) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let debug_str = format!("{arg:?}");
+    let parse_quoted_strings = |field: &str| -> Vec<String> {
+        if let Some(start) = debug_str.find(field) {
+            let rest = &debug_str[start + field.len()..];
+            if let Some(open) = rest.find('[')
+                && let Some(close) = rest[open..].find(']')
+            {
+                let content = &rest[open + 1..open + close];
+                let mut items = Vec::new();
+                let mut chars = content.chars().peekable();
+                while let Some(ch) = chars.next() {
+                    if ch == '"' {
+                        let mut s = String::new();
+                        for c in chars.by_ref() {
+                            if c == '"' {
+                                break;
+                            }
+                            s.push(c);
+                        }
+                        if !s.is_empty() && s != arg.get_id().as_str() && !items.contains(&s) {
+                            items.push(s);
+                        }
+                    }
+                }
+                return items;
+            }
+        }
+        Vec::new()
+    };
+
+    let conflicts = parse_quoted_strings("blacklist:");
+    let requires = parse_quoted_strings("requires:");
+    let required_unless = parse_quoted_strings("r_unless:");
+    (conflicts, requires, required_unless)
+}
+
 fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
     let value_names = arg
         .get_value_names()
         .map(|names| names.iter().map(|n| n.to_string()).collect())
         .unwrap_or_default();
+
+    let possible_values = if !arg.is_hide_possible_values_set() {
+        arg.get_possible_values()
+            .into_iter()
+            .filter(|pv| !pv.is_hide_set())
+            .map(|pv| pv.get_name().to_string())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let default_values = if !arg.is_hide_default_value_set() {
+        arg.get_default_values()
+            .iter()
+            .map(|val| val.to_string_lossy().into_owned())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let (min_items, max_items) = if let Some(range) = arg.get_num_args() {
+        let min = range.min_values();
+        let max = range.max_values();
+        (Some(min), if max == usize::MAX { None } else { Some(max) })
+    } else {
+        (None, None)
+    };
+
+    let (conflicts_with, requires, required_unless) = parse_arg_debug_constraints(arg);
 
     ClapArg {
         id: arg.get_id().to_string(),
@@ -3105,20 +3543,37 @@ fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
         action: Some(format!("{:?}", arg.get_action())),
         value_names,
         num_args: arg.get_num_args().map(|r| format!("{r:?}")),
+        possible_values,
+        default_values,
+        conflicts_with,
+        requires,
+        required_unless,
+        min_items,
+        max_items,
     }
 }
 
 /// Validates that all required args for the command are present in the arguments map.
 /// Returns Err with a clear message if any required arg is missing.
+#[allow(dead_code)]
 pub(crate) fn validate_required_args(
     schema: &ClapSchema,
     command_name: &str,
     arguments: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
+    validate_required_args_with_metadata(schema, command_name, arguments, None)
+}
+
+pub(crate) fn validate_required_args_with_metadata(
+    schema: &ClapSchema,
+    command_name: &str,
+    arguments: &serde_json::Map<String, serde_json::Value>,
+    metadata: Option<&ClapMcpSchemaMetadata>,
+) -> Result<(), String> {
     if command_path(schema, command_name).is_none() {
         return Ok(());
     }
-    let effective_args = effective_args_for_tool(schema, command_name);
+    let effective_args = effective_args_for_tool(schema, command_name, metadata);
     let missing: Vec<_> = effective_args
         .iter()
         .filter(|a| {
@@ -3151,12 +3606,22 @@ pub(crate) fn validate_required_args(
 }
 
 /// Builds full argv for clap's `get_matches_from` (program name + subcommand + args).
+#[allow(dead_code)]
 fn build_argv_for_clap(
     schema: &ClapSchema,
     command_name: &str,
     arguments: serde_json::Map<String, serde_json::Value>,
 ) -> Vec<String> {
-    let args = build_tool_argv(schema, command_name, arguments);
+    build_argv_for_clap_with_metadata(schema, command_name, arguments, None)
+}
+
+fn build_argv_for_clap_with_metadata(
+    schema: &ClapSchema,
+    command_name: &str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+    metadata: Option<&ClapMcpSchemaMetadata>,
+) -> Vec<String> {
+    let args = build_tool_argv_with_metadata(schema, command_name, arguments, metadata);
     let mut argv = vec!["cli".to_string()]; // program name for parsing
     if let Some(path) = command_path(schema, command_name) {
         argv.extend(path.into_iter().skip(1));
@@ -3191,15 +3656,25 @@ pub(crate) fn command_path(schema: &ClapSchema, command_name: &str) -> Option<Ve
 /// Builds argv for the executable from the schema and tool arguments.
 ///
 /// Positional args (no long form) are passed in index order; optional args as `--long value`.
+#[allow(dead_code)]
 pub(crate) fn build_tool_argv(
     schema: &ClapSchema,
     command_name: &str,
     arguments: serde_json::Map<String, serde_json::Value>,
 ) -> Vec<String> {
+    build_tool_argv_with_metadata(schema, command_name, arguments, None)
+}
+
+pub(crate) fn build_tool_argv_with_metadata(
+    schema: &ClapSchema,
+    command_name: &str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+    metadata: Option<&ClapMcpSchemaMetadata>,
+) -> Vec<String> {
     if command_path(schema, command_name).is_none() {
         return Vec::new();
     }
-    let effective_args = effective_args_for_tool(schema, command_name);
+    let effective_args = effective_args_for_tool(schema, command_name, metadata);
 
     let mut positionals: Vec<&ClapArg> = effective_args
         .iter()
@@ -3330,12 +3805,14 @@ fn parse_cli_from_tool_args<T>(
     schema: &ClapSchema,
     command_name: &str,
     arguments: serde_json::Map<String, serde_json::Value>,
+    metadata: Option<&ClapMcpSchemaMetadata>,
 ) -> Result<T, ClapMcpToolError>
 where
     T: clap::CommandFactory + clap::FromArgMatches,
 {
-    validate_required_args(schema, command_name, &arguments).map_err(ClapMcpToolError::text)?;
-    let argv = build_argv_for_clap(schema, command_name, arguments);
+    validate_required_args_with_metadata(schema, command_name, &arguments, metadata)
+        .map_err(ClapMcpToolError::text)?;
+    let argv = build_argv_for_clap_with_metadata(schema, command_name, arguments, metadata);
     let matches = T::command()
         .try_get_matches_from(&argv)
         .map_err(|e| ClapMcpToolError::text(e.to_string()))?;
@@ -3347,12 +3824,13 @@ fn execute_in_process_command<T>(
     command_name: &str,
     arguments: serde_json::Map<String, serde_json::Value>,
     capture_stdout: bool,
+    metadata: Option<&ClapMcpSchemaMetadata>,
     execute: impl FnOnce(T) -> Result<ClapMcpToolOutput, ClapMcpToolError>,
 ) -> Result<ClapMcpToolOutput, ClapMcpToolError>
 where
     T: clap::CommandFactory + clap::FromArgMatches,
 {
-    let cli = parse_cli_from_tool_args::<T>(schema, command_name, arguments)?;
+    let cli = parse_cli_from_tool_args::<T>(schema, command_name, arguments, metadata)?;
     if capture_stdout {
         let (result, captured) = run_with_stdout_capture(|| execute(cli));
         merge_captured_stdout(result, captured)
@@ -3366,13 +3844,19 @@ fn execute_in_process_command_stateless<T>(
     command_name: &str,
     arguments: serde_json::Map<String, serde_json::Value>,
     capture_stdout: bool,
+    metadata: Option<&ClapMcpSchemaMetadata>,
 ) -> Result<ClapMcpToolOutput, ClapMcpToolError>
 where
     T: ClapMcpToolExecutor + clap::CommandFactory + clap::FromArgMatches,
 {
-    execute_in_process_command::<T>(schema, command_name, arguments, capture_stdout, |cli| {
-        <T as ClapMcpToolExecutor>::execute_for_mcp(cli)
-    })
+    execute_in_process_command::<T>(
+        schema,
+        command_name,
+        arguments,
+        capture_stdout,
+        metadata,
+        |cli| <T as ClapMcpToolExecutor>::execute_for_mcp(cli),
+    )
 }
 
 fn execute_in_process_command_stateful<T>(
@@ -3381,13 +3865,19 @@ fn execute_in_process_command_stateful<T>(
     arguments: serde_json::Map<String, serde_json::Value>,
     state: &T::State,
     capture_stdout: bool,
+    metadata: Option<&ClapMcpSchemaMetadata>,
 ) -> Result<ClapMcpToolOutput, ClapMcpToolError>
 where
     T: ClapMcpToolExecutorWithState + clap::CommandFactory + clap::FromArgMatches,
 {
-    execute_in_process_command::<T>(schema, command_name, arguments, capture_stdout, |cli| {
-        <T as ClapMcpToolExecutorWithState>::execute_for_mcp_with_state(cli, state)
-    })
+    execute_in_process_command::<T>(
+        schema,
+        command_name,
+        arguments,
+        capture_stdout,
+        metadata,
+        |cli| <T as ClapMcpToolExecutorWithState>::execute_for_mcp_with_state(cli, state),
+    )
 }
 
 /// Builds an in-process tool handler for type `T` when using [`ServeMcpBuilder`],
@@ -3400,19 +3890,26 @@ pub fn in_process_tool_handler_for<T>(
 where
     T: ClapMcpToolExecutor + clap::CommandFactory + clap::FromArgMatches + 'static,
 {
-    make_in_process_handler::<T>(schema, capture_stdout)
+    make_in_process_handler::<T>(schema, capture_stdout, None)
 }
 
 pub(crate) fn make_in_process_handler<T>(
     schema: ClapSchema,
     capture_stdout: bool,
+    metadata: Option<ClapMcpSchemaMetadata>,
 ) -> InProcessToolHandler
 where
     T: ClapMcpToolExecutor + clap::CommandFactory + clap::FromArgMatches + 'static,
 {
     Arc::new(
         move |cmd: &str, args: serde_json::Map<String, serde_json::Value>| {
-            execute_in_process_command_stateless::<T>(&schema, cmd, args, capture_stdout)
+            execute_in_process_command_stateless::<T>(
+                &schema,
+                cmd,
+                args,
+                capture_stdout,
+                metadata.as_ref(),
+            )
         },
     ) as InProcessToolHandler
 }
@@ -3421,6 +3918,7 @@ pub(crate) fn make_in_process_handler_with_state<T>(
     schema: ClapSchema,
     state: Arc<T::State>,
     capture_stdout: bool,
+    metadata: Option<ClapMcpSchemaMetadata>,
 ) -> InProcessToolHandler
 where
     T: ClapMcpToolExecutorWithState + clap::CommandFactory + clap::FromArgMatches + 'static,
@@ -3433,6 +3931,7 @@ where
                 args,
                 state.as_ref(),
                 capture_stdout,
+                metadata.as_ref(),
             )
         },
     ) as InProcessToolHandler
@@ -3687,7 +4186,10 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
 
     #[cfg(unix)]
-    use crate::server::call_tool_result_from_subprocess_output;
+    use crate::server::{
+        call_tool_result_from_subprocess_output,
+        call_tool_result_from_subprocess_output_with_policy,
+    };
 
     fn sample_helper_schema() -> ClapSchema {
         schema_from_command(
@@ -3846,6 +4348,7 @@ mod tests {
             action: Some("SetTrue".to_string()),
             value_names: vec![],
             num_args: None,
+            ..Default::default()
         };
         let (json_type, items) = mcp_type_for_arg(&boolean_arg);
         assert_eq!(json_type, json!("boolean"));
@@ -3903,6 +4406,7 @@ mod tests {
             action: Some("Set".to_string()),
             value_names: vec!["NAME".to_string()],
             num_args: Some("1..".to_string()),
+            ..Default::default()
         };
         let (json_type, items) = mcp_type_for_arg(&multi_value_arg);
         assert_eq!(json_type, json!("array"));
@@ -5409,6 +5913,20 @@ mod tests {
             assert_ne!(success.is_error, Some(true));
             assert!(content_text(&success.content[0]).contains("stderr:\nnote"));
 
+            let ignored = call_tool_result_from_subprocess_output_with_policy(
+                &success_output,
+                SubprocessStderr::Ignore,
+            );
+            assert_ne!(ignored.is_error, Some(true));
+            assert_eq!(content_text(&ignored.content[0]), "done");
+            assert!(!content_text(&ignored.content[0]).contains("stderr"));
+
+            let notified = call_tool_result_from_subprocess_output_with_policy(
+                &success_output,
+                SubprocessStderr::Notify,
+            );
+            assert!(content_text(&notified.content[0]).contains("stderr:\nnote"));
+
             let failure_output = std::process::Output {
                 status: std::process::ExitStatus::from_raw(256),
                 stdout: Vec::new(),
@@ -5417,6 +5935,13 @@ mod tests {
             let failure = call_tool_result_from_subprocess_output(&failure_output);
             assert_eq!(failure.is_error, Some(true));
             assert!(content_text(&failure.content[0]).contains("non-zero status"));
+
+            let failure_ignore = call_tool_result_from_subprocess_output_with_policy(
+                &failure_output,
+                SubprocessStderr::Ignore,
+            );
+            assert_eq!(failure_ignore.is_error, Some(true));
+            assert!(content_text(&failure_ignore.content[0]).contains("boom"));
         }
 
         let launch_error = command_launch_failure_result(&std::io::Error::new(
@@ -5538,12 +6063,13 @@ mod tests {
             "structured",
             serde_json::Map::new(),
             false,
+            None,
         )
         .expect("structured should execute");
         assert!(matches!(structured, ClapMcpToolOutput::Structured(_)));
 
         let echo_args = serde_json::Map::from_iter([("value".to_string(), json!("hello"))]);
-        let handler = make_in_process_handler::<ExecCli>(schema.clone(), false);
+        let handler = make_in_process_handler::<ExecCli>(schema.clone(), false, None);
         let echoed = handler("echo", echo_args).expect("handler should execute");
         assert!(matches!(echoed, ClapMcpToolOutput::Text(text) if text == "hello"));
 
@@ -5552,6 +6078,7 @@ mod tests {
             "echo",
             serde_json::Map::new(),
             false,
+            None,
         )
         .expect_err("missing required arg should fail");
         assert!(
@@ -5719,6 +6246,36 @@ mod tests {
             Some(true)
         );
         assert!(info.instructions.is_none());
+
+        let with_stderr_notify = build_test_server(
+            config.clone(),
+            ClapMcpSchemaMetadata::default(),
+            ClapMcpServeOptions::default().with_subprocess_stderr(SubprocessStderr::Notify),
+            Some(handler.clone()),
+            None,
+        );
+        let info = with_stderr_notify.get_info();
+        assert!(info.capabilities.logging.is_some());
+        assert!(
+            info.instructions
+                .as_deref()
+                .is_some_and(|s| s.contains("notifications/message"))
+        );
+
+        let with_stderr_capture = build_test_server(
+            config.clone(),
+            ClapMcpSchemaMetadata::default(),
+            ClapMcpServeOptions::default().with_subprocess_stderr(SubprocessStderr::Capture),
+            Some(handler.clone()),
+            None,
+        );
+        assert!(
+            with_stderr_capture
+                .get_info()
+                .capabilities
+                .logging
+                .is_none()
+        );
 
         let with_both = build_test_server(
             config.clone(),
@@ -5983,5 +6540,99 @@ mod tests {
         );
         let args = serde_json::Map::from_iter([("anything".to_string(), json!(1))]);
         assert!(validate_tool_argument_names(&tool, "freeform", &args).is_ok());
+    }
+
+    #[test]
+    fn test_input_schema_fidelity_enums_defaults_cardinality_and_closed_object() {
+        let cmd = Command::new("app").subcommand(
+            Command::new("apply")
+                .arg(
+                    Arg::new("mode")
+                        .long("mode")
+                        .value_parser(["plan", "apply"])
+                        .default_value("plan"),
+                )
+                .arg(
+                    Arg::new("tags")
+                        .long("tags")
+                        .action(ArgAction::Append)
+                        .num_args(1..=3),
+                )
+                .arg(
+                    Arg::new("force")
+                        .long("force")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("dry_run"),
+                )
+                .arg(
+                    Arg::new("dry_run")
+                        .long("dry-run")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("token")
+                        .long("token")
+                        .required_unless_present("dry_run"),
+                ),
+        );
+        let schema = schema_from_command(&cmd);
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig::default(),
+            &ClapMcpSchemaMetadata::default(),
+        );
+        let apply = tools.iter().find(|t| t.name == "apply").expect("apply");
+        let input = apply.input_schema.as_ref();
+        assert_eq!(input.get("additionalProperties"), Some(&json!(false)));
+        let props = input.get("properties").and_then(|v| v.as_object()).unwrap();
+        let mode = props.get("mode").unwrap();
+        assert_eq!(mode.get("enum"), Some(&json!(["plan", "apply"])));
+        assert_eq!(mode.get("default"), Some(&json!("plan")));
+        let tags = props.get("tags").unwrap();
+        assert_eq!(tags.get("type"), Some(&json!("array")));
+        assert_eq!(tags.get("minItems"), Some(&json!(1)));
+        assert_eq!(tags.get("maxItems"), Some(&json!(3)));
+        assert!(input.get("dependentSchemas").is_some() || input.get("anyOf").is_some());
+    }
+
+    #[test]
+    fn test_skip_global_args_and_per_tool_output_schemas() {
+        let cmd = Command::new("app")
+            .arg(Arg::new("api_token").long("api-token").global(true))
+            .arg(
+                Arg::new("verbose")
+                    .long("verbose")
+                    .global(true)
+                    .action(ArgAction::SetTrue),
+            )
+            .subcommand(Command::new("doctor").arg(Arg::new("path").long("path")))
+            .subcommand(Command::new("version"));
+        let mut metadata = ClapMcpSchemaMetadata::default()
+            .with_skip_global_arg("api_token")
+            .with_tool_output_schema(
+                "version",
+                json!({
+                    "type": "object",
+                    "properties": { "version": { "type": "string" } },
+                    "required": ["version"]
+                }),
+            );
+        metadata
+            .skip_args
+            .insert("doctor".into(), vec!["verbose".into()]);
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let doctor = tools.iter().find(|t| t.name == "doctor").expect("doctor");
+        let doctor_props = doctor
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert!(!doctor_props.contains_key("api_token"));
+        assert!(!doctor_props.contains_key("verbose"));
+        assert!(doctor_props.contains_key("path"));
+        let version = tools.iter().find(|t| t.name == "version").expect("version");
+        assert!(version.output_schema.is_some());
+        assert!(doctor.output_schema.is_none());
     }
 }

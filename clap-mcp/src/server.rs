@@ -7,7 +7,7 @@ use crate::{
     CacheHints, ClapMcpConfig, ClapMcpError, ClapMcpSchemaMetadata, ClapMcpSerializeScope,
     ClapMcpServeOptions, ClapMcpToolError, ClapMcpToolOutput, InProcessToolHandler,
     LOG_INTERPRETATION_INSTRUCTIONS, LOGGING_GUIDE_CONTENT, MCP_RESOURCE_URI_SCHEMA,
-    PROMPT_LOGGING_GUIDE, content,
+    PROMPT_LOGGING_GUIDE, SubprocessStderr, content,
     logging::LoggingMessageNotificationParams,
     protocol::{PROTOCOL_VERSION_STABLE, SUPPORTED_PROTOCOL_VERSIONS, negotiate_protocol_version},
     serialize_lock_key,
@@ -51,6 +51,8 @@ pub(crate) struct ServeHandlerInner {
     pub cache_hints: CacheHints,
     pub resource_read_cache_hints: Option<CacheHints>,
     pub logging_enabled: bool,
+    pub subprocess_stderr: SubprocessStderr,
+    pub metadata: ClapMcpSchemaMetadata,
     pub task_augmented_tools: bool,
     pub task_tool_filter: Option<HashSet<String>>,
     pub serialize_tools: HashMap<String, ClapMcpSerializeScope>,
@@ -112,20 +114,36 @@ impl ServeHandlerInner {
                 Ok(schema) => schema,
                 Err(_) => return Ok(schema_parse_failure_result()),
             };
-            if let Err(e) = crate::validate_required_args(&schema, &params.name, &args_map) {
+            if let Err(e) = crate::validate_required_args_with_metadata(
+                &schema,
+                &params.name,
+                &args_map,
+                Some(&self.metadata),
+            ) {
                 return Ok(call_tool_result_from_tool_error(ClapMcpToolError::text(e)));
             }
-            let mut cmd =
-                build_execution_command(exe, &schema, &self.root_name, &params.name, &args_map);
+            let mut cmd = build_execution_command_with_metadata(
+                exe,
+                &schema,
+                &self.root_name,
+                &params.name,
+                &args_map,
+                Some(&self.metadata),
+            );
             match cmd.output() {
                 Ok(output) => {
-                    if let Some(log_params) = subprocess_stderr_log_params(
-                        &params.name,
-                        &String::from_utf8_lossy(&output.stderr),
-                    ) {
+                    if self.subprocess_stderr == SubprocessStderr::Notify
+                        && let Some(log_params) = subprocess_stderr_log_params(
+                            &params.name,
+                            &String::from_utf8_lossy(&output.stderr),
+                        )
+                    {
                         let _ = notify_log(&context.peer, log_params).await;
                     }
-                    return Ok(call_tool_result_from_subprocess_output(&output));
+                    return Ok(call_tool_result_from_subprocess_output_with_policy(
+                        &output,
+                        self.subprocess_stderr,
+                    ));
                 }
                 Err(error) => return Ok(command_launch_failure_result(&error)),
             }
@@ -627,7 +645,8 @@ pub(crate) fn build_clap_mcp_server(
         Some(Arc::new(tokio::sync::Mutex::new(())))
     };
 
-    let logging_enabled = serve_options.log_rx.is_some();
+    let logging_enabled = serve_options.log_rx.is_some()
+        || serve_options.subprocess_stderr == SubprocessStderr::Notify;
     let task_tool_filter = if metadata.task_augmented_tools && !metadata.task_tool_names.is_empty()
     {
         Some(
@@ -671,6 +690,8 @@ pub(crate) fn build_clap_mcp_server(
         cache_hints: serve_options.cache_hints,
         resource_read_cache_hints: serve_options.resource_read_cache_hints,
         logging_enabled,
+        subprocess_stderr: serve_options.subprocess_stderr,
+        metadata: metadata.clone(),
         task_augmented_tools: metadata.task_augmented_tools,
         task_tool_filter,
         serialize_tools: metadata.serialize_tools.clone(),
@@ -718,8 +739,26 @@ pub(crate) async fn serve_schema_json_over_stdio(
     metadata: &ClapMcpSchemaMetadata,
     stdio_io: crate::serve::McpStdioIo,
 ) -> Result<(), ClapMcpError> {
+    let mut effective_metadata = metadata.clone();
+    for (k, v) in &serve_options.tool_output_schemas {
+        effective_metadata
+            .tool_output_schemas
+            .insert(k.clone(), v.clone());
+    }
+    for g in &serve_options.skip_global_args {
+        if !effective_metadata.skip_global_args.contains(g) {
+            effective_metadata.skip_global_args.push(g.clone());
+        }
+    }
+    for (k, v) in &serve_options.skip_args {
+        effective_metadata
+            .skip_args
+            .entry(k.clone())
+            .or_default()
+            .extend(v.clone());
+    }
     let schema: crate::ClapSchema = serde_json::from_str(&schema_json)?;
-    let tools = crate::tools_from_schema_with_metadata(&schema, &config, metadata);
+    let tools = crate::tools_from_schema_with_metadata(&schema, &config, &effective_metadata);
     let root_name = schema.root.name.clone();
 
     let server = build_clap_mcp_server(
@@ -730,7 +769,7 @@ pub(crate) async fn serve_schema_json_over_stdio(
         root_name,
         &config,
         &serve_options,
-        metadata,
+        &effective_metadata,
     )?;
 
     spawn_log_forwarder(&server, serve_options.log_rx.take());
@@ -820,6 +859,7 @@ pub(crate) fn placeholder_tool_result(
     ))])
 }
 
+#[allow(dead_code)]
 pub(crate) fn build_execution_command(
     executable_path: &std::path::Path,
     schema: &crate::ClapSchema,
@@ -827,7 +867,25 @@ pub(crate) fn build_execution_command(
     tool_name: &str,
     arguments: &serde_json::Map<String, serde_json::Value>,
 ) -> std::process::Command {
-    let argv = crate::build_tool_argv(schema, tool_name, arguments.clone());
+    build_execution_command_with_metadata(
+        executable_path,
+        schema,
+        root_name,
+        tool_name,
+        arguments,
+        None,
+    )
+}
+
+pub(crate) fn build_execution_command_with_metadata(
+    executable_path: &std::path::Path,
+    schema: &crate::ClapSchema,
+    root_name: &str,
+    tool_name: &str,
+    arguments: &serde_json::Map<String, serde_json::Value>,
+    metadata: Option<&crate::ClapMcpSchemaMetadata>,
+) -> std::process::Command {
+    let argv = crate::build_tool_argv_with_metadata(schema, tool_name, arguments.clone(), metadata);
     let mut command = std::process::Command::new(executable_path);
     if let Some(path) = crate::command_path(schema, tool_name) {
         for segment in path.into_iter().skip(1) {
@@ -863,8 +921,16 @@ pub(crate) fn subprocess_stderr_log_params(
     })
 }
 
+#[allow(dead_code)]
 pub(crate) fn call_tool_result_from_subprocess_output(
     output: &std::process::Output,
+) -> CallToolResult {
+    call_tool_result_from_subprocess_output_with_policy(output, SubprocessStderr::Capture)
+}
+
+pub(crate) fn call_tool_result_from_subprocess_output_with_policy(
+    output: &std::process::Output,
+    stderr_policy: SubprocessStderr,
 ) -> CallToolResult {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -881,10 +947,15 @@ pub(crate) fn call_tool_result_from_subprocess_output(
         }
         return CallToolResult::error(vec![ContentBlock::text(msg)]);
     }
-    let text = if stderr.is_empty() {
-        stdout.trim().to_string()
-    } else {
-        format!("{}\nstderr:\n{}", stdout.trim(), stderr.trim())
+    let text = match stderr_policy {
+        SubprocessStderr::Ignore => stdout.trim().to_string(),
+        SubprocessStderr::Capture | SubprocessStderr::Notify => {
+            if stderr.is_empty() {
+                stdout.trim().to_string()
+            } else {
+                format!("{}\nstderr:\n{}", stdout.trim(), stderr.trim())
+            }
+        }
     };
     CallToolResult::success(vec![ContentBlock::text(text)])
 }

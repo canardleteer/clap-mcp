@@ -2,4 +2,4 @@ error: unsupported tool annotation key
  --> tests/ui/fail/tool_annotation_unsupported_key.rs:9:27
   |
 9 |     #[clap_mcp(annotation(invalid_key = true))]
-  |                           ^^^^^^^^^^^
+  |                           ^^^^^^^^^^^^^^^^^^

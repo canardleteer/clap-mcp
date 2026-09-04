@@ -14,7 +14,7 @@ Add `clap-mcp` with the default `derive` feature:
 
 ```toml
 [dependencies]
-clap-mcp = "0.1.0-rc.1"
+clap-mcp = "0.1.0-rc.2"
 clap = "4"
 ```
 
@@ -397,6 +397,20 @@ Imperative annotations replace any derive-time annotations on that tool
 as a whole (`ToolAnnotations`), rather than merging individual hint fields.
 When supplying an imperative annotation for a tool, populate all intended
 hints on that `ToolAnnotations` instance.
+
+### Filter global arguments from MCP schemas
+
+Keep transport-only or sensitive global flags on the native CLI while omitting
+them from advertised MCP `inputSchema`:
+
+* Root: `#[clap_mcp(skip_global = "api_token,telemetry")]` or
+  `ServeMcpBuilder::skip_global_arg` /
+  `ClapMcpSchemaMetadata::with_skip_global_arg`.
+* Per tool: `#[clap_mcp(skip = "verbose")]` on a variant (bare `#[clap_mcp(skip)]`
+  still hides the whole command), or `ServeMcpBuilder::skip_arg`.
+
+Native `clap` parsing is unchanged; only MCP schemas and argv built from tool
+calls omit the filtered ids.
 
 ## Preserve CLI parse
 
