@@ -62,7 +62,7 @@ macro):
 
 ```toml
 [dependencies]
-clap-mcp = "0.1.0-rc.1"
+clap-mcp = "0.1.0-rc.2"
 ```
 
 * Opt-in MCP server on existing `clap` CLIs (`--mcp` stdio, `--mcp-http` with
@@ -80,9 +80,17 @@ clap-mcp = "0.1.0-rc.1"
   `log` features). MCP protocol logging is deprecated by SEP-2577; clap-mcp
   still ships the bridge for agent-facing CLI diagnostics. See
   [logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md)
-* Structured tool output and optional JSON `outputSchema`; tool `inputSchema`
-  advertises JSON Schema draft 2020-12 (`$schema`). See
+* Structured tool output and optional JSON `outputSchema` (global or per-tool);
+  tool `inputSchema` advertises JSON Schema draft 2020-12 (`$schema`) with
+  enums, defaults, cardinality, conflicts, and `additionalProperties: false`.
+  See
   [tool-output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md)
+* Subprocess stderr policy (`SubprocessStderr::Capture` default, `Notify`, or
+  `Ignore`); see
+  [logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md#subprocess-stderr-policy)
+* Filter global or per-tool CLI args from MCP schemas while keeping them on the
+  native CLI (`skip_global` / `skip`); see
+  [usage](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md#filter-global-arguments-from-mcp-schemas)
 * Custom MCP resources, prompts, and optional raw-schema tools (`custom_tools`);
   see [custom-content](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md)
 * Application server metadata (`Implementation`), server instructions, and

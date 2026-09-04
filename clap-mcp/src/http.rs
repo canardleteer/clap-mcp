@@ -35,8 +35,26 @@ async fn build_server_from_schema_json(
     serve_options: &ClapMcpServeOptions,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Result<ClapMcpServer, ClapMcpError> {
+    let mut effective_metadata = metadata.clone();
+    for (k, v) in &serve_options.tool_output_schemas {
+        effective_metadata
+            .tool_output_schemas
+            .insert(k.clone(), v.clone());
+    }
+    for g in &serve_options.skip_global_args {
+        if !effective_metadata.skip_global_args.contains(g) {
+            effective_metadata.skip_global_args.push(g.clone());
+        }
+    }
+    for (k, v) in &serve_options.skip_args {
+        effective_metadata
+            .skip_args
+            .entry(k.clone())
+            .or_default()
+            .extend(v.clone());
+    }
     let schema: crate::ClapSchema = serde_json::from_str(&schema_json)?;
-    let tools = crate::tools_from_schema_with_metadata(&schema, config, metadata);
+    let tools = crate::tools_from_schema_with_metadata(&schema, config, &effective_metadata);
     let root_name = schema.root.name.clone();
     build_clap_mcp_server(
         schema_json,
@@ -46,7 +64,7 @@ async fn build_server_from_schema_json(
         root_name,
         config,
         serve_options,
-        metadata,
+        &effective_metadata,
     )
 }
 

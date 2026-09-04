@@ -386,6 +386,19 @@ fn get_clap_mcp_skip_mode(attrs: &[syn::Attribute]) -> ClapMcpSkipMode {
                 } else {
                     mode = ClapMcpSkipMode::Bare;
                 }
+            } else if meta.path.is_ident("skip_args") && meta.input.peek(syn::token::Eq) {
+                let value: Expr = meta.value()?.parse()?;
+                if let Expr::Lit(lit) = value
+                    && let Lit::Str(s) = &lit.lit
+                {
+                    mode = ClapMcpSkipMode::Explicit(
+                        s.value()
+                            .split(',')
+                            .map(|p| p.trim().to_string())
+                            .filter(|p| !p.is_empty())
+                            .collect(),
+                    );
+                }
             }
             Ok(())
         });
@@ -394,6 +407,70 @@ fn get_clap_mcp_skip_mode(attrs: &[syn::Attribute]) -> ClapMcpSkipMode {
         }
     }
     ClapMcpSkipMode::None
+}
+
+fn get_clap_mcp_skip_global(attrs: &[syn::Attribute]) -> Vec<String> {
+    let mut result = Vec::new();
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let _ = attr.parse_nested_meta(|meta| {
+            if (meta.path.is_ident("skip_global") || meta.path.is_ident("skip_global_args"))
+                && meta.input.peek(syn::token::Eq)
+            {
+                let value: Expr = meta.value()?.parse()?;
+                if let Expr::Lit(lit) = value
+                    && let Lit::Str(s) = &lit.lit
+                {
+                    for id in s.value().split(',') {
+                        let trimmed = id.trim();
+                        if !trimmed.is_empty() {
+                            result.push(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+            Ok(())
+        });
+    }
+    result
+}
+
+fn get_clap_mcp_variant_output_type(attrs: &[syn::Attribute]) -> Option<syn::Type> {
+    for attr in attrs {
+        if attr.path().is_ident("clap_mcp_output_type") {
+            if let Meta::NameValue(MetaNameValue { value, .. }) = &attr.meta
+                && let Expr::Lit(lit) = value
+                && let Lit::Str(s) = &lit.lit
+                && let Ok(ty) = syn::parse_str::<syn::Type>(&s.value())
+            {
+                return Some(ty);
+            }
+        } else if attr.path().is_ident("clap_mcp") {
+            let mut found = None;
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("output_type") {
+                    if meta.input.peek(syn::token::Eq) {
+                        let value: Expr = meta.value()?.parse()?;
+                        if let Expr::Lit(lit) = value
+                            && let Lit::Str(s) = &lit.lit
+                            && let Ok(ty) = syn::parse_str::<syn::Type>(&s.value())
+                        {
+                            found = Some(ty);
+                        }
+                    }
+                } else if meta.input.peek(syn::token::Eq) {
+                    let _: Expr = meta.value()?.parse()?;
+                }
+                Ok(())
+            });
+            if found.is_some() {
+                return found;
+            }
+        }
+    }
+    None
 }
 
 fn has_clap_mcp_skip(attrs: &[syn::Attribute]) -> bool {
@@ -1249,7 +1326,10 @@ pub fn derive_clap_mcp(input: TokenStream) -> TokenStream {
     match &input.data {
         syn::Data::Enum(data) => {
             for variant in &data.variants {
-                if has_clap_mcp_skip(&variant.attrs) {
+                if matches!(
+                    get_clap_mcp_skip_mode(&variant.attrs),
+                    ClapMcpSkipMode::Bare
+                ) {
                     continue;
                 }
                 if has_ambiguous_mcp_positionals(variant.fields.iter()) {
@@ -1819,6 +1899,11 @@ fn parse_tool_annotation_meta(
         })?;
         Ok(true)
     } else {
+        // Consume non-annotation keys (`skip`, `output_type`, `task`, …) so later
+        // annotation keys in the same `#[clap_mcp(...)]` still parse.
+        if meta.input.peek(syn::token::Eq) {
+            let _: Expr = meta.value()?.parse()?;
+        }
         Ok(false)
     }
 }
@@ -1890,6 +1975,8 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let task_augmented_tools_expr = task_augmented_tools
         .map(|b| quote! { #b })
         .unwrap_or(quote! { false });
+    let skip_global_args = get_clap_mcp_skip_global(&input.attrs);
+    let mut tool_output_schemas: Vec<(String, syn::Type)> = Vec::new();
     let mut skip_commands = Vec::<String>::new();
     let mut skip_args: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
@@ -1943,8 +2030,17 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
             for v in &data.variants {
                 let cmd_name = get_command_name(&v.attrs, &v.ident);
                 let variant_reqs = get_clap_mcp_requires_variant(&v.attrs).unwrap_or_default();
-                if has_clap_mcp_skip(&v.attrs) {
-                    skip_commands.push(cmd_name.clone());
+                match get_clap_mcp_skip_mode(&v.attrs) {
+                    ClapMcpSkipMode::Bare => {
+                        skip_commands.push(cmd_name.clone());
+                    }
+                    ClapMcpSkipMode::Explicit(ids) => {
+                        skip_args.entry(cmd_name.clone()).or_default().extend(ids);
+                    }
+                    ClapMcpSkipMode::None => {}
+                }
+                if let Some(ty) = get_clap_mcp_variant_output_type(&v.attrs) {
+                    tool_output_schemas.push((cmd_name.clone(), ty));
                 }
                 if has_clap_mcp_task(&v.attrs) {
                     task_tool_names.push(cmd_name.clone());
@@ -2112,12 +2208,17 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     };
                     let merge = !skip_commands.is_empty()
                         || !skip_args.is_empty()
+                        || !skip_global_args.is_empty()
                         || !flatten_skip_entries.is_empty()
                         || !requires_args.is_empty()
                         || !task_tool_names.is_empty()
                         || !serialize_tools.is_empty()
                         || !serialize_topic_bindings.is_empty()
                         || !tool_annotations.is_empty();
+                    let skip_global_args_lit = skip_global_args.iter().map(|s| {
+                        let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+                        quote! { #lit.to_string() }
+                    });
                     if merge {
                         let skip_commands_lit = skip_commands.iter().map(|s| {
                             let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
@@ -2213,6 +2314,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     let mut m = <#sub_path as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata();
                                     let mut local = clap_mcp::ClapMcpSchemaMetadata::default();
                                     local.skip_commands.extend([#(#skip_commands_lit),*]);
+                                    local.skip_global_args.extend([#(#skip_global_args_lit),*]);
                                     local.task_tool_names.extend([#(#task_tool_names_lit),*]);
                                     local.task_augmented_tools = #task_augmented_tools_expr;
                                     #(#skip_args_entries)*
@@ -2244,6 +2346,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
                                     #warn_block
                                     let mut m = <#sub_path as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata();
+                                    m.skip_global_args.extend([#(#skip_global_args_lit),*]);
                                     m.task_augmented_tools = m.task_augmented_tools || #task_augmented_tools_expr;
                                     #(#flatten_skip_stmts_m)*
                                     #skip_root_assign
@@ -2338,6 +2441,19 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         }
     });
 
+    let skip_global_args_lit = skip_global_args.iter().map(|s| {
+        let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+        quote! { #lit.to_string() }
+    });
+    let tool_output_schema_entries = tool_output_schemas.iter().map(|(cmd, ty)| {
+        let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
+        quote! {
+            if let Some(schema) = clap_mcp::output_schema_for_type::<#ty>() {
+                m.tool_output_schemas.insert(#cmd_lit.to_string(), schema);
+            }
+        }
+    });
+
     let warn_block = if warn_optional_positional {
         optional_positional_warn_block
     } else {
@@ -2361,6 +2477,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 let mut m = clap_mcp::ClapMcpSchemaMetadata::default();
                 #(#nested_merge_stmts)*
                 m.skip_commands.extend([#(#skip_commands_lit),*]);
+                m.skip_global_args.extend([#(#skip_global_args_lit),*]);
                 m.task_tool_names.extend([#(#task_tool_names_lit),*]);
                 m.task_augmented_tools = m.task_augmented_tools || #task_augmented_tools_expr;
                 #(#skip_args_entries)*
@@ -2371,6 +2488,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 #(#flatten_topic_stmts)*
                 #(#tool_annotations_entries)*
                 #output_schema_assign
+                #(#tool_output_schema_entries)*
                 m
             }
         }

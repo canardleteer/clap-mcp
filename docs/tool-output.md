@@ -175,3 +175,18 @@ each tool. The high-level serve path (`ParseOrServeMcp::parse_or_serve_mcp`,
 etc.) uses metadata
 automatically, so tools get `output_schema` when you use the derive and these
 attributes.
+
+## Per-tool output schemas
+
+Leaf tools often return different shapes. Prefer a per-tool schema instead of a
+single root-wide `output_type`:
+
+* Derive: `#[clap_mcp(output_type = "MyType")]` or
+  `#[clap_mcp_output_type = "MyType"]` on an enum variant.
+* Imperative: `ClapMcpSchemaMetadata::with_tool_output_schema` or
+  `ServeMcpBuilder::tool_output_schema` / `ClapMcpServeOptions::with_tool_output_schema`.
+
+Tools without an entry keep no `outputSchema` (or fall back to the root-wide
+schema when you set one). Return [`ClapMcpToolOutput::Structured`] or
+`AsStructured<T>` so `structuredContent` matches the advertised schema; text-only
+tools should omit the schema.
