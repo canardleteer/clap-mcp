@@ -1634,21 +1634,20 @@ fn format_arg_groups_description_suffix(groups: &[ClapArgGroup]) -> Option<Strin
     }
     let parts: Vec<String> = groups
         .iter()
-        .filter(|g| !(!g.required && g.multiple)) // omit no-op groups (optional + multiple)
-        .map(|g| {
+        .filter_map(|g| {
+            let constraint = match (g.required, g.multiple) {
+                (true, true) => "requires one or more of",
+                (true, false) => "requires one of",
+                (false, false) => "at most one of",
+                (false, true) => return None, // omit no-op groups (optional + multiple)
+            };
             let args_list = g
                 .args
                 .iter()
                 .map(|a| format!("`{a}`"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let constraint = match (g.required, g.multiple) {
-                (true, true) => "requires one or more of",
-                (true, false) => "requires one of",
-                (false, false) => "at most one of",
-                (false, true) => unreachable!(),
-            };
-            format!("`{}` {constraint}: {args_list}", g.id)
+            Some(format!("`{}` {constraint}: {args_list}", g.id))
         })
         .collect();
     if parts.is_empty() {

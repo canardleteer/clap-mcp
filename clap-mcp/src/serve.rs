@@ -216,6 +216,11 @@ impl ServeMcpBuilder {
     }
 
     /// Optional serve behavior (logging, custom resources, cache hints, etc.).
+    ///
+    /// Note: This replaces the entire [`ClapMcpServeOptions`] struct on the builder.
+    /// Call this before setting individual options (such as [`Self::instructions`],
+    /// [`Self::server_info`], or [`Self::tool_annotation`]) if you want individual
+    /// builder setters to take precedence over fields in `serve_options`.
     pub fn serve_options(mut self, serve_options: ClapMcpServeOptions) -> Self {
         self.serve_options = serve_options;
         self

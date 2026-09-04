@@ -42,6 +42,7 @@ applies:
 | Derive metadata clap arg ids | `clap_arg_id_from_field` for skip/requires/serialize keys | `test_skip_custom_clap_arg_id`, `test_requires_custom_clap_arg_id`, `test_serialize_topic_custom_clap_arg_id`, `tests/ui/pass/custom_arg_id_metadata.rs` |
 | Macro/runtime coverage after new tests | `cargo llvm-cov` on `clap-mcp` + `clap-mcp-macros` | Quick filters above |
 | New `#[clap_mcp(...)]` config flag | Documented in supported-shapes matrix if embedder-visible | [supported-cli-shapes.md](supported-cli-shapes.md) |
+| Tool annotations (`#[clap_mcp(read_only, ...)]`, `#[clap_mcp(annotation(...))]`) | Populates `tool_annotations` on root or variant; propagated to `tools/list`; non-bool rejects at compile time | `server_metadata_and_annotations_tests`, `test_tool_annotations_in_metadata_and_serve_options`, UI pass/fail in `tests/ui/` |
 | New `[[bin]]` in examples | Auto-included in `cargo xtask examples-help` unless on exclude list | [examples/Cargo.toml](../examples/Cargo.toml), [examples/README.md](../examples/README.md); add contract test if MCP semantics matter |
 | ArgGroup hints (`argGroups` meta, description suffix) | `mcp_visible_arg_ids_on_command` shared with schema args; per-node groups only | `test_arg_groups_*` in `lib.rs`, `example_contract_arg_group_hints_*`, `arg_group_hints` example; rustdoc `-D warnings` |
 

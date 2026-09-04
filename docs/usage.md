@@ -265,16 +265,33 @@ Embedding applications can supply server-wide instructions and custom
 implementation identity advertised during MCP initialization and discovery:
 
 ```rust
-use clap_mcp::{Implementation, McpListen, ServeMcpBuilder};
+use clap::Parser;
+use clap_mcp::{ClapMcp, Implementation, McpListen, ServeMcpBuilder};
 
-ServeMcpBuilder::for_cli::<App>(McpListen::Stdio)
-    .instructions("Always run the status tool before mutating data.")
-    .server_info(
-        Implementation::new("my-custom-cli", env!("CARGO_PKG_VERSION"))
-            .with_title("Custom Service CLI")
-            .with_description("Production deployment and maintenance CLI"),
-    )
-    .serve_blocking()?;
+#[derive(Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe)]
+#[clap_mcp_output_from = "run"]
+#[command(name = "myapp")]
+enum Cli {
+    Status,
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Status => "healthy".to_string(),
+    }
+}
+
+fn main() -> Result<(), clap_mcp::ClapMcpError> {
+    ServeMcpBuilder::for_cli::<Cli>(McpListen::Stdio)
+        .instructions("Always run the status tool before mutating data.")
+        .server_info(
+            Implementation::new("my-custom-cli", env!("CARGO_PKG_VERSION"))
+                .with_title("Custom Service CLI")
+                .with_description("Production deployment and maintenance CLI"),
+        )
+        .serve_blocking()
+}
 ```
 
 When logging is also configured with `with_log_rx`, application instructions
@@ -306,29 +323,80 @@ enum Cli {
     #[clap_mcp(annotation(read_only = false, idempotent = true))]
     Sync,
 }
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Query { filter } => format!("query: {filter}"),
+        Cli::Purge { force } => format!("purge (force={force})"),
+        Cli::Sync => "synced".to_string(),
+    }
+}
+
+fn main() {
+    let cli = Cli::parse_or_serve_mcp();
+    println!("{}", run(cli));
+}
 ```
 
-Or attach annotations imperatively through
+Supported annotation attributes and aliases:
+
+| Attribute | Aliases | Value | Meaning |
+| --- | --- | --- | --- |
+| `read_only` | `read_only_hint`, `readOnlyHint` | Boolean literal (defaults to `true`) | Tool does not modify environment |
+| `destructive` | `destructive_hint`, `destructiveHint` | Boolean literal (defaults to `true`) | Tool may cause destructive changes |
+| `idempotent` | `idempotent_hint`, `idempotentHint` | Boolean literal (defaults to `true`) | Repeated calls produce same result |
+| `open_world` | `open_world_hint`, `openWorldHint` | Boolean literal (defaults to `true`) | Tool interacts with open environment |
+| `tool_title` | `title` | String literal | Human-readable tool title |
+| `annotation(...)` | `annotations(...)` | Nested attributes | Container for grouping tool annotations |
+
+Non-boolean literals supplied to boolean hint attributes fail compilation.
+
+Attach annotations imperatively through
 [`ServeMcpBuilder::tool_annotation`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.tool_annotation)
 or
 [`ClapMcpServeOptions::with_tool_annotation`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html#method.with_tool_annotation):
 
 ```rust
-use clap_mcp::{McpListen, ServeMcpBuilder, ToolAnnotations};
+use clap::Parser;
+use clap_mcp::{ClapMcp, McpListen, ServeMcpBuilder, ToolAnnotations};
 
-ServeMcpBuilder::for_cli::<Cli>(McpListen::Stdio)
-    .tool_annotation(
-        "query",
-        ToolAnnotations::from_raw(
-            Some("Query records".into()),
-            Some(true),
-            Some(false),
-            Some(true),
-            Some(false),
-        ),
-    )
-    .serve_blocking()?;
+#[derive(Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe)]
+#[clap_mcp_output_from = "run"]
+#[command(name = "myapp")]
+enum Cli {
+    Query {
+        #[arg(long)]
+        filter: String,
+    },
+}
+
+fn run(cmd: Cli) -> String {
+    match cmd {
+        Cli::Query { filter } => format!("query: {filter}"),
+    }
+}
+
+fn main() -> Result<(), clap_mcp::ClapMcpError> {
+    ServeMcpBuilder::for_cli::<Cli>(McpListen::Stdio)
+        .tool_annotation(
+            "query",
+            ToolAnnotations::from_raw(
+                Some("Query records".into()),
+                Some(true),
+                Some(false),
+                Some(true),
+                Some(false),
+            ),
+        )
+        .serve_blocking()
+}
 ```
+
+Imperative annotations replace any derive-time annotations on that tool
+as a whole (`ToolAnnotations`), rather than merging individual hint fields.
+When supplying an imperative annotation for a tool, populate all intended
+hints on that `ToolAnnotations` instance.
 
 ## Preserve CLI parse
 
