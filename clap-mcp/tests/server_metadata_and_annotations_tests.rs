@@ -8,6 +8,7 @@ use clap_mcp::{
 };
 use rmcp::model::CallToolRequestParams;
 use rmcp::{ClientHandler, ServiceExt};
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, Parser, ClapMcp)]
@@ -65,11 +66,28 @@ async fn test_server_metadata_and_annotations_over_stdio() {
         .with_title("Test App Title")
         .with_description("Test App Description");
 
+    let custom_raw_tool = rmcp::model::Tool::new(
+        "custom_raw",
+        "Custom raw tool description",
+        Arc::new(serde_json::Map::new()),
+    );
+
     let server_task = tokio::spawn(async move {
         ServeMcpBuilder::for_cli::<AnnotatedTestCli>(McpListen::Stdio)
             .stdio_io(server_read, server_write)
             .server_info(custom_server_info)
             .instructions("Application level instructions for testing.")
+            .custom_tool(custom_raw_tool)
+            .tool_annotation(
+                "custom_raw",
+                ToolAnnotations::from_raw(
+                    Some("Annotated Custom Raw".into()),
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                ),
+            )
             .tool_annotation(
                 "plain",
                 ToolAnnotations::from_raw(
@@ -163,6 +181,25 @@ async fn test_server_metadata_and_annotations_over_stdio() {
     assert_eq!(plain_ann.title.as_deref(), Some("Imperative Plain"));
     assert_eq!(plain_ann.read_only_hint, Some(true));
     assert_eq!(plain_ann.destructive_hint, Some(false));
+
+    // Check `custom_raw` (custom tool with imperative tool_annotation override)
+    let custom_raw = tools
+        .iter()
+        .find(|t| t.name == "custom_raw")
+        .expect("custom_raw tool");
+    assert_eq!(custom_raw.title.as_deref(), Some("Annotated Custom Raw"));
+    let custom_raw_ann = custom_raw
+        .annotations
+        .as_ref()
+        .expect("custom_raw annotations");
+    assert_eq!(
+        custom_raw_ann.title.as_deref(),
+        Some("Annotated Custom Raw")
+    );
+    assert_eq!(custom_raw_ann.read_only_hint, Some(true));
+    assert_eq!(custom_raw_ann.destructive_hint, Some(false));
+    assert_eq!(custom_raw_ann.idempotent_hint, Some(true));
+    assert_eq!(custom_raw_ann.open_world_hint, Some(false));
 
     // 5. Verify annotated tools remain executable via clap-mcp handler
     let call_res =

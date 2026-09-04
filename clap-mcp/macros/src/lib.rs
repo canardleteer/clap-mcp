@@ -1810,21 +1810,31 @@ fn parse_tool_annotation_meta(
     }
 }
 
-fn get_clap_mcp_tool_annotations(attrs: &[syn::Attribute]) -> Option<ParsedToolAnnotations> {
+fn get_clap_mcp_tool_annotations(
+    attrs: &[syn::Attribute],
+) -> syn::Result<Option<ParsedToolAnnotations>> {
     let mut annotations = ParsedToolAnnotations::default();
+    let mut error: Option<syn::Error> = None;
     for attr in attrs {
         if !attr.path().is_ident("clap_mcp") {
             continue;
         }
         let _ = attr.parse_nested_meta(|meta| {
-            let _ = parse_tool_annotation_meta(&meta, &mut annotations);
+            if let Err(e) = parse_tool_annotation_meta(&meta, &mut annotations)
+                && error.is_none()
+            {
+                error = Some(e);
+            }
             Ok(())
         });
     }
+    if let Some(e) = error {
+        return Err(e);
+    }
     if annotations.is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(annotations)
+        Ok(Some(annotations))
     }
 }
 
@@ -1881,6 +1891,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let mut flatten_serialize_topic_cmds: Vec<(String, syn::Type)> = Vec::new();
     let mut flatten_skip_entries: Vec<FlattenSkipEntry> = Vec::new();
     let mut flatten_skip_error: Option<syn::Error> = None;
+    let mut tool_annotations_error: Option<syn::Error> = None;
     let mut warn_optional_positional = false;
 
     let optional_positional_warn_block: proc_macro2::TokenStream = quote! {
@@ -1904,6 +1915,11 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
 
     match &input.data {
         syn::Data::Enum(data) => {
+            if let Err(e) = get_clap_mcp_tool_annotations(&input.attrs)
+                && tool_annotations_error.is_none()
+            {
+                tool_annotations_error = Some(e);
+            }
             for v in &data.variants {
                 let cmd_name = get_command_name(&v.attrs, &v.ident);
                 let variant_reqs = get_clap_mcp_requires_variant(&v.attrs).unwrap_or_default();
@@ -1913,8 +1929,16 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 if has_clap_mcp_task(&v.attrs) {
                     task_tool_names.push(cmd_name.clone());
                 }
-                if let Some(ann) = get_clap_mcp_tool_annotations(&v.attrs) {
-                    tool_annotations.insert(cmd_name.clone(), ann);
+                match get_clap_mcp_tool_annotations(&v.attrs) {
+                    Ok(Some(ann)) => {
+                        tool_annotations.insert(cmd_name.clone(), ann);
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        if tool_annotations_error.is_none() {
+                            tool_annotations_error = Some(e);
+                        }
+                    }
                 }
                 let variant_has_serialized_args = matches!(
                     get_clap_mcp_serialized(&v.attrs),
@@ -1976,8 +2000,16 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         }
         syn::Data::Struct(data) => {
             let root_name = get_command_name(&input.attrs, name);
-            if let Some(ann) = get_clap_mcp_tool_annotations(&input.attrs) {
-                tool_annotations.insert(root_name.clone(), ann);
+            match get_clap_mcp_tool_annotations(&input.attrs) {
+                Ok(Some(ann)) => {
+                    tool_annotations.insert(root_name.clone(), ann);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    if tool_annotations_error.is_none() {
+                        tool_annotations_error = Some(e);
+                    }
+                }
             }
             let subcommand_field = data
                 .fields
@@ -2208,6 +2240,9 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     }
 
     if let Some(e) = flatten_skip_error {
+        return e.to_compile_error();
+    }
+    if let Some(e) = tool_annotations_error {
         return e.to_compile_error();
     }
 

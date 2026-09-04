@@ -647,15 +647,15 @@ pub(crate) fn build_clap_mcp_server(
         .map(|t| t.name.to_string())
         .collect();
     let mut tools = tools;
+    tools.extend(serve_options.custom_tools.iter().cloned());
     for (name, ann) in &serve_options.tool_annotations {
-        if let Some(tool) = tools.iter_mut().find(|t| t.name == name.as_str()) {
+        for tool in tools.iter_mut().filter(|t| t.name == name.as_str()) {
             if let Some(ref t) = ann.title {
                 tool.title = Some(t.clone());
             }
             tool.annotations = Some(ann.clone());
         }
     }
-    tools.extend(serve_options.custom_tools.iter().cloned());
 
     let inner = Arc::new(ServeHandlerInner {
         schema_json,

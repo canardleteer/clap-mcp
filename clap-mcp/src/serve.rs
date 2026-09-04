@@ -260,6 +260,18 @@ impl ServeMcpBuilder {
         self
     }
 
+    /// Register a custom (schema-only) MCP tool.
+    pub fn custom_tool(mut self, tool: rmcp::model::Tool) -> Self {
+        self.serve_options.custom_tools.push(tool);
+        self
+    }
+
+    /// Register custom (schema-only) MCP tools.
+    pub fn custom_tools(mut self, tools: impl IntoIterator<Item = rmcp::model::Tool>) -> Self {
+        self.serve_options.custom_tools.extend(tools);
+        self
+    }
+
     /// Subprocess executable for tool calls when not in-process.
     pub fn executable_path(mut self, executable_path: Option<PathBuf>) -> Self {
         self.executable_path = executable_path;
