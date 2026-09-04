@@ -16,14 +16,14 @@ use rmcp::{
     ErrorData as McpError, Peer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, CancelTaskParams, ContentBlock,
-        CreateTaskResult, GetPromptRequestParams, GetPromptResponse, GetPromptResult,
-        GetTaskParams, GetTaskResult, Implementation, InitializeRequestParams, ListPromptsResult,
-        ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, LoggingLevel,
-        LoggingMessageNotification, LoggingMessageNotificationParam, NotificationMetaObject,
-        PaginatedRequestParams, PromptMessage, ProtocolVersion, ReadResourceRequestParams,
-        ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, Role,
-        ServerCapabilities, SetLevelRequestParams, SubscribeRequestParams, Tool,
-        UnsubscribeRequestParams, UpdateTaskParams,
+        CreateTaskResult, DiscoverResult, GetPromptRequestParams, GetPromptResponse,
+        GetPromptResult, GetTaskParams, GetTaskResult, Implementation, InitializeRequestParams,
+        ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
+        LoggingLevel, LoggingMessageNotification, LoggingMessageNotificationParam,
+        NotificationMetaObject, PaginatedRequestParams, PromptMessage, ProtocolVersion,
+        ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
+        ResourceContents, Role, ServerCapabilities, SetLevelRequestParams, SubscribeRequestParams,
+        Tool, UnsubscribeRequestParams, UpdateTaskParams,
     },
     service::{RequestContext, RoleServer, serve_directly},
     task_manager::{TaskExit, TaskManager, TaskOptions},
@@ -55,6 +55,8 @@ pub(crate) struct ServeHandlerInner {
     pub task_tool_filter: Option<HashSet<String>>,
     pub serialize_tools: HashMap<String, ClapMcpSerializeScope>,
     pub serialize_topic_args: HashMap<String, HashMap<String, crate::SerializeTopicSegmentFn>>,
+    pub instructions: Option<String>,
+    pub server_info: Option<Implementation>,
 }
 
 impl ServeHandlerInner {
@@ -269,20 +271,44 @@ impl ServerHandler for ClapMcpServer {
                 .enable_prompts()
                 .build(),
         };
-        let server_info = Implementation::new("clap-mcp", env!("CARGO_PKG_VERSION"))
-            .with_title("clap-mcp")
-            .with_description("Expose clap CLI schema over MCP (stdio)");
+        let server_info = self.inner.server_info.clone().unwrap_or_else(|| {
+            Implementation::new("clap-mcp", env!("CARGO_PKG_VERSION"))
+                .with_title("clap-mcp")
+                .with_description("Expose clap CLI schema over MCP (stdio)")
+        });
         let mut info = rmcp::model::ServerInfo::new(capabilities)
             .with_server_info(server_info)
             .with_protocol_version(PROTOCOL_VERSION_STABLE);
-        if logging_enabled {
-            info = info.with_instructions(LOG_INTERPRETATION_INSTRUCTIONS);
+        match (self.inner.instructions.as_deref(), logging_enabled) {
+            (Some(app), true) => {
+                info =
+                    info.with_instructions(format!("{app}\n\n{LOG_INTERPRETATION_INSTRUCTIONS}"));
+            }
+            (Some(app), false) => {
+                info = info.with_instructions(app);
+            }
+            (None, true) => {
+                info = info.with_instructions(LOG_INTERPRETATION_INSTRUCTIONS);
+            }
+            (None, false) => {}
         }
         info
     }
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         Cow::Borrowed(SUPPORTED_PROTOCOL_VERSIONS)
+    }
+
+    fn discover(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<DiscoverResult, McpError>> + Send + '_ {
+        self.capture_peer(&context);
+        let result = DiscoverResult::from_server_info(
+            self.supported_protocol_versions().into_owned(),
+            self.get_info(),
+        );
+        std::future::ready(Ok(result))
     }
 
     fn initialize(
@@ -621,6 +647,14 @@ pub(crate) fn build_clap_mcp_server(
         .map(|t| t.name.to_string())
         .collect();
     let mut tools = tools;
+    for (name, ann) in &serve_options.tool_annotations {
+        if let Some(tool) = tools.iter_mut().find(|t| t.name == name.as_str()) {
+            if let Some(ref t) = ann.title {
+                tool.title = Some(t.clone());
+            }
+            tool.annotations = Some(ann.clone());
+        }
+    }
     tools.extend(serve_options.custom_tools.iter().cloned());
 
     let inner = Arc::new(ServeHandlerInner {
@@ -641,6 +675,8 @@ pub(crate) fn build_clap_mcp_server(
         task_tool_filter,
         serialize_tools: metadata.serialize_tools.clone(),
         serialize_topic_args: metadata.serialize_topic_args.clone(),
+        instructions: serve_options.instructions.clone(),
+        server_info: serve_options.server_info.clone(),
     });
 
     Ok(ClapMcpServer {

@@ -1727,6 +1727,139 @@ fn serialize_topic_bindings_quote(
     quote! { #(#entries)* }
 }
 
+#[derive(Debug, Default, Clone)]
+struct ParsedToolAnnotations {
+    title: Option<String>,
+    read_only: Option<bool>,
+    destructive: Option<bool>,
+    idempotent: Option<bool>,
+    open_world: Option<bool>,
+}
+
+impl ParsedToolAnnotations {
+    fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.read_only.is_none()
+            && self.destructive.is_none()
+            && self.idempotent.is_none()
+            && self.open_world.is_none()
+    }
+}
+
+fn parse_tool_annotation_meta(
+    meta: &syn::meta::ParseNestedMeta,
+    annotations: &mut ParsedToolAnnotations,
+) -> syn::Result<bool> {
+    if meta.path.is_ident("read_only")
+        || meta.path.is_ident("read_only_hint")
+        || meta.path.is_ident("readOnlyHint")
+    {
+        if meta.input.peek(syn::token::Eq) {
+            let value: Expr = meta.value()?.parse()?;
+            annotations.read_only = Some(expr_to_bool(&value));
+        } else {
+            annotations.read_only = Some(true);
+        }
+        Ok(true)
+    } else if meta.path.is_ident("destructive")
+        || meta.path.is_ident("destructive_hint")
+        || meta.path.is_ident("destructiveHint")
+    {
+        if meta.input.peek(syn::token::Eq) {
+            let value: Expr = meta.value()?.parse()?;
+            annotations.destructive = Some(expr_to_bool(&value));
+        } else {
+            annotations.destructive = Some(true);
+        }
+        Ok(true)
+    } else if meta.path.is_ident("idempotent")
+        || meta.path.is_ident("idempotent_hint")
+        || meta.path.is_ident("idempotentHint")
+    {
+        if meta.input.peek(syn::token::Eq) {
+            let value: Expr = meta.value()?.parse()?;
+            annotations.idempotent = Some(expr_to_bool(&value));
+        } else {
+            annotations.idempotent = Some(true);
+        }
+        Ok(true)
+    } else if meta.path.is_ident("open_world")
+        || meta.path.is_ident("open_world_hint")
+        || meta.path.is_ident("openWorldHint")
+    {
+        if meta.input.peek(syn::token::Eq) {
+            let value: Expr = meta.value()?.parse()?;
+            annotations.open_world = Some(expr_to_bool(&value));
+        } else {
+            annotations.open_world = Some(true);
+        }
+        Ok(true)
+    } else if meta.path.is_ident("tool_title") || meta.path.is_ident("title") {
+        annotations.title = Some(meta_string_value(meta)?);
+        Ok(true)
+    } else if meta.path.is_ident("annotation") || meta.path.is_ident("annotations") {
+        meta.parse_nested_meta(|inner| {
+            if !parse_tool_annotation_meta(&inner, annotations)? {
+                return Err(inner.error("unsupported tool annotation key"));
+            }
+            Ok(())
+        })?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+fn get_clap_mcp_tool_annotations(attrs: &[syn::Attribute]) -> Option<ParsedToolAnnotations> {
+    let mut annotations = ParsedToolAnnotations::default();
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let _ = attr.parse_nested_meta(|meta| {
+            let _ = parse_tool_annotation_meta(&meta, &mut annotations);
+            Ok(())
+        });
+    }
+    if annotations.is_empty() {
+        None
+    } else {
+        Some(annotations)
+    }
+}
+
+fn quote_tool_annotations(ann: &ParsedToolAnnotations) -> proc_macro2::TokenStream {
+    let title_tokens = match &ann.title {
+        Some(t) => quote! { Some(#t.to_string()) },
+        None => quote! { None },
+    };
+    let read_only_tokens = match ann.read_only {
+        Some(b) => quote! { Some(#b) },
+        None => quote! { None },
+    };
+    let destructive_tokens = match ann.destructive {
+        Some(b) => quote! { Some(#b) },
+        None => quote! { None },
+    };
+    let idempotent_tokens = match ann.idempotent {
+        Some(b) => quote! { Some(#b) },
+        None => quote! { None },
+    };
+    let open_world_tokens = match ann.open_world {
+        Some(b) => quote! { Some(#b) },
+        None => quote! { None },
+    };
+    quote! {
+        clap_mcp::ToolAnnotations::from_raw(
+            #title_tokens,
+            #read_only_tokens,
+            #destructive_tokens,
+            #idempotent_tokens,
+            #open_world_tokens,
+        )
+    }
+}
+
 /// Builds the ClapMcpSchemaMetadataProvider impl from #[clap_mcp(skip)], #[clap_mcp(requires)], and #[clap_mcp(task)].
 fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let name = &input.ident;
@@ -1741,6 +1874,8 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         std::collections::HashMap::new();
     let mut task_tool_names = Vec::<String>::new();
     let mut serialize_tools: std::collections::HashMap<String, ClapMcpSerialized> =
+        std::collections::HashMap::new();
+    let mut tool_annotations: std::collections::HashMap<String, ParsedToolAnnotations> =
         std::collections::HashMap::new();
     let mut serialize_topic_bindings: Vec<(String, String, syn::Type)> = Vec::new();
     let mut flatten_serialize_topic_cmds: Vec<(String, syn::Type)> = Vec::new();
@@ -1777,6 +1912,9 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 }
                 if has_clap_mcp_task(&v.attrs) {
                     task_tool_names.push(cmd_name.clone());
+                }
+                if let Some(ann) = get_clap_mcp_tool_annotations(&v.attrs) {
+                    tool_annotations.insert(cmd_name.clone(), ann);
                 }
                 let variant_has_serialized_args = matches!(
                     get_clap_mcp_serialized(&v.attrs),
@@ -1838,6 +1976,9 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         }
         syn::Data::Struct(data) => {
             let root_name = get_command_name(&input.attrs, name);
+            if let Some(ann) = get_clap_mcp_tool_annotations(&input.attrs) {
+                tool_annotations.insert(root_name.clone(), ann);
+            }
             let subcommand_field = data
                 .fields
                 .iter()
@@ -1923,7 +2064,8 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         || !requires_args.is_empty()
                         || !task_tool_names.is_empty()
                         || !serialize_tools.is_empty()
-                        || !serialize_topic_bindings.is_empty();
+                        || !serialize_topic_bindings.is_empty()
+                        || !tool_annotations.is_empty();
                     if merge {
                         let skip_commands_lit = skip_commands.iter().map(|s| {
                             let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
@@ -1999,6 +2141,14 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 }
                             },
                         );
+                        let tool_annotations_entries_local =
+                            tool_annotations.iter().map(|(k, ann)| {
+                                let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+                                let ann_tokens = quote_tool_annotations(ann);
+                                quote! {
+                                    local.tool_annotations.insert(#k_lit.to_string(), #ann_tokens);
+                                }
+                            });
                         let warn_block = if warn_optional_positional {
                             optional_positional_warn_block.clone()
                         } else {
@@ -2019,6 +2169,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     #(#serialize_tools_entries)*
                                     #serialize_topic_entries
                                     #(#flatten_topic_stmts_local)*
+                                    #(#tool_annotations_entries_local)*
                                     #skip_root_assign_local
                                     #output_schema_assign_local
                                     m.merge_from(local);
@@ -2124,6 +2275,13 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
         quote! { #lit.to_string() }
     });
+    let tool_annotations_entries = tool_annotations.iter().map(|(k, ann)| {
+        let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+        let ann_tokens = quote_tool_annotations(ann);
+        quote! {
+            m.tool_annotations.insert(#k_lit.to_string(), #ann_tokens);
+        }
+    });
 
     let warn_block = if warn_optional_positional {
         optional_positional_warn_block
@@ -2156,6 +2314,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 #(#serialize_tools_entries)*
                 #serialize_topic_entries
                 #(#flatten_topic_stmts)*
+                #(#tool_annotations_entries)*
                 #output_schema_assign
                 m
             }

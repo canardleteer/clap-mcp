@@ -259,6 +259,77 @@ is only valid with `McpListen::Stdio` (not HTTP). The lower-level
 [`serve_mcp`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.serve_mcp.html) free
 functions always use process stdio.
 
+### Server metadata and instructions
+
+Embedding applications can supply server-wide instructions and custom
+implementation identity advertised during MCP initialization and discovery:
+
+```rust
+use clap_mcp::{Implementation, McpListen, ServeMcpBuilder};
+
+ServeMcpBuilder::for_cli::<App>(McpListen::Stdio)
+    .instructions("Always run the status tool before mutating data.")
+    .server_info(
+        Implementation::new("my-custom-cli", env!("CARGO_PKG_VERSION"))
+            .with_title("Custom Service CLI")
+            .with_description("Production deployment and maintenance CLI"),
+    )
+    .serve_blocking()?;
+```
+
+When logging is also configured with `with_log_rx`, application instructions
+appear verbatim first, followed by clap-mcp's logging guidance.
+
+### Tool annotations
+
+Annotate tools declaratively on derive variants or imperatively by tool name:
+
+```rust
+use clap::Parser;
+use clap_mcp::ClapMcp;
+
+#[derive(Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe)]
+#[clap_mcp_output_from = "run"]
+#[command(name = "myapp")]
+enum Cli {
+    #[clap_mcp(read_only, idempotent, tool_title = "Query records")]
+    Query {
+        #[arg(long)]
+        filter: String,
+    },
+    #[clap_mcp(destructive, open_world)]
+    Purge {
+        #[arg(long)]
+        force: bool,
+    },
+    #[clap_mcp(annotation(read_only = false, idempotent = true))]
+    Sync,
+}
+```
+
+Or attach annotations imperatively through
+[`ServeMcpBuilder::tool_annotation`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html#method.tool_annotation)
+or
+[`ClapMcpServeOptions::with_tool_annotation`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpServeOptions.html#method.with_tool_annotation):
+
+```rust
+use clap_mcp::{McpListen, ServeMcpBuilder, ToolAnnotations};
+
+ServeMcpBuilder::for_cli::<Cli>(McpListen::Stdio)
+    .tool_annotation(
+        "query",
+        ToolAnnotations::from_raw(
+            Some("Query records".into()),
+            Some(true),
+            Some(false),
+            Some(true),
+            Some(false),
+        ),
+    )
+    .serve_blocking()?;
+```
+
 ## Preserve CLI parse
 
 `parse_or_serve_mcp` and `parse_or_serve_mcp_with` use clap-mcp's argv
