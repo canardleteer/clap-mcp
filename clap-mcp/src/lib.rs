@@ -47,6 +47,10 @@ mod serve;
 /// Re-export of [`rmcp::model::CacheScope`] for SEP-2549 [`CacheHints`].
 pub use rmcp::model::CacheScope;
 pub use rmcp::model::ErrorData as ClapMcpErrorData;
+/// Re-export of [`rmcp::model::Implementation`] for application server identity.
+pub use rmcp::model::Implementation;
+/// Re-export of [`rmcp::model::ToolAnnotations`] for tool annotations.
+pub use rmcp::model::ToolAnnotations;
 
 pub mod logging;
 
@@ -824,6 +828,49 @@ pub struct ClapMcpServeOptions {
     /// Optional override for `resources/read` only. When `None`, uses
     /// [`cache_hints`](Self::cache_hints).
     pub resource_read_cache_hints: Option<CacheHints>,
+
+    /// Application-provided server instructions advertised in initialize and discover.
+    pub instructions: Option<String>,
+
+    /// Application server identity advertised in initialize and discover.
+    /// When `None`, defaults to clap-mcp's built-in identity.
+    pub server_info: Option<rmcp::model::Implementation>,
+
+    /// Per-tool annotation overrides keyed by final advertised tool name/path.
+    pub tool_annotations: std::collections::HashMap<String, rmcp::model::ToolAnnotations>,
+}
+
+impl ClapMcpServeOptions {
+    /// Set application-provided server instructions.
+    pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.instructions = Some(instructions.into());
+        self
+    }
+
+    /// Enable logging with a channel receiver.
+    pub fn with_log_rx(
+        mut self,
+        log_rx: tokio::sync::mpsc::Receiver<logging::LoggingMessageNotificationParams>,
+    ) -> Self {
+        self.log_rx = Some(log_rx);
+        self
+    }
+
+    /// Set application server implementation identity.
+    pub fn with_server_info(mut self, server_info: rmcp::model::Implementation) -> Self {
+        self.server_info = Some(server_info);
+        self
+    }
+
+    /// Attach annotations to an advertised tool by name.
+    pub fn with_tool_annotation(
+        mut self,
+        tool_name: impl Into<String>,
+        annotations: rmcp::model::ToolAnnotations,
+    ) -> Self {
+        self.tool_annotations.insert(tool_name.into(), annotations);
+        self
+    }
 }
 
 /// SEP-2549 `ttlMs` / `cacheScope` hints for list and read results.
@@ -1042,13 +1089,16 @@ pub struct ClapMcpSchemaMetadata {
         String,
         std::collections::HashMap<String, SerializeTopicSegmentFn>,
     >,
+    /// Per-tool annotations keyed by command/tool name. Populated by derive attributes
+    /// or set imperatively.
+    pub tool_annotations: std::collections::HashMap<String, rmcp::model::ToolAnnotations>,
 }
 
 impl ClapMcpSchemaMetadata {
     /// Deep-merges `other` into `self`. Lists and per-command maps are extended; map
-    /// entries from `other` overwrite same keys in `serialize_tools` and
-    /// `serialize_topic_args`. Use when folding nested subcommand metadata into a parent
-    /// or when combining derive output with imperative overrides.
+    /// entries from `other` overwrite same keys in `serialize_tools`,
+    /// `serialize_topic_args`, and `tool_annotations`. Use when folding nested subcommand
+    /// metadata into a parent or when combining derive output with imperative overrides.
     pub fn merge_from(&mut self, other: Self) {
         self.skip_commands.extend(other.skip_commands);
         for (k, v) in other.skip_args {
@@ -1069,9 +1119,22 @@ impl ClapMcpSchemaMetadata {
                 entry.insert(arg, f);
             }
         }
+        for (k, v) in other.tool_annotations {
+            self.tool_annotations.insert(k, v);
+        }
         if other.output_schema.is_some() {
             self.output_schema = other.output_schema;
         }
+    }
+
+    /// Attach annotations to an advertised tool by name.
+    pub fn with_tool_annotation(
+        mut self,
+        tool_name: impl Into<String>,
+        annotations: rmcp::model::ToolAnnotations,
+    ) -> Self {
+        self.tool_annotations.insert(tool_name.into(), annotations);
+        self
     }
 }
 
@@ -1559,6 +1622,7 @@ fn format_arg_groups_description_suffix(groups: &[ClapArgGroup]) -> Option<Strin
     }
     let parts: Vec<String> = groups
         .iter()
+        .filter(|g| !(!g.required && g.multiple)) // omit no-op groups (optional + multiple)
         .map(|g| {
             let args_list = g
                 .args
@@ -1566,18 +1630,18 @@ fn format_arg_groups_description_suffix(groups: &[ClapArgGroup]) -> Option<Strin
                 .map(|a| format!("`{a}`"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let constraint = if g.required {
-                "requires one of"
-            } else {
-                "at most one of"
+            let constraint = match (g.required, g.multiple) {
+                (true, true) => "requires one or more of",
+                (true, false) => "requires one of",
+                (false, false) => "at most one of",
+                (false, true) => unreachable!(),
             };
-            let mut s = format!("`{}` {constraint}: {args_list}", g.id);
-            if g.multiple {
-                s.push_str(" (multiple allowed)");
-            }
-            s
+            format!("`{}` {constraint}: {args_list}", g.id)
         })
         .collect();
+    if parts.is_empty() {
+        return None;
+    }
     Some(format!("Arg groups (parse-time): {}.", parts.join("; ")))
 }
 
@@ -1816,6 +1880,12 @@ fn command_to_tool_with_config(
     }
     if let Some(output_schema) = output_schema.cloned().and_then(|v| v.as_object().cloned()) {
         tool = tool.with_raw_output_schema(Arc::new(output_schema));
+    }
+    if let Some(annotations) = metadata.tool_annotations.get(&cmd.name) {
+        if let Some(ref t) = annotations.title {
+            tool = tool.with_title(t.clone());
+        }
+        tool = tool.with_annotations(annotations.clone());
     }
     tool
 }
@@ -4187,6 +4257,51 @@ mod tests {
     }
 
     #[test]
+    fn test_format_arg_groups_description_suffix() {
+        let noop_group = ClapArgGroup {
+            id: "opts".into(),
+            args: vec!["a".into(), "b".into()],
+            required: false,
+            multiple: true,
+        };
+        assert_eq!(
+            format_arg_groups_description_suffix(std::slice::from_ref(&noop_group)),
+            None
+        );
+
+        let req_multi_group = ClapArgGroup {
+            id: "targets".into(),
+            args: vec!["file".into(), "url".into()],
+            required: true,
+            multiple: true,
+        };
+        let suffix = format_arg_groups_description_suffix(&[req_multi_group]).unwrap();
+        assert!(suffix.contains("`targets` requires one or more of: `file`, `url`"));
+
+        let opt_single_group = ClapArgGroup {
+            id: "mode".into(),
+            args: vec!["fast".into(), "slow".into()],
+            required: false,
+            multiple: false,
+        };
+        let suffix2 = format_arg_groups_description_suffix(&[opt_single_group]).unwrap();
+        assert!(suffix2.contains("`mode` at most one of: `fast`, `slow`"));
+
+        let combined = format_arg_groups_description_suffix(&[
+            noop_group,
+            ClapArgGroup {
+                id: "exclusive".into(),
+                args: vec!["x".into(), "y".into()],
+                required: true,
+                multiple: false,
+            },
+        ])
+        .unwrap();
+        assert!(!combined.contains("`opts`"));
+        assert!(combined.contains("`exclusive` requires one of: `x`, `y`"));
+    }
+
+    #[test]
     fn test_arg_groups_per_command_node() {
         let cmd = Command::new("root")
             .arg(Arg::new("root_a").long("root-a"))
@@ -5595,7 +5710,7 @@ mod tests {
         assert!(info.instructions.is_none());
 
         let with_both = build_test_server(
-            config,
+            config.clone(),
             ClapMcpSchemaMetadata {
                 task_augmented_tools: true,
                 ..Default::default()
@@ -5604,7 +5719,7 @@ mod tests {
                 log_rx: Some(logging::log_channel(4).1),
                 ..Default::default()
             },
-            Some(handler),
+            Some(handler.clone()),
             None,
         );
         let info = with_both.get_info();
@@ -5620,6 +5735,62 @@ mod tests {
         assert_eq!(
             info.instructions.as_deref(),
             Some(LOG_INTERPRETATION_INSTRUCTIONS)
+        );
+
+        // Test instructions without logging: instructions present, logging capability absent
+        let with_app_instructions = build_test_server(
+            config.clone(),
+            ClapMcpSchemaMetadata::default(),
+            ClapMcpServeOptions::default().with_instructions("Custom application instructions"),
+            Some(handler.clone()),
+            None,
+        );
+        let info = with_app_instructions.get_info();
+        assert_eq!(
+            info.instructions.as_deref(),
+            Some("Custom application instructions")
+        );
+        assert!(info.capabilities.logging.is_none());
+
+        // Test instructions with logging: app instructions precede logging instructions
+        let with_app_instructions_and_logging = build_test_server(
+            config.clone(),
+            ClapMcpSchemaMetadata::default(),
+            ClapMcpServeOptions {
+                log_rx: Some(logging::log_channel(4).1),
+                instructions: Some("Custom application instructions".into()),
+                ..Default::default()
+            },
+            Some(handler.clone()),
+            None,
+        );
+        let info = with_app_instructions_and_logging.get_info();
+        assert!(info.capabilities.logging.is_some());
+        let expected_instructions =
+            format!("Custom application instructions\n\n{LOG_INTERPRETATION_INSTRUCTIONS}");
+        assert_eq!(
+            info.instructions.as_deref(),
+            Some(expected_instructions.as_str())
+        );
+
+        // Test custom server identity
+        let custom_impl = Implementation::new("my-app", "3.2.1")
+            .with_title("My App")
+            .with_description("Custom Application Description");
+        let with_custom_identity = build_test_server(
+            config,
+            ClapMcpSchemaMetadata::default(),
+            ClapMcpServeOptions::default().with_server_info(custom_impl),
+            Some(handler),
+            None,
+        );
+        let info = with_custom_identity.get_info();
+        assert_eq!(info.server_info.name, "my-app");
+        assert_eq!(info.server_info.version, "3.2.1");
+        assert_eq!(info.server_info.title.as_deref(), Some("My App"));
+        assert_eq!(
+            info.server_info.description.as_deref(),
+            Some("Custom Application Description")
         );
     }
 
@@ -5672,6 +5843,59 @@ mod tests {
         );
         server.track_resource_unsubscribe("test://static-text");
         assert!(server.subscribed_resource_uris().is_empty());
+    }
+
+    #[test]
+    fn test_tool_annotations_in_metadata_and_serve_options() {
+        let schema = nested_schema();
+        let config = ClapMcpConfig {
+            reinvocation_safe: true,
+            parallel_safe: true,
+            ..Default::default()
+        };
+        let mut metadata = ClapMcpSchemaMetadata::default();
+        let ann = ToolAnnotations::from_raw(
+            Some("Echo Title".into()),
+            Some(true),
+            Some(false),
+            Some(true),
+            Some(false),
+        );
+        metadata = metadata.with_tool_annotation("echo", ann);
+
+        let tools = tools_from_schema_with_metadata(&schema, &config, &metadata);
+        let echo_tool = tools.iter().find(|t| t.name == "echo").expect("echo tool");
+        assert_eq!(echo_tool.title.as_deref(), Some("Echo Title"));
+        let tool_ann = echo_tool.annotations.as_ref().expect("annotations");
+        assert_eq!(tool_ann.title.as_deref(), Some("Echo Title"));
+        assert_eq!(tool_ann.read_only_hint, Some(true));
+        assert_eq!(tool_ann.destructive_hint, Some(false));
+        assert_eq!(tool_ann.idempotent_hint, Some(true));
+        assert_eq!(tool_ann.open_world_hint, Some(false));
+
+        // Test overriding via serve_options in build_clap_mcp_server
+        let override_ann = ToolAnnotations::from_raw(
+            Some("Overridden Echo".into()),
+            Some(false),
+            Some(true),
+            None,
+            None,
+        );
+        let serve_options =
+            ClapMcpServeOptions::default().with_tool_annotation("echo", override_ann);
+        let handler: InProcessToolHandler =
+            Arc::new(|_, _| Ok(ClapMcpToolOutput::Text("ok".into())));
+        let server = build_test_server(config, metadata, serve_options, Some(handler), None);
+        let server_tools = server.inner.tools.clone();
+        let server_echo = server_tools
+            .iter()
+            .find(|t| t.name == "echo")
+            .expect("echo tool");
+        assert_eq!(server_echo.title.as_deref(), Some("Overridden Echo"));
+        let tool_ann2 = server_echo.annotations.as_ref().expect("annotations");
+        assert_eq!(tool_ann2.title.as_deref(), Some("Overridden Echo"));
+        assert_eq!(tool_ann2.read_only_hint, Some(false));
+        assert_eq!(tool_ann2.destructive_hint, Some(true));
     }
 
     #[test]

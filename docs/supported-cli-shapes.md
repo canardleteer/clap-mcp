@@ -26,6 +26,7 @@ and shapes that are intentionally out of scope. Runnable binaries are listed in
 | Preserve-cli parse | `parse_or_serve_mcp_preserve_cli*` / `get_matches_preserve_cli_or_serve_mcp*` | `preserve_cli_parse` | Native `Parser::parse` when argv has no clap-mcp entry flags |
 | Struct root, subcommand only in `run` | Dual derive; delegate | `struct_subcommand_required` | Root globals not in `run` unless struct `output_from` |
 | Struct root + globals in `run` | `output_from` on struct; `schema_only` on nested enums | `struct_subcommand_globals` | Tool execution receives full parsed root; root `#[arg(global)]` appear on leaf tool `inputSchema` |
+| Annotated tools | `#[clap_mcp(read_only, idempotent, destructive, open_world, tool_title = "...")]` or `#[clap_mcp(annotation(...))]` | `docs/usage.md` | Populates `ToolAnnotations` and advertised title in `tools/list` |
 | Multi-level subcommands | `schema_only` on intermediates; auto metadata merge | `nested_subcommands` | Manual `merge_from` rarely needed |
 | Skipped shell-only tools | `#[clap_mcp(skip)]`; positionals OK on skipped variants | `optional_commands_and_args` | Skipped variants exempt from multi-positional guard |
 | Interactive / TTY / exec | `skip` | [Execution safety — Interactive](execution-safety.md#interactive-and-session-commands) | Not an MCP tool |

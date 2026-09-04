@@ -236,6 +236,30 @@ impl ServeMcpBuilder {
         self
     }
 
+    /// Application-provided server instructions advertised in initialize and discover.
+    pub fn instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.serve_options.instructions = Some(instructions.into());
+        self
+    }
+
+    /// Application server implementation identity advertised in initialize and discover.
+    pub fn server_info(mut self, server_info: rmcp::model::Implementation) -> Self {
+        self.serve_options.server_info = Some(server_info);
+        self
+    }
+
+    /// Attach annotations to an advertised tool by name.
+    pub fn tool_annotation(
+        mut self,
+        tool_name: impl Into<String>,
+        annotations: rmcp::model::ToolAnnotations,
+    ) -> Self {
+        self.serve_options
+            .tool_annotations
+            .insert(tool_name.into(), annotations);
+        self
+    }
+
     /// Subprocess executable for tool calls when not in-process.
     pub fn executable_path(mut self, executable_path: Option<PathBuf>) -> Self {
         self.executable_path = executable_path;
