@@ -1925,7 +1925,9 @@ fn command_to_tool_with_config(
             if let Some(max) = arg.max_items {
                 prop.insert("maxItems".to_string(), serde_json::json!(max));
             }
-        } else if !arg.possible_values.is_empty() {
+        } else if json_type.as_str() != Some("boolean") && !arg.possible_values.is_empty() {
+            // Derive `bool` / SetTrue exposes possible values "true"/"false" as strings.
+            // Those must not become JSON Schema enum on a boolean property.
             prop.insert("enum".to_string(), serde_json::json!(arg.possible_values));
         }
 
@@ -2020,27 +2022,37 @@ fn command_to_tool_with_config(
     let visible_ids: std::collections::HashSet<&str> =
         effective_args.iter().map(|a| a.id.as_str()).collect();
 
-    // dependentRequired
-    let mut dependent_required: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Presence constraints use clap "active" semantics: SetTrue/SetFalse flags are
+    // active only at const true/false (matching argv emission), not mere property
+    // presence. Plain args stay presence-based (`required`).
+    let mut constraint_schemas: Vec<serde_json::Value> = Vec::new();
+
     for arg in &effective_args {
-        let reqs: Vec<String> = arg
+        let reqs: Vec<&ClapArg> = arg
             .requires
             .iter()
             .filter(|r| visible_ids.contains(r.as_str()) && r.as_str() != arg.id.as_str())
-            .cloned()
+            .filter_map(|r| effective_args.iter().find(|a| a.id == *r))
             .collect();
-        if !reqs.is_empty() {
-            dependent_required.insert(arg.id.clone(), reqs);
+        if reqs.is_empty() {
+            continue;
+        }
+        let then_schema = if reqs.len() == 1 {
+            schema_when_arg_active(reqs[0])
+        } else {
+            serde_json::json!({
+                "allOf": reqs.iter().map(|r| schema_when_arg_active(r)).collect::<Vec<_>>()
+            })
+        };
+        let cond = serde_json::json!({
+            "if": schema_when_arg_active(arg),
+            "then": then_schema
+        });
+        if !constraint_schemas.contains(&cond) {
+            constraint_schemas.push(cond);
         }
     }
-    if !dependent_required.is_empty() {
-        input_schema.insert(
-            "dependentRequired".into(),
-            serde_json::json!(dependent_required),
-        );
-    }
 
-    // dependentSchemas (conflicts and non-multiple ArgGroups)
     let mut conflicts_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for arg in &effective_args {
         for conflict in &arg.conflicts_with {
@@ -2069,73 +2081,79 @@ fn command_to_tool_with_config(
             }
         }
     }
-    if !conflicts_map.is_empty() {
-        let mut dep_schemas = serde_json::Map::new();
-        for (arg_id, targets) in conflicts_map {
-            let not_schema = if targets.len() == 1 {
-                serde_json::json!({
-                    "not": { "required": [targets[0]] }
-                })
-            } else {
-                let any_ofs: Vec<_> = targets
-                    .into_iter()
-                    .map(|t| serde_json::json!({ "required": [t] }))
-                    .collect();
-                serde_json::json!({
-                    "not": { "anyOf": any_ofs }
-                })
-            };
-            dep_schemas.insert(arg_id, not_schema);
+    for (arg_id, targets) in conflicts_map {
+        let Some(arg) = effective_args.iter().find(|a| a.id == arg_id) else {
+            continue;
+        };
+        let inactive_targets: Vec<serde_json::Value> = targets
+            .iter()
+            .filter_map(|t| effective_args.iter().find(|a| a.id == *t))
+            .map(|t| serde_json::json!({ "not": schema_when_arg_active(t) }))
+            .collect();
+        if inactive_targets.is_empty() {
+            continue;
         }
-        input_schema.insert(
-            "dependentSchemas".into(),
-            serde_json::Value::Object(dep_schemas),
-        );
+        let then_schema = if inactive_targets.len() == 1 {
+            inactive_targets.into_iter().next().unwrap()
+        } else {
+            serde_json::json!({ "allOf": inactive_targets })
+        };
+        let cond = serde_json::json!({
+            "if": schema_when_arg_active(arg),
+            "then": then_schema
+        });
+        if !constraint_schemas.contains(&cond) {
+            constraint_schemas.push(cond);
+        }
     }
 
-    // anyOf (conditional requirements: required_unless and required ArgGroups)
-    let mut any_of_conditions: Vec<serde_json::Value> = Vec::new();
     for arg in &effective_args {
         for target in &arg.required_unless {
             if visible_ids.contains(target.as_str()) && target != &arg.id {
+                let Some(other) = effective_args.iter().find(|a| a.id == *target) else {
+                    continue;
+                };
                 let pair = serde_json::json!({
                     "anyOf": [
-                        { "required": [&arg.id] },
-                        { "required": [target] }
+                        schema_when_arg_active(arg),
+                        schema_when_arg_active(other)
                     ]
                 });
-                if !any_of_conditions.contains(&pair) {
-                    any_of_conditions.push(pair);
+                if !constraint_schemas.contains(&pair) {
+                    constraint_schemas.push(pair);
                 }
             }
         }
     }
     for group in &cmd.arg_groups {
         if group.required && group.args.len() > 1 {
-            let vis: Vec<_> = group
+            let vis: Vec<&ClapArg> = group
                 .args
                 .iter()
                 .filter(|a| visible_ids.contains(a.as_str()))
+                .filter_map(|a| effective_args.iter().find(|x| x.id == *a))
                 .collect();
             if vis.len() > 1 {
-                let reqs: Vec<_> = vis
-                    .into_iter()
-                    .map(|a| serde_json::json!({ "required": [a] }))
-                    .collect();
+                let reqs: Vec<_> = vis.iter().map(|a| schema_when_arg_active(a)).collect();
                 let cond = serde_json::json!({ "anyOf": reqs });
-                if !any_of_conditions.contains(&cond) {
-                    any_of_conditions.push(cond);
+                if !constraint_schemas.contains(&cond) {
+                    constraint_schemas.push(cond);
                 }
             }
         }
     }
-    if !any_of_conditions.is_empty() {
-        if any_of_conditions.len() == 1 {
-            if let Some(arr) = any_of_conditions[0].get("anyOf").and_then(|v| v.as_array()) {
+    if !constraint_schemas.is_empty() {
+        if constraint_schemas.len() == 1 {
+            if let Some(arr) = constraint_schemas[0]
+                .get("anyOf")
+                .and_then(|v| v.as_array())
+            {
                 input_schema.insert("anyOf".into(), serde_json::Value::Array(arr.clone()));
+            } else {
+                input_schema.insert("allOf".into(), serde_json::Value::Array(constraint_schemas));
             }
         } else {
-            input_schema.insert("allOf".into(), serde_json::Value::Array(any_of_conditions));
+            input_schema.insert("allOf".into(), serde_json::Value::Array(constraint_schemas));
         }
     }
 
@@ -2317,6 +2335,27 @@ fn mcp_type_for_arg(arg: &ClapArg) -> (serde_json::Value, Option<serde_json::Val
         (serde_json::json!("string"), None)
     };
     (json_type, items)
+}
+
+/// JSON Schema fragment matching clap "this arg is active on the CLI".
+///
+/// For `SetTrue` / `SetFalse` flags, activity is value-based (`const`), matching
+/// [`build_tool_argv`] which only emits the flag when the boolean is set.
+/// Other args use property presence (`required`).
+fn schema_when_arg_active(arg: &ClapArg) -> serde_json::Value {
+    match arg.action.as_deref() {
+        Some("SetTrue") => serde_json::json!({
+            "properties": { arg.id.clone(): { "const": true } },
+            "required": [arg.id.clone()]
+        }),
+        Some("SetFalse") => serde_json::json!({
+            "properties": { arg.id.clone(): { "const": false } },
+            "required": [arg.id.clone()]
+        }),
+        _ => serde_json::json!({
+            "required": [arg.id.clone()]
+        }),
+    }
 }
 
 /// Optional description suffix so MCP clients know what to pass for flags/count/list.
@@ -6596,12 +6635,103 @@ mod tests {
         assert_eq!(tags.get("type"), Some(&json!("array")));
         assert_eq!(tags.get("minItems"), Some(&json!(1)));
         assert_eq!(tags.get("maxItems"), Some(&json!(3)));
-        let dep = input
-            .get("dependentSchemas")
+        let constraints = input
+            .get("allOf")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .or_else(|| input.get("anyOf").map(|v| vec![json!({ "anyOf": v })]))
+            .expect("conflicts / required_unless should encode constraints");
+        let encoded = serde_json::to_string(&constraints).unwrap();
+        assert!(
+            encoded.contains("\"const\":true") || encoded.contains("\"const\": true"),
+            "boolean flag constraints must use const:true, got {encoded}"
+        );
+        assert!(
+            encoded.contains("dry_run") && encoded.contains("force"),
+            "dry_run/force conflict missing: {encoded}"
+        );
+        assert!(
+            encoded.contains("token"),
+            "required_unless token constraint missing: {encoded}"
+        );
+    }
+
+    #[test]
+    fn test_boolean_flags_omit_string_enum_and_use_const_true_presence() {
+        #[derive(clap::Parser, Debug)]
+        #[command(name = "app")]
+        struct DeriveCli {
+            #[command(subcommand)]
+            cmd: DeriveCmd,
+        }
+        #[derive(clap::Subcommand, Debug)]
+        enum DeriveCmd {
+            #[command(name = "set-avatar")]
+            SetAvatar {
+                #[arg(long, conflicts_with = "remove")]
+                image: Option<String>,
+                #[arg(long, action = ArgAction::SetTrue)]
+                remove: bool,
+            },
+        }
+        let derive_cmd = <DeriveCli as clap::CommandFactory>::command();
+        let schema = schema_from_command(&derive_cmd);
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig::default(),
+            &ClapMcpSchemaMetadata::default(),
+        );
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "set-avatar")
+            .expect("set-avatar");
+        let props = tool
+            .input_schema
+            .get("properties")
             .and_then(|v| v.as_object())
-            .expect("conflicts should encode dependentSchemas");
-        assert!(dep.contains_key("force") || dep.contains_key("dry_run"));
-        assert!(input.get("anyOf").is_some());
+            .unwrap();
+        let remove = props.get("remove").unwrap();
+        assert_eq!(remove.get("type"), Some(&json!("boolean")));
+        assert!(
+            remove.get("enum").is_none(),
+            "boolean must not use string enum true/false: {remove}"
+        );
+
+        let cmd = Command::new("app").subcommand(
+            Command::new("set-avatar")
+                .arg(Arg::new("image").long("image").conflicts_with("remove"))
+                .arg(
+                    Arg::new("remove")
+                        .long("remove")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("image"),
+                )
+                .group(
+                    clap::ArgGroup::new("src")
+                        .args(["image", "remove"])
+                        .required(true),
+                ),
+        );
+        let schema = schema_from_command(&cmd);
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig::default(),
+            &ClapMcpSchemaMetadata::default(),
+        );
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "set-avatar")
+            .expect("set-avatar");
+        let input = tool.input_schema.as_ref();
+        let encoded = serde_json::to_string(input).unwrap();
+        assert!(
+            encoded.contains("\"const\":true") || encoded.contains("\"const\": true"),
+            "remove/image constraints need const:true: {encoded}"
+        );
+        assert!(
+            !encoded.contains("\"dependentSchemas\""),
+            "boolean conflicts must not use presence-only dependentSchemas"
+        );
     }
 
     #[test]
