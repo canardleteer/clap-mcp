@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+## `clap-mcp` - [0.1.0-rc.2](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.1.0-rc.1...clap-mcp-v0.1.0-rc.2) - 2026-09-04
+
+### Added
+- *(server)* support application server metadata, instructions, and tool annotations
+
+### Fixed
+- *(macros,docs)* reject non-boolean tool annotations, support enum-root annotations, and expand docs- *(macros,server)* apply annotations to custom tools and fail on unsupported annotation keys- *(deps)* promote tracing to unconditional dependency and check minimal features in CI
+## `clap-mcp-macros` - [0.1.0-rc.2](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-macros-v0.1.0-rc.1...clap-mcp-macros-v0.1.0-rc.2) - 2026-09-04
+
+### Added
+- *(server)* support application server metadata, instructions, and tool annotations
+
+### Fixed
+- *(macros,docs)* reject non-boolean tool annotations, support enum-root annotations, and expand docs- *(macros,server)* apply annotations to custom tools and fail on unsupported annotation keys
 ## `clap-mcp` - [0.1.0-rc.1](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.0.5...clap-mcp-v0.1.0-rc.1) - 2026-08-16
 
 ### Added
