@@ -871,6 +871,18 @@ impl ClapMcpServeOptions {
         self.tool_annotations.insert(tool_name.into(), annotations);
         self
     }
+
+    /// Add a custom (schema-only) MCP tool.
+    pub fn with_custom_tool(mut self, tool: rmcp::model::Tool) -> Self {
+        self.custom_tools.push(tool);
+        self
+    }
+
+    /// Add custom (schema-only) MCP tools.
+    pub fn with_custom_tools(mut self, tools: impl IntoIterator<Item = rmcp::model::Tool>) -> Self {
+        self.custom_tools.extend(tools);
+        self
+    }
 }
 
 /// SEP-2549 `ttlMs` / `cacheScope` hints for list and read results.
@@ -5885,7 +5897,13 @@ mod tests {
             ClapMcpServeOptions::default().with_tool_annotation("echo", override_ann);
         let handler: InProcessToolHandler =
             Arc::new(|_, _| Ok(ClapMcpToolOutput::Text("ok".into())));
-        let server = build_test_server(config, metadata, serve_options, Some(handler), None);
+        let server = build_test_server(
+            config.clone(),
+            metadata.clone(),
+            serve_options,
+            Some(handler),
+            None,
+        );
         let server_tools = server.inner.tools.clone();
         let server_echo = server_tools
             .iter()
@@ -5896,6 +5914,46 @@ mod tests {
         assert_eq!(tool_ann2.title.as_deref(), Some("Overridden Echo"));
         assert_eq!(tool_ann2.read_only_hint, Some(false));
         assert_eq!(tool_ann2.destructive_hint, Some(true));
+
+        // Test custom tool receiving annotation via serve_options
+        let custom_raw = Tool::new(
+            "custom_raw",
+            "custom desc",
+            Arc::new(serde_json::Map::new()),
+        );
+        let custom_ann = ToolAnnotations::from_raw(
+            Some("Custom Raw Title".into()),
+            Some(true),
+            Some(false),
+            None,
+            None,
+        );
+        let serve_options_with_custom = ClapMcpServeOptions::default()
+            .with_custom_tool(custom_raw)
+            .with_tool_annotation("custom_raw", custom_ann);
+        let handler2: InProcessToolHandler =
+            Arc::new(|_, _| Ok(ClapMcpToolOutput::Text("ok".into())));
+        let server2 = build_test_server(
+            config,
+            metadata,
+            serve_options_with_custom,
+            Some(handler2),
+            None,
+        );
+        let server2_custom = server2
+            .inner
+            .tools
+            .iter()
+            .find(|t| t.name == "custom_raw")
+            .expect("custom_raw tool");
+        assert_eq!(server2_custom.title.as_deref(), Some("Custom Raw Title"));
+        let custom_ann2 = server2_custom
+            .annotations
+            .as_ref()
+            .expect("custom annotations");
+        assert_eq!(custom_ann2.title.as_deref(), Some("Custom Raw Title"));
+        assert_eq!(custom_ann2.read_only_hint, Some(true));
+        assert_eq!(custom_ann2.destructive_hint, Some(false));
     }
 
     #[test]
