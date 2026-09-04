@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe)]
+#[clap_mcp(reinvocation_safe, tool_title = "Root CLI Title", read_only)]
 #[clap_mcp_output_from = "run_test_cli"]
 #[command(name = "annotated-test-cli")]
 enum AnnotatedTestCli {
@@ -136,6 +136,16 @@ async fn test_server_metadata_and_annotations_over_stdio() {
     // 4. Verify tools/list annotations
     let tools = client.list_tools(None).await.expect("list_tools").tools;
 
+    // Check enum root tool annotations
+    let root = tools
+        .iter()
+        .find(|t| t.name == "annotated-test-cli")
+        .expect("root tool");
+    assert_eq!(root.title.as_deref(), Some("Root CLI Title"));
+    let root_ann = root.annotations.as_ref().expect("root annotations");
+    assert_eq!(root_ann.title.as_deref(), Some("Root CLI Title"));
+    assert_eq!(root_ann.read_only_hint, Some(true));
+
     // Check `fetch`
     let fetch = tools
         .iter()
@@ -249,12 +259,8 @@ async fn test_instructions_precede_logging_when_both_enabled() {
     let server_task = tokio::spawn(async move {
         ServeMcpBuilder::for_cli::<AnnotatedTestCli>(McpListen::Stdio)
             .stdio_io(server_read, server_write)
+            .serve_options(ClapMcpServeOptions::default().with_log_rx(log_rx))
             .instructions("Primary application instructions.")
-            .serve_options(
-                ClapMcpServeOptions::default()
-                    .with_instructions("Primary application instructions.")
-                    .with_log_rx(log_rx),
-            )
             .serve()
             .await
             .expect("server should run");

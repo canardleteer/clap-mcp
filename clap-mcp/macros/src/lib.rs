@@ -35,6 +35,23 @@ fn meta_string_value(meta: &syn::meta::ParseNestedMeta) -> syn::Result<String> {
     }
 }
 
+fn meta_bool_value(meta: &syn::meta::ParseNestedMeta) -> syn::Result<bool> {
+    let value: Expr = meta.value()?.parse()?;
+    match &value {
+        Expr::Lit(lit) => match &lit.lit {
+            Lit::Bool(b) => Ok(b.value),
+            _ => Err(syn::Error::new_spanned(
+                &value,
+                "expected boolean literal (`true` or `false`)",
+            )),
+        },
+        _ => Err(syn::Error::new_spanned(
+            &value,
+            "expected boolean literal (`true` or `false`)",
+        )),
+    }
+}
+
 /// Parses `#[clap_mcp(...)]` attributes.
 fn parse_clap_mcp_attrs(attrs: &[syn::Attribute]) -> ClapMcpAttrs {
     let mut parallel_safe = None;
@@ -1755,8 +1772,7 @@ fn parse_tool_annotation_meta(
         || meta.path.is_ident("readOnlyHint")
     {
         if meta.input.peek(syn::token::Eq) {
-            let value: Expr = meta.value()?.parse()?;
-            annotations.read_only = Some(expr_to_bool(&value));
+            annotations.read_only = Some(meta_bool_value(meta)?);
         } else {
             annotations.read_only = Some(true);
         }
@@ -1766,8 +1782,7 @@ fn parse_tool_annotation_meta(
         || meta.path.is_ident("destructiveHint")
     {
         if meta.input.peek(syn::token::Eq) {
-            let value: Expr = meta.value()?.parse()?;
-            annotations.destructive = Some(expr_to_bool(&value));
+            annotations.destructive = Some(meta_bool_value(meta)?);
         } else {
             annotations.destructive = Some(true);
         }
@@ -1777,8 +1792,7 @@ fn parse_tool_annotation_meta(
         || meta.path.is_ident("idempotentHint")
     {
         if meta.input.peek(syn::token::Eq) {
-            let value: Expr = meta.value()?.parse()?;
-            annotations.idempotent = Some(expr_to_bool(&value));
+            annotations.idempotent = Some(meta_bool_value(meta)?);
         } else {
             annotations.idempotent = Some(true);
         }
@@ -1788,8 +1802,7 @@ fn parse_tool_annotation_meta(
         || meta.path.is_ident("openWorldHint")
     {
         if meta.input.peek(syn::token::Eq) {
-            let value: Expr = meta.value()?.parse()?;
-            annotations.open_world = Some(expr_to_bool(&value));
+            annotations.open_world = Some(meta_bool_value(meta)?);
         } else {
             annotations.open_world = Some(true);
         }
@@ -1915,10 +1928,17 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
 
     match &input.data {
         syn::Data::Enum(data) => {
-            if let Err(e) = get_clap_mcp_tool_annotations(&input.attrs)
-                && tool_annotations_error.is_none()
-            {
-                tool_annotations_error = Some(e);
+            let root_name = get_command_name(&input.attrs, name);
+            match get_clap_mcp_tool_annotations(&input.attrs) {
+                Ok(Some(ann)) => {
+                    tool_annotations.insert(root_name.clone(), ann);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    if tool_annotations_error.is_none() {
+                        tool_annotations_error = Some(e);
+                    }
+                }
             }
             for v in &data.variants {
                 let cmd_name = get_command_name(&v.attrs, &v.ident);
