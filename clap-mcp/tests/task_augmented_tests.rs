@@ -199,6 +199,16 @@ async fn wait_for_task_log_ids(
     }
 }
 
+/// How long concurrent logging tests wait for both `meta.taskId` values.
+fn concurrent_task_log_wait() -> Duration {
+    // Windows CI has shown slower notification delivery under shared-runtime overlap.
+    if cfg!(windows) {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_secs(15)
+    }
+}
+
 async fn launch_task_example<H>(
     bin: &str,
     handler: H,
@@ -582,14 +592,17 @@ async fn concurrent_task_logging_distinct_task_ids_parallel_probe() {
     let _ = client
         .set_level(SetLevelRequestParams::new(LoggingLevel::Debug))
         .await;
+    // Let the server apply logging/setLevel before tool bodies emit.
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let peer = client.peer();
-    let create_a = call_task_create_probe(peer, PROBE_LONG_MS, "a")
-        .await
-        .expect("task a");
-    let create_b = call_task_create_probe(peer, PROBE_SHORT_MS, "b")
-        .await
-        .expect("task b");
+    // Overlap creates so both bodies can emit under parallel_safe + share_runtime.
+    let (create_a, create_b) = tokio::join!(
+        call_task_create_probe(peer, PROBE_LONG_MS, "a"),
+        call_task_create_probe(peer, PROBE_SHORT_MS.max(40), "b"),
+    );
+    let create_a = create_a.expect("task a");
+    let create_b = create_b.expect("task b");
     let peer_a = peer.clone();
     let peer_b = peer.clone();
     let poll_a_id = create_a.task.task_id.clone();
@@ -608,7 +621,7 @@ async fn concurrent_task_logging_distinct_task_ids_parallel_probe() {
         &task_ids,
         &create_a.task.task_id,
         &create_b.task.task_id,
-        Duration::from_secs(10),
+        concurrent_task_log_wait(),
     );
     let ((), (), captured) = tokio::join!(poll_a, poll_b, wait_logs);
 

@@ -41,8 +41,12 @@ fn append(event: &str, label: &str, call: &str, ms: u64) {
 /// Records probe events around an async sleep (tool body).
 pub async fn sleep_with_probe(label: &str, call: &str, ms: u64) -> String {
     append("body_start", label, call, ms);
-    tracing::info!(label = label, call = call, ms = ms, "probe body");
+    // Emit before and after sleep so concurrent `meta.taskId` logging tests have
+    // more than one notification chance per task (Windows CI has been flaky with
+    // a single start-only event under shared-runtime overlap).
+    tracing::info!(label = label, call = call, ms = ms, "probe body start");
     tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+    tracing::info!(label = label, call = call, ms = ms, "probe body end");
     append("body_end", label, call, ms);
     format!("slept {ms}ms as {label} ({call})")
 }
