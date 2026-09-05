@@ -62,7 +62,7 @@ macro):
 
 ```toml
 [dependencies]
-clap-mcp = "0.1.0-rc.2"
+clap-mcp = "0.1.0-rc.3"
 ```
 
 * Opt-in MCP server on existing `clap` CLIs (`--mcp` stdio, `--mcp-http` with
@@ -128,7 +128,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-clap-mcp = { version = "0.1.0-rc.2", features = ["tracing"] }
+clap-mcp = { version = "0.1.0-rc.3", features = ["tracing"] }
 ```
 
 ## When and when not to use `clap-mcp`

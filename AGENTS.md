@@ -337,33 +337,45 @@ stateful derive → `docs/stateful-tools.md`; tool output / schemas →
 
 ### Version strings in documentation
 
-* **Single source of truth:** workspace version in root [`Cargo.toml`](Cargo.toml)
-  only.
+* **Single source of truth for “what version to write”** (in order):
+  1. An open GitHub PR whose title starts with `chore: release` (from
+     release-plz). Read the **PR branch source** — typically root
+     [`Cargo.toml`](Cargo.toml) `workspace.package.version` on that branch, or
+     the `x.y.z -> a.b.c` lines in the PR body. That is the upcoming published
+     version. The PR **title** may lag after release-plz refreshes the branch;
+     never prefer the title over the branch/`Cargo.toml` contents.
+  2. Otherwise the workspace version on the branch you are editing (usually
+     `main` / root [`Cargo.toml`](Cargo.toml)).
 * **Copy-paste examples** in README, `docs/*.md`, and hand-authored skills under
-  `.agents/skills/`: match the workspace version **exactly**, including any
-  `-rc.N` pre-release suffix (for example `version = "0.1.0-rc.2"` when that is
-  the workspace version). During this pre-stable phase, readers should depend
-  on the same RC the repo is on. After a stable `0.1.0` (or later) ships, you
-  may relax examples to a broader requirement such as `"0.1.0"` without the RC
-  pin.
+  `.agents/skills/`: match that version **exactly**, including any `-rc.N`
+  pre-release suffix (for example `version = "0.1.0-rc.3"` when the open
+  release PR or workspace is on that RC). During this pre-stable phase, readers
+  should depend on the same RC the next publish will use. After a stable
+  `0.1.0` (or later) ships, you may relax examples to a broader requirement
+  such as `"0.1.0"` without the RC pin.
 * **Exempt from bump sweeps:** [`CHANGELOG.md`](CHANGELOG.md) historical
   entries, and historical semver literals inside
   [`docs/migration-notes.md`](docs/migration-notes.md) that document past
   release boundaries. Current-release guidance in migration-notes (including
-  copy-paste `Cargo.toml` snippets) still tracks the workspace version.
-* **After a workspace version bump:** run:
+  copy-paste `Cargo.toml` snippets) still tracks the version source above.
+* **After a workspace version bump** (or when aligning docs ahead of a pending
+  `chore: release` merge): run:
 
   ```shell
+  gh pr list --search 'chore: release' --state open
   rg 'clap-mcp = |"clap-mcp"' README.md docs/*.md AGENTS.md examples/README.md .agents/skills
   ```
 
-  Align every copy-paste dependency version with root `Cargo.toml` (including
+  Align every copy-paste dependency version with the release-PR branch
+  `Cargo.toml` when one is open, otherwise with root `Cargo.toml` (including
   `-rc.N` while on an RC).
 
 ## Git
 
 * Do not commit unless the user asks.
-* Do not bump the crate version unless explicitly requested.
+* Do not bump the crate version unless explicitly requested. Prefer letting the
+  open `chore: release` PR land the workspace bump; document copy-paste strings
+  against that upcoming version when release-plz has already opened the PR.
 
 ### CHANGELOG (`release-plz`)
 
@@ -373,8 +385,10 @@ stateful derive → `docs/stateful-tools.md`; tool output / schemas →
 [`.github/workflows/release-plz.yml`](.github/workflows/release-plz.yml).
 
 On pushes to `main`, the `release-plz` workflow opens or updates a release PR
-that bumps crate versions and rewrites `CHANGELOG.md` from conventional commit
-messages since the last release.
+(`chore: release …`) that bumps crate versions and rewrites `CHANGELOG.md` from
+conventional commit messages since the last release. When that PR is open, treat
+its branch `Cargo.toml` as the version for documentation copy-paste (see
+[Version strings in documentation](#version-strings-in-documentation)).
 
 **Agent rule:** do not add or edit `CHANGELOG.md` in task PRs. Document user-facing
 changes in `docs/` (and README when needed). Write commit messages release-plz can
