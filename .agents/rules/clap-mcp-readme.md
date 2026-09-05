@@ -30,4 +30,8 @@ Before finishing edits to [`README.md`](../../README.md):
 ! rg '\]\((docs/|examples/|AGENTS\.md|\.agents/)' README.md
 ```
 
+5. Do **not** rewrite [Protected human prose](../../AGENTS.md#protected-human-prose)
+   in the Design section (including the Clanker warning). See
+   [`clap-mcp-protected-prose.md`](clap-mcp-protected-prose.md).
+
 `rumdl check README.md` is optional when installed.
