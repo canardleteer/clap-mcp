@@ -408,15 +408,27 @@ them from advertised MCP `inputSchema`:
   `ClapMcpSchemaMetadata::with_skip_global_arg`.
 * Per tool: `#[clap_mcp(skip = "verbose")]` on a variant (bare `#[clap_mcp(skip)]`
   still hides the whole command), or `ServeMcpBuilder::skip_arg`.
+* Imperative `skip_args` also accepts a `"*"` tool key that omits the listed ids
+  on every tool (same effect as putting those ids in `skip_global_args`). Prefer
+  `skip_global` / `skip_global_arg` for that case.
 
 Native `clap` parsing is unchanged; only MCP schemas and argv built from tool
 calls omit the filtered ids.
 
-Unknown ids in `skip_global` / `skip_args` fail MCP serve startup with
+Unknown ids in `skip_global` / `skip_args` fail MCP serve startup (and
+`--export-skills`) with
 [`ClapMcpError::InvalidConfig`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.ClapMcpError.html)
 (derive and `get_matches_or_serve_mcp*` validate against the live clap
-`Command`; serve-option overlays validate against the filtered schema). Typos
-cannot silently leave an argument agent-visible.
+`Command`; serve-option overlays validate against the filtered schema). Plain
+CLI runs that never request MCP do not run this check. Typos cannot silently
+leave an argument agent-visible.
+
+Serve-option `skip_global_args` / `skip_args` apply to advertised tool schemas
+and the subprocess argv path. The in-process handler is built from derive
+metadata at `ServeMcpBuilder::for_cli` time, before those overlays merge. Skipping
+a **required** arg only via serve options can leave the in-process tool
+uncallable while subprocess execution still works; prefer derive
+`skip` / `skip_global`, or skip optional args when using serve-option overlays.
 
 ### Hide or override advertised defaults
 
@@ -442,10 +454,14 @@ objects). Boolean flags do **not** advertise string `enum` values. Conflicts,
 so `false` does not count as an active flag.
 
 Conflict and requirement edges that clap does not expose via public getters are
-read from clap's Debug representation as a best-effort fallback. Prefer public
-clap APIs when they become available; Debug field names can change across patch
-releases. Explicit constraint-override metadata is **not** offered yet; revisit
-when clap adds getters or a concrete unrepresentable constraint appears.
+read from clap's Debug representation as a best-effort fallback (field searches
+anchor on `, conflicts:` / `, requires:` / `, r_unless:` so help text cannot
+shadow them). Prefer public clap APIs when they become available; Debug field
+names can change across patch releases. The following clap constraint kinds are
+**not** represented in `inputSchema` today: `requires_if` / `required_if`
+(`r_ifs`), `overrides`, and `exclusive`. Explicit constraint-override metadata
+is **not** offered yet; revisit when clap adds getters or a concrete
+unrepresentable constraint appears.
 
 Absolute or host-computed clap defaults may still appear in schemas when clap
 surfaces them as default values. Use `hide_default` / `override_default` when

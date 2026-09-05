@@ -4,6 +4,29 @@
 
 [← Documentation index](../README.md#documentation)
 
+## 0.1.0-rc.1 → 0.1.0-rc.2
+
+Behavior changes on the `0.1.0-rc.2` line that affect existing clap-mcp CLIs:
+
+### Variant `skip = "..."` no longer hides the whole tool
+
+On earlier releases, any `#[clap_mcp(skip)]` / `#[clap_mcp(skip = "...")]` on an
+enum variant pushed that command onto `skip_commands` (the tool disappeared from
+MCP). Explicit lists now keep the tool and omit only the listed argument ids.
+Bare `#[clap_mcp(skip)]` still hides the whole command.
+
+If you used `#[clap_mcp(skip = "a,b")]` to hide a variant, switch to bare
+`#[clap_mcp(skip)]`.
+
+### Subprocess stderr defaults to Capture
+
+Previously, non-empty subprocess stderr always produced MCP
+`notifications/message`. The default is now
+[`SubprocessStderr::Capture`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.SubprocessStderr.html):
+stderr is appended to the tool result text only. Use `SubprocessStderr::Notify`
+(or `ServeMcpBuilder` / `ClapMcpServeOptions` helpers) to restore notification
+forwarding. See [logging.md](logging.md).
+
 ## 0.0.5 → 0.1.0-rc.1
 
 `0.1.0-rc.1` is a **breaking** release. It bumps workspace [`rmcp`](https://docs.rs/rmcp)

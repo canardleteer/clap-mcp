@@ -3172,15 +3172,18 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
     config: ClapMcpConfig,
     metadata: &ClapMcpSchemaMetadata,
 ) -> clap::ArgMatches {
-    if let Err(e) = validate_skip_arg_ids(&cmd, metadata) {
-        eprintln!("MCP server error: {}", e);
-        std::process::exit(1);
-    }
     let schema = schema_from_command_with_metadata(&cmd, metadata);
     let flags = config.builtin_flags;
-    let cmd = command_with_mcp_and_export_skills_flags_with_flags(cmd, &flags);
+    let skip_validation_cmd = cmd.clone();
+    let exit_on_bad_skips = || {
+        if let Err(e) = validate_skip_arg_ids(&skip_validation_cmd, metadata) {
+            eprintln!("clap-mcp configuration error: {e}");
+            std::process::exit(1);
+        }
+    };
 
     if let Some(maybe_dir) = argv_export_skills_dir(&flags) {
+        exit_on_bad_skips();
         let tools = tools_from_schema_with_metadata(&schema, &config, metadata);
         let output_dir = maybe_dir.unwrap_or_else(|| PathBuf::from(".agents").join("skills"));
         let app_name = schema.root.name.as_str();
@@ -3200,6 +3203,8 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
         std::process::exit(0);
     }
 
+    let cmd = command_with_mcp_and_export_skills_flags_with_flags(cmd, &flags);
+
     if config.allow_mcp_without_subcommand
         && (argv_requests_mcp_without_subcommand(&cmd, &flags) || {
             #[cfg(feature = "http")]
@@ -3213,6 +3218,7 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
             }
         })
     {
+        exit_on_bad_skips();
         let schema_json = match serde_json::to_string_pretty(&schema) {
             Ok(s) => s,
             Err(e) => {
@@ -3283,6 +3289,7 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
     }
 
     if mcp_requested || http_listen.is_some() {
+        exit_on_bad_skips();
         let schema_json = match serde_json::to_string_pretty(&schema) {
             Ok(s) => s,
             Err(e) => {
@@ -3462,7 +3469,7 @@ where
     let metadata = T::clap_mcp_schema_metadata();
     let cmd = T::command();
     if let Err(e) = validate_skip_arg_ids(&cmd, &metadata) {
-        panic!("clap-mcp invalid skip configuration: {e}");
+        panic!("clap-mcp configuration error: {e}");
     }
     let schema = schema_from_command_with_metadata(&cmd, &metadata);
     let schema_json = serde_json::to_string_pretty(&schema).expect("schema should serialize");
@@ -3495,7 +3502,7 @@ where
     let metadata = T::clap_mcp_schema_metadata();
     let cmd = T::command();
     if let Err(e) = validate_skip_arg_ids(&cmd, &metadata) {
-        panic!("clap-mcp invalid skip configuration: {e}");
+        panic!("clap-mcp configuration error: {e}");
     }
     let schema = schema_from_command_with_metadata(&cmd, &metadata);
     let schema_json = serde_json::to_string_pretty(&schema).expect("schema should serialize");
@@ -3777,31 +3784,41 @@ where
 
 fn parse_arg_debug_constraints(arg: &clap::Arg) -> (Vec<String>, Vec<String>, Vec<String>) {
     let debug_str = format!("{arg:?}");
+    // Anchor on field boundaries (`, field:`) so help text that embeds the same
+    // substrings cannot shadow the real Debug fields. clap Debug puts `help:` /
+    // `long_help:` before constraint fields.
     let parse_quoted_strings = |field: &str| -> Vec<String> {
-        if let Some(start) = debug_str.find(field) {
-            let rest = &debug_str[start + field.len()..];
-            if let Some(open) = rest.find('[')
-                && let Some(close) = rest[open..].find(']')
-            {
-                let content = &rest[open + 1..open + close];
-                let mut items = Vec::new();
-                let mut chars = content.chars().peekable();
-                while let Some(ch) = chars.next() {
-                    if ch == '"' {
-                        let mut s = String::new();
-                        for c in chars.by_ref() {
-                            if c == '"' {
-                                break;
-                            }
-                            s.push(c);
+        let anchored = format!(", {field}");
+        let start = debug_str.find(&anchored).map(|i| i + 2).or_else(|| {
+            // First field after `Arg {` has no leading comma.
+            let bare = format!("{{ {field}");
+            debug_str.find(&bare).map(|i| i + 2)
+        });
+        let Some(start) = start else {
+            return Vec::new();
+        };
+        let rest = &debug_str[start + field.len()..];
+        if let Some(open) = rest.find('[')
+            && let Some(close) = rest[open..].find(']')
+        {
+            let content = &rest[open + 1..open + close];
+            let mut items = Vec::new();
+            let mut chars = content.chars().peekable();
+            while let Some(ch) = chars.next() {
+                if ch == '"' {
+                    let mut s = String::new();
+                    for c in chars.by_ref() {
+                        if c == '"' {
+                            break;
                         }
-                        if !s.is_empty() && s != arg.get_id().as_str() && !items.contains(&s) {
-                            items.push(s);
-                        }
+                        s.push(c);
+                    }
+                    if !s.is_empty() && s != arg.get_id().as_str() && !items.contains(&s) {
+                        items.push(s);
                     }
                 }
-                return items;
             }
+            return items;
         }
         Vec::new()
     };
@@ -6930,6 +6947,42 @@ mod tests {
         assert!(
             encoded.contains("token"),
             "required_unless token constraint missing: {encoded}"
+        );
+    }
+
+    #[test]
+    fn test_debug_constraint_parse_ignores_help_text_shadow() {
+        let cmd = Command::new("app").subcommand(
+            Command::new("probe")
+                .arg(
+                    Arg::new("force")
+                        .long("force")
+                        .action(ArgAction::SetTrue)
+                        .help("Do not write conflicts: [\"fake\"] in help")
+                        .conflicts_with("dry_run"),
+                )
+                .arg(
+                    Arg::new("dry_run")
+                        .long("dry-run")
+                        .action(ArgAction::SetTrue),
+                ),
+        );
+        let schema = schema_from_command(&cmd);
+        let force = schema
+            .root
+            .subcommands
+            .iter()
+            .find(|c| c.name == "probe")
+            .expect("probe")
+            .args
+            .iter()
+            .find(|a| a.id == "force")
+            .expect("force");
+        assert_eq!(force.conflicts_with, vec!["dry_run".to_string()]);
+        assert!(
+            !force.conflicts_with.iter().any(|c| c == "fake"),
+            "help text must not invent conflicts: {:?}",
+            force.conflicts_with
         );
     }
 
