@@ -14,7 +14,7 @@ Add `clap-mcp` with the default `derive` feature:
 
 ```toml
 [dependencies]
-clap-mcp = "0.1.0-rc.2"
+clap-mcp = "0.1.0-rc.3"
 clap = "4"
 ```
 
