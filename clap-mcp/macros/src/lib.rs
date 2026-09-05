@@ -430,6 +430,37 @@ fn get_clap_mcp_skip_global(attrs: &[syn::Attribute]) -> Vec<String> {
                         }
                     }
                 }
+            } else if meta.input.peek(syn::token::Eq) {
+                let _: Expr = meta.value()?.parse()?;
+            }
+            Ok(())
+        });
+    }
+    result
+}
+
+/// Parses `#[clap_mcp(hide_default = "a,b")]` into argument ids.
+fn get_clap_mcp_hide_default(attrs: &[syn::Attribute]) -> Vec<String> {
+    let mut result = Vec::new();
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("hide_default") && meta.input.peek(syn::token::Eq) {
+                let value: Expr = meta.value()?.parse()?;
+                if let Expr::Lit(lit) = value
+                    && let Lit::Str(s) = &lit.lit
+                {
+                    for id in s.value().split(',') {
+                        let trimmed = id.trim();
+                        if !trimmed.is_empty() {
+                            result.push(trimmed.to_string());
+                        }
+                    }
+                }
+            } else if meta.input.peek(syn::token::Eq) {
+                let _: Expr = meta.value()?.parse()?;
             }
             Ok(())
         });
@@ -1976,10 +2007,16 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         .map(|b| quote! { #b })
         .unwrap_or(quote! { false });
     let skip_global_args = get_clap_mcp_skip_global(&input.attrs);
+    let root_hide_defaults = get_clap_mcp_hide_default(&input.attrs);
     let mut tool_output_schemas: Vec<(String, syn::Type)> = Vec::new();
     let mut skip_commands = Vec::<String>::new();
     let mut skip_args: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
+    let mut hide_defaults: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    if !root_hide_defaults.is_empty() {
+        hide_defaults.insert("*".to_string(), root_hide_defaults);
+    }
     let mut requires_args: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     let mut task_tool_names = Vec::<String>::new();
@@ -2038,6 +2075,13 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         skip_args.entry(cmd_name.clone()).or_default().extend(ids);
                     }
                     ClapMcpSkipMode::None => {}
+                }
+                let variant_hide = get_clap_mcp_hide_default(&v.attrs);
+                if !variant_hide.is_empty() {
+                    hide_defaults
+                        .entry(cmd_name.clone())
+                        .or_default()
+                        .extend(variant_hide);
                 }
                 if let Some(ty) = get_clap_mcp_variant_output_type(&v.attrs) {
                     tool_output_schemas.push((cmd_name.clone(), ty));
@@ -2209,6 +2253,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     let merge = !skip_commands.is_empty()
                         || !skip_args.is_empty()
                         || !skip_global_args.is_empty()
+                        || !hide_defaults.is_empty()
                         || !flatten_skip_entries.is_empty()
                         || !requires_args.is_empty()
                         || !task_tool_names.is_empty()
@@ -2238,6 +2283,19 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 });
                             quote! {
                                 local.skip_args.entry(#k_lit.to_string()).or_default().extend([#(#vs),*]);
+                            }
+                        });
+                        let hide_defaults_entries = hide_defaults.iter().map(|(k, v)| {
+                            let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+                            let vs = v.iter().map(|s| {
+                                let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+                                quote! { #lit.to_string() }
+                            });
+                            quote! {
+                                local.hide_defaults
+                                    .entry(#k_lit.to_string())
+                                    .or_default()
+                                    .extend([#(#vs),*]);
                             }
                         });
                         let requires_args_entries = requires_args.iter().map(|(k, v)| {
@@ -2318,6 +2376,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     local.task_tool_names.extend([#(#task_tool_names_lit),*]);
                                     local.task_augmented_tools = #task_augmented_tools_expr;
                                     #(#skip_args_entries)*
+                                    #(#hide_defaults_entries)*
                                     #(#flatten_skip_stmts_local)*
                                     #(#requires_args_entries)*
                                     #(#serialize_tools_entries)*
@@ -2332,6 +2391,19 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                             }
                         };
                     } else {
+                        let hide_defaults_entries_light = hide_defaults.iter().map(|(k, v)| {
+                            let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+                            let vs = v.iter().map(|s| {
+                                let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+                                quote! { #lit.to_string() }
+                            });
+                            quote! {
+                                m.hide_defaults
+                                    .entry(#k_lit.to_string())
+                                    .or_default()
+                                    .extend([#(#vs),*]);
+                            }
+                        });
                         let flatten_skip_stmts_m = quote_flatten_skip_stmts(
                             &flatten_skip_entries,
                             &quote::format_ident!("m"),
@@ -2348,6 +2420,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     let mut m = <#sub_path as clap_mcp::ClapMcpSchemaMetadataProvider>::clap_mcp_schema_metadata();
                                     m.skip_global_args.extend([#(#skip_global_args_lit),*]);
                                     m.task_augmented_tools = m.task_augmented_tools || #task_augmented_tools_expr;
+                                    #(#hide_defaults_entries_light)*
                                     #(#flatten_skip_stmts_m)*
                                     #skip_root_assign
                                     #output_schema_assign
@@ -2381,6 +2454,19 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         });
         quote! {
             m.skip_args.insert(#k_lit.to_string(), vec![#(#vs),*]);
+        }
+    });
+    let hide_defaults_entries = hide_defaults.iter().map(|(k, v)| {
+        let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+        let vs = v.iter().map(|s| {
+            let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+            quote! { #lit.to_string() }
+        });
+        quote! {
+            m.hide_defaults
+                .entry(#k_lit.to_string())
+                .or_default()
+                .extend([#(#vs),*]);
         }
     });
     let requires_args_entries = requires_args.iter().map(|(k, v)| {
@@ -2481,6 +2567,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 m.task_tool_names.extend([#(#task_tool_names_lit),*]);
                 m.task_augmented_tools = m.task_augmented_tools || #task_augmented_tools_expr;
                 #(#skip_args_entries)*
+                #(#hide_defaults_entries)*
                 #(#flatten_skip_stmts)*
                 #(#requires_args_entries)*
                 #(#serialize_tools_entries)*

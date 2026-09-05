@@ -132,6 +132,10 @@ output.
 > until you either enable in-process execution for those tools or clap-mcp gains
 > a structured subprocess result envelope. Advertising `outputSchema` without
 > structured results is invalid for clients that enforce the tools specification.
+>
+> When `reinvocation_safe` is false and any tool still has `outputSchema`,
+> `tools_from_schema_with_metadata` emits a `tracing` warning that lists the
+> affected tool names.
 
 For subprocess parity with in-process structured tools, print JSON from the CLI
 path your subprocess uses only as a temporary text convention; it does not

@@ -875,6 +875,14 @@ pub struct ClapMcpServeOptions {
 
     /// Per-command argument ids to omit from tool schemas (command_name -> arg_ids).
     pub skip_args: std::collections::HashMap<String, Vec<String>>,
+
+    /// Per-command argument ids whose clap defaults must not be advertised
+    /// (`"*"` = every tool).
+    pub hide_defaults: std::collections::HashMap<String, Vec<String>>,
+
+    /// Per-command overrides for advertised MCP defaults only (`"*"` = every tool).
+    pub override_defaults:
+        std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
 }
 
 impl ClapMcpServeOptions {
@@ -976,6 +984,33 @@ impl ClapMcpServeOptions {
             .entry(command_name.into())
             .or_default()
             .extend(arg_ids.into_iter().map(Into::into));
+        self
+    }
+
+    /// Omit a clap default from the advertised MCP schema for one tool (`"*"` = all).
+    pub fn with_hide_default(
+        mut self,
+        command_name: impl Into<String>,
+        arg_id: impl Into<String>,
+    ) -> Self {
+        self.hide_defaults
+            .entry(command_name.into())
+            .or_default()
+            .push(arg_id.into());
+        self
+    }
+
+    /// Replace the advertised MCP default for one tool argument (`"*"` = all).
+    pub fn with_override_default(
+        mut self,
+        command_name: impl Into<String>,
+        arg_id: impl Into<String>,
+        value: serde_json::Value,
+    ) -> Self {
+        self.override_defaults
+            .entry(command_name.into())
+            .or_default()
+            .insert(arg_id.into(), value);
         self
     }
 }
@@ -1203,6 +1238,15 @@ pub struct ClapMcpSchemaMetadata {
     pub tool_output_schemas: std::collections::HashMap<String, serde_json::Value>,
     /// Global CLI argument ids to omit from all MCP tool schemas.
     pub skip_global_args: Vec<String>,
+    /// Per-command argument ids whose clap defaults must not be advertised in
+    /// MCP `inputSchema` (`"*"` applies to every tool). Native clap defaults
+    /// still apply on the CLI.
+    pub hide_defaults: std::collections::HashMap<String, Vec<String>>,
+    /// Per-command overrides for advertised MCP defaults only
+    /// (`"*"` applies to every tool). Values replace the JSON Schema
+    /// `"default"`; clap CLI defaults are unchanged.
+    pub override_defaults:
+        std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
 }
 
 impl ClapMcpSchemaMetadata {
@@ -1241,6 +1285,15 @@ impl ClapMcpSchemaMetadata {
                 self.skip_global_args.push(g);
             }
         }
+        for (k, v) in other.hide_defaults {
+            self.hide_defaults.entry(k).or_default().extend(v);
+        }
+        for (tool, args) in other.override_defaults {
+            let entry = self.override_defaults.entry(tool).or_default();
+            for (arg, val) in args {
+                entry.insert(arg, val);
+            }
+        }
         if other.output_schema.is_some() {
             self.output_schema = other.output_schema;
         }
@@ -1253,6 +1306,33 @@ impl ClapMcpSchemaMetadata {
         schema: serde_json::Value,
     ) -> Self {
         self.tool_output_schemas.insert(tool_name.into(), schema);
+        self
+    }
+
+    /// Omit a clap default from the advertised MCP schema for one tool (`"*"` = all tools).
+    pub fn with_hide_default(
+        mut self,
+        command_name: impl Into<String>,
+        arg_id: impl Into<String>,
+    ) -> Self {
+        self.hide_defaults
+            .entry(command_name.into())
+            .or_default()
+            .push(arg_id.into());
+        self
+    }
+
+    /// Replace the advertised MCP default for one tool argument (`"*"` = all tools).
+    pub fn with_override_default(
+        mut self,
+        command_name: impl Into<String>,
+        arg_id: impl Into<String>,
+        value: serde_json::Value,
+    ) -> Self {
+        self.override_defaults
+            .entry(command_name.into())
+            .or_default()
+            .insert(arg_id.into(), value);
         self
     }
 
@@ -1822,7 +1902,7 @@ pub fn tools_from_schema_with_metadata(
         } else {
             schema.root.all_commands()
         };
-    commands
+    let tools: Vec<Tool> = commands
         .into_iter()
         .map(|cmd| {
             command_to_tool_with_config(
@@ -1833,7 +1913,42 @@ pub fn tools_from_schema_with_metadata(
                 metadata.output_schema.as_ref(),
             )
         })
+        .collect();
+    warn_subprocess_output_schema(config, metadata, &tools);
+    tools
+}
+
+/// Tool names that advertise `outputSchema` while running in subprocess mode.
+pub(crate) fn tools_advertising_output_schema_under_subprocess(
+    config: &ClapMcpConfig,
+    _metadata: &ClapMcpSchemaMetadata,
+    tools: &[Tool],
+) -> Vec<String> {
+    if config.reinvocation_safe {
+        return Vec::new();
+    }
+    tools
+        .iter()
+        .filter(|tool| tool.output_schema.is_some())
+        .map(|tool| tool.name.to_string())
         .collect()
+}
+
+fn warn_subprocess_output_schema(
+    config: &ClapMcpConfig,
+    metadata: &ClapMcpSchemaMetadata,
+    tools: &[Tool],
+) {
+    let affected = tools_advertising_output_schema_under_subprocess(config, metadata, tools);
+    if affected.is_empty() {
+        return;
+    }
+    tracing::warn!(
+        tools = ?affected,
+        "outputSchema is advertised for tool(s) while reinvocation_safe is false (subprocess mode). \
+         MCP requires structuredContent when outputSchema is set; subprocess results are text-only. \
+         Enable in-process execution for these tools or omit outputSchema. See docs/tool-output.md."
+    );
 }
 
 /// Args exposed for an MCP tool: leaf command args plus ancestor `#[arg(global)]` args.
@@ -1935,35 +2050,10 @@ fn command_to_tool_with_config(
             prop.insert("items".to_string(), items);
         }
 
-        if !arg.default_values.is_empty() {
-            if json_type.as_str() == Some("array") {
-                prop.insert("default".to_string(), serde_json::json!(arg.default_values));
-            } else if json_type.as_str() == Some("boolean") {
-                let b = arg
-                    .default_values
-                    .first()
-                    .map(|s| s == "true")
-                    .unwrap_or(false);
-                prop.insert("default".to_string(), serde_json::Value::Bool(b));
-            } else if json_type.as_str() == Some("integer") {
-                if let Some(i) = arg
-                    .default_values
-                    .first()
-                    .and_then(|s| s.parse::<i64>().ok())
-                {
-                    prop.insert("default".to_string(), serde_json::json!(i));
-                } else {
-                    prop.insert(
-                        "default".to_string(),
-                        serde_json::json!(arg.default_values.first()),
-                    );
-                }
-            } else {
-                prop.insert(
-                    "default".to_string(),
-                    serde_json::json!(arg.default_values.first()),
-                );
-            }
+        if let Some(default_val) =
+            advertised_default_for_arg(arg, &cmd.name, metadata, json_type.as_str())
+        {
+            prop.insert("default".to_string(), default_val);
         }
 
         let desc = arg
@@ -2355,6 +2445,181 @@ fn schema_when_arg_active(arg: &ClapArg) -> serde_json::Value {
         _ => serde_json::json!({
             "required": [arg.id.clone()]
         }),
+    }
+}
+
+fn default_ids_for_tool<'a>(
+    map: &'a std::collections::HashMap<String, Vec<String>>,
+    tool_name: &str,
+) -> impl Iterator<Item = &'a str> {
+    map.get("*")
+        .into_iter()
+        .chain(map.get(tool_name))
+        .flatten()
+        .map(String::as_str)
+}
+
+fn advertised_default_for_arg(
+    arg: &ClapArg,
+    tool_name: &str,
+    metadata: &ClapMcpSchemaMetadata,
+    json_type: Option<&str>,
+) -> Option<serde_json::Value> {
+    if let Some(over) = metadata
+        .override_defaults
+        .get(tool_name)
+        .and_then(|m| m.get(&arg.id))
+        .or_else(|| {
+            metadata
+                .override_defaults
+                .get("*")
+                .and_then(|m| m.get(&arg.id))
+        })
+    {
+        return Some(over.clone());
+    }
+    if default_ids_for_tool(&metadata.hide_defaults, tool_name).any(|id| id == arg.id) {
+        return None;
+    }
+    if arg.default_values.is_empty() {
+        return None;
+    }
+    Some(match json_type {
+        Some("array") => serde_json::json!(arg.default_values),
+        Some("boolean") => {
+            let b = arg
+                .default_values
+                .first()
+                .map(|s| s == "true")
+                .unwrap_or(false);
+            serde_json::Value::Bool(b)
+        }
+        Some("integer") => {
+            if let Some(i) = arg
+                .default_values
+                .first()
+                .and_then(|s| s.parse::<i64>().ok())
+            {
+                serde_json::json!(i)
+            } else {
+                serde_json::json!(arg.default_values.first())
+            }
+        }
+        _ => serde_json::json!(arg.default_values.first()),
+    })
+}
+
+/// Collects every argument id from a clap command tree (before MCP skip filtering).
+pub(crate) fn collect_clap_arg_ids(cmd: &Command) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    fn walk(cmd: &Command, ids: &mut std::collections::HashSet<String>) {
+        for arg in cmd.get_arguments() {
+            ids.insert(arg.get_id().to_string());
+        }
+        for sub in cmd.get_subcommands() {
+            walk(sub, ids);
+        }
+    }
+    walk(cmd, &mut ids);
+    ids
+}
+
+/// Collects every argument id in the schema tree (root + nested subcommands).
+pub(crate) fn collect_all_arg_ids(schema: &ClapSchema) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    fn walk(cmd: &ClapCommand, ids: &mut std::collections::HashSet<String>) {
+        for arg in &cmd.args {
+            ids.insert(arg.id.clone());
+        }
+        for sub in &cmd.subcommands {
+            walk(sub, ids);
+        }
+    }
+    walk(&schema.root, &mut ids);
+    ids
+}
+
+/// Rejects `skip_global_args` / `skip_args` entries that do not name a known clap arg id.
+///
+/// Call this against the live [`Command`] before MCP skip filtering removes args from
+/// [`ClapSchema`]. Prefer this over schema-only checks for derive metadata.
+pub fn validate_skip_arg_ids(
+    cmd: &Command,
+    metadata: &ClapMcpSchemaMetadata,
+) -> Result<(), ClapMcpError> {
+    let known = collect_clap_arg_ids(cmd);
+    validate_skip_ids_against_known(&known, &metadata.skip_global_args, &metadata.skip_args)
+}
+
+/// Validates serve-option skip overlays against args still present in a filtered schema.
+pub(crate) fn validate_serve_option_skip_ids(
+    schema: &ClapSchema,
+    serve_options: &ClapMcpServeOptions,
+) -> Result<(), ClapMcpError> {
+    let known = collect_all_arg_ids(schema);
+    validate_skip_ids_against_known(
+        &known,
+        &serve_options.skip_global_args,
+        &serve_options.skip_args,
+    )
+}
+
+fn validate_skip_ids_against_known(
+    known: &std::collections::HashSet<String>,
+    skip_global_args: &[String],
+    skip_args: &std::collections::HashMap<String, Vec<String>>,
+) -> Result<(), ClapMcpError> {
+    for id in skip_global_args {
+        if !known.contains(id) {
+            return Err(ClapMcpError::InvalidConfig(format!(
+                "skip_global_args names unknown argument id `{id}`"
+            )));
+        }
+    }
+    for (cmd, ids) in skip_args {
+        for id in ids {
+            if !known.contains(id) {
+                return Err(ClapMcpError::InvalidConfig(format!(
+                    "skip_args for `{cmd}` names unknown argument id `{id}`"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Merges serve-option skip/default/output overlays into schema metadata.
+pub(crate) fn merge_serve_options_into_metadata(
+    metadata: &mut ClapMcpSchemaMetadata,
+    serve_options: &ClapMcpServeOptions,
+) {
+    for (k, v) in &serve_options.tool_output_schemas {
+        metadata.tool_output_schemas.insert(k.clone(), v.clone());
+    }
+    for g in &serve_options.skip_global_args {
+        if !metadata.skip_global_args.contains(g) {
+            metadata.skip_global_args.push(g.clone());
+        }
+    }
+    for (k, v) in &serve_options.skip_args {
+        metadata
+            .skip_args
+            .entry(k.clone())
+            .or_default()
+            .extend(v.clone());
+    }
+    for (k, v) in &serve_options.hide_defaults {
+        metadata
+            .hide_defaults
+            .entry(k.clone())
+            .or_default()
+            .extend(v.clone());
+    }
+    for (tool, args) in &serve_options.override_defaults {
+        let entry = metadata.override_defaults.entry(tool.clone()).or_default();
+        for (arg, val) in args {
+            entry.insert(arg.clone(), val.clone());
+        }
     }
 }
 
@@ -2907,6 +3172,10 @@ pub fn get_matches_or_serve_mcp_with_config_and_metadata(
     config: ClapMcpConfig,
     metadata: &ClapMcpSchemaMetadata,
 ) -> clap::ArgMatches {
+    if let Err(e) = validate_skip_arg_ids(&cmd, metadata) {
+        eprintln!("MCP server error: {}", e);
+        std::process::exit(1);
+    }
     let schema = schema_from_command_with_metadata(&cmd, metadata);
     let flags = config.builtin_flags;
     let cmd = command_with_mcp_and_export_skills_flags_with_flags(cmd, &flags);
@@ -3191,7 +3460,11 @@ where
         + 'static,
 {
     let metadata = T::clap_mcp_schema_metadata();
-    let schema = schema_from_command_with_metadata(&T::command(), &metadata);
+    let cmd = T::command();
+    if let Err(e) = validate_skip_arg_ids(&cmd, &metadata) {
+        panic!("clap-mcp invalid skip configuration: {e}");
+    }
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
     let schema_json = serde_json::to_string_pretty(&schema).expect("schema should serialize");
     let capture_stdout = capture_stdout_for_serve(serve_options);
     let in_process_handler = if config.reinvocation_safe {
@@ -3220,7 +3493,11 @@ where
         + 'static,
 {
     let metadata = T::clap_mcp_schema_metadata();
-    let schema = schema_from_command_with_metadata(&T::command(), &metadata);
+    let cmd = T::command();
+    if let Err(e) = validate_skip_arg_ids(&cmd, &metadata) {
+        panic!("clap-mcp invalid skip configuration: {e}");
+    }
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
     let schema_json = serde_json::to_string_pretty(&schema).expect("schema should serialize");
     let capture_stdout = capture_stdout_for_serve(serve_options);
     let in_process_handler = if config.reinvocation_safe {
@@ -6773,5 +7050,122 @@ mod tests {
         let version = tools.iter().find(|t| t.name == "version").expect("version");
         assert!(version.output_schema.is_some());
         assert!(doctor.output_schema.is_none());
+    }
+
+    #[test]
+    fn test_hide_and_override_advertised_defaults() {
+        let cmd = Command::new("app").subcommand(
+            Command::new("run").arg(
+                Arg::new("config_dir")
+                    .long("config-dir")
+                    .default_value("/host/specific/path"),
+            ),
+        );
+        let schema = schema_from_command(&cmd);
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig::default(),
+            &ClapMcpSchemaMetadata::default(),
+        );
+        let run = tools.iter().find(|t| t.name == "run").unwrap();
+        let config_dir = run
+            .input_schema
+            .get("properties")
+            .and_then(|p| p.get("config_dir"))
+            .unwrap();
+        assert_eq!(
+            config_dir.get("default"),
+            Some(&json!("/host/specific/path"))
+        );
+
+        let metadata = ClapMcpSchemaMetadata::default().with_hide_default("run", "config_dir");
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let run = tools.iter().find(|t| t.name == "run").unwrap();
+        let config_dir = run
+            .input_schema
+            .get("properties")
+            .and_then(|p| p.get("config_dir"))
+            .unwrap();
+        assert!(config_dir.get("default").is_none());
+        assert!(config_dir.get("type").is_some());
+
+        let metadata =
+            ClapMcpSchemaMetadata::default().with_override_default("*", "config_dir", json!("."));
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let run = tools.iter().find(|t| t.name == "run").unwrap();
+        let config_dir = run
+            .input_schema
+            .get("properties")
+            .and_then(|p| p.get("config_dir"))
+            .unwrap();
+        assert_eq!(config_dir.get("default"), Some(&json!(".")));
+    }
+
+    #[test]
+    fn test_subprocess_output_schema_warn_list() {
+        let cmd = Command::new("app")
+            .subcommand(Command::new("doctor"))
+            .subcommand(Command::new("version"));
+        let metadata = ClapMcpSchemaMetadata::default()
+            .with_tool_output_schema("version", json!({ "type": "object" }));
+        let schema = schema_from_command(&cmd);
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig {
+                reinvocation_safe: false,
+                ..Default::default()
+            },
+            &metadata,
+        );
+        let affected = tools_advertising_output_schema_under_subprocess(
+            &ClapMcpConfig {
+                reinvocation_safe: false,
+                ..Default::default()
+            },
+            &metadata,
+            &tools,
+        );
+        assert_eq!(affected, vec!["version".to_string()]);
+        let quiet = tools_advertising_output_schema_under_subprocess(
+            &ClapMcpConfig {
+                reinvocation_safe: true,
+                ..Default::default()
+            },
+            &metadata,
+            &tools,
+        );
+        assert!(quiet.is_empty());
+    }
+
+    #[test]
+    fn test_validate_skip_arg_ids_unknown_fails() {
+        let cmd = Command::new("app")
+            .arg(Arg::new("api_token").long("api-token").global(true))
+            .subcommand(Command::new("doctor").arg(Arg::new("path").long("path")));
+        assert!(
+            validate_skip_arg_ids(
+                &cmd,
+                &ClapMcpSchemaMetadata::default().with_skip_global_arg("api_token")
+            )
+            .is_ok()
+        );
+        let err = validate_skip_arg_ids(
+            &cmd,
+            &ClapMcpSchemaMetadata::default().with_skip_global_arg("typo_token"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ClapMcpError::InvalidConfig(ref msg) if msg.contains("typo_token")),
+            "{err:?}"
+        );
+        let mut metadata = ClapMcpSchemaMetadata::default();
+        metadata
+            .skip_args
+            .insert("doctor".into(), vec!["no_such_arg".into()]);
+        let err = validate_skip_arg_ids(&cmd, &metadata).unwrap_err();
+        assert!(
+            matches!(err, ClapMcpError::InvalidConfig(ref msg) if msg.contains("no_such_arg")),
+            "{err:?}"
+        );
     }
 }
