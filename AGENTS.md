@@ -338,13 +338,17 @@ stateful derive → `docs/stateful-tools.md`; tool output / schemas →
 ### Version strings in documentation
 
 * **Single source of truth for “what version to write”** (in order):
-  1. An open GitHub PR whose title starts with `chore: release` (from
+  1. An **explicit user override** for this task (for example “use
+     `0.1.0-rc.3`”, “target the next RC”, or “keep copy-paste on the version on
+     `main`”). The override must be stated; do not invent one. When given, it
+     wins over the sources below for copy-paste examples in that change.
+  2. An open GitHub PR whose title starts with `chore: release` (from
      release-plz). Read the **PR branch source** — typically root
      [`Cargo.toml`](Cargo.toml) `workspace.package.version` on that branch, or
      the `x.y.z -> a.b.c` lines in the PR body. That is the upcoming published
      version. The PR **title** may lag after release-plz refreshes the branch;
      never prefer the title over the branch/`Cargo.toml` contents.
-  2. Otherwise the workspace version on the branch you are editing (usually
+  3. Otherwise the workspace version on the branch you are editing (usually
      `main` / root [`Cargo.toml`](Cargo.toml)).
 * **Copy-paste examples** in README, `docs/*.md`, and hand-authored skills under
   `.agents/skills/`: match that version **exactly**, including any `-rc.N`
@@ -366,16 +370,18 @@ stateful derive → `docs/stateful-tools.md`; tool output / schemas →
   rg 'clap-mcp = |"clap-mcp"' README.md docs/*.md AGENTS.md examples/README.md .agents/skills
   ```
 
-  Align every copy-paste dependency version with the release-PR branch
-  `Cargo.toml` when one is open, otherwise with root `Cargo.toml` (including
-  `-rc.N` while on an RC).
+  Align every copy-paste dependency version with the user override when one was
+  given, else the release-PR branch `Cargo.toml` when one is open, otherwise
+  with root `Cargo.toml` (including `-rc.N` while on an RC).
 
 ## Git
 
 * Do not commit unless the user asks.
 * Do not bump the crate version unless explicitly requested. Prefer letting the
   open `chore: release` PR land the workspace bump; document copy-paste strings
-  against that upcoming version when release-plz has already opened the PR.
+  against that upcoming version when release-plz has already opened the PR,
+  unless the user gave a different override (see
+  [Version strings in documentation](#version-strings-in-documentation)).
 
 ### CHANGELOG (`release-plz`)
 
