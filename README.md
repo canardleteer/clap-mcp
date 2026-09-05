@@ -62,7 +62,7 @@ macro):
 
 ```toml
 [dependencies]
-clap-mcp = "0.1.0-rc.3"
+clap-mcp = "0.1.0"
 ```
 
 * Opt-in MCP server on existing `clap` CLIs (`--mcp` stdio, `--mcp-http` with
@@ -128,7 +128,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-clap-mcp = { version = "0.1.0-rc.3", features = ["tracing"] }
+clap-mcp = { version = "0.1.0", features = ["tracing"] }
 ```
 
 ## When and when not to use `clap-mcp`
@@ -207,7 +207,7 @@ Every guide in [`docs/`](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs
 | [Tool output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md) | `run` return types, structured output, per-tool `output_type`, `output-schema` |
 | [Logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md) | `tracing` / `log` bridges, MCP notifications, `SubprocessStderr`, SEP-2577 note |
 | [Streamable HTTP](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/http.md) | `--mcp-http`, listen env vars |
-| [Migration notes](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/migration-notes.md) | `0.1.0-rc.2` behavior notes, rmcp 3.0 / MCP 2026-07-28, historical ports |
+| [Migration notes](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/migration-notes.md) | RC → `0.1.0`, rmcp 3.0 / MCP 2026-07-28, historical ports |
 
 ### Maintainer notes
 

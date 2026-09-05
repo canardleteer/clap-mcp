@@ -206,7 +206,7 @@ fn run_catalog(root: CatalogRoot) -> Result<ClapMcpToolOutput, String> {
             .unwrap(),
         )),
         CatalogCmd::Version => AsStructured(VersionOut {
-            version: "0.1.0-rc.2".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
         })
         .into_tool_result()
         .map_err(|e| e.message),
@@ -462,7 +462,7 @@ async fn downstream_catalog_tool_calls_structured_and_text() {
     let structured = version.structured_content.expect("structuredContent");
     assert_eq!(
         structured.get("version").and_then(|v| v.as_str()),
-        Some("0.1.0-rc.2")
+        Some(env!("CARGO_PKG_VERSION"))
     );
 
     let doctor = client

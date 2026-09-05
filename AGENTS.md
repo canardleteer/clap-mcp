@@ -33,9 +33,9 @@ priorities below.
   embedders. Do not remove thin delegators without an explicit breaking-change
   decision.
 
-Early-stage warning: the crate is on the pre-stable `0.1.0` release line (see
-workspace `Cargo.toml`). See [migration notes](docs/migration-notes.md) for
-rmcp 3.0, MCP `2026-07-28`, and historical API slimming.
+Early-stage warning: the public API is still early on the `0.1.x` line (see
+workspace `Cargo.toml`). Prefer [migration notes](docs/migration-notes.md) when
+porting across RC boundaries or rmcp / MCP protocol bumps.
 
 ## Repository layout
 
@@ -232,7 +232,7 @@ Every file below must appear in the README Documentation table.
 | [docs/tool-output.md](docs/tool-output.md) | CLI authors | `run` return types, structured output, per-tool `output_type`, `output-schema` |
 | [docs/logging.md](docs/logging.md) | CLI authors | `tracing` / `log` bridges, MCP notifications, `SubprocessStderr` |
 | [docs/http.md](docs/http.md) | CLI authors | Streamable HTTP listen (`--mcp-http`) |
-| [docs/migration-notes.md](docs/migration-notes.md) | CLI authors / maintainers | `0.1.0-rc.2` behavior notes, rmcp 3.0 / MCP 2026-07-28, historical ports |
+| [docs/migration-notes.md](docs/migration-notes.md) | CLI authors / maintainers | RC → `0.1.0`, rmcp 3.0 / MCP 2026-07-28, historical ports |
 | [docs/conformance-baseline.md](docs/conformance-baseline.md) | Maintainers | MCP conformance harness, baseline YAML |
 | [docs/maintainer-testing.md](docs/maintainer-testing.md) | Maintainers | Macro checklist, test filters, example contracts |
 | [docs/supported-cli-shapes.md](docs/supported-cli-shapes.md) | CLI authors | Pattern matrix, attributes per shape, non-goals |
@@ -339,7 +339,7 @@ stateful derive → `docs/stateful-tools.md`; tool output / schemas →
 
 * **Single source of truth for “what version to write”** (in order):
   1. An **explicit user override** for this task (for example “use
-     `0.1.0-rc.3`”, “target the next RC”, or “keep copy-paste on the version on
+     `0.1.0`”, “target the next RC”, or “keep copy-paste on the version on
      `main`”). The override must be stated; do not invent one. When given, it
      wins over the sources below for copy-paste examples in that change.
   2. An open GitHub PR whose title starts with `chore: release` (from
@@ -352,11 +352,10 @@ stateful derive → `docs/stateful-tools.md`; tool output / schemas →
      `main` / root [`Cargo.toml`](Cargo.toml)).
 * **Copy-paste examples** in README, `docs/*.md`, and hand-authored skills under
   `.agents/skills/`: match that version **exactly**, including any `-rc.N`
-  pre-release suffix (for example `version = "0.1.0-rc.3"` when the open
-  release PR or workspace is on that RC). During this pre-stable phase, readers
-  should depend on the same RC the next publish will use. After a stable
-  `0.1.0` (or later) ships, you may relax examples to a broader requirement
-  such as `"0.1.0"` without the RC pin.
+  pre-release suffix while still on an RC (for example `version = "0.1.0"` when
+  the workspace is on the first non-RC `0.1.0`). After `0.1.0` (or later),
+  copy-paste may use `"0.1.0"` without an RC pin unless you are documenting a
+  specific pre-release.
 * **Exempt from bump sweeps:** [`CHANGELOG.md`](CHANGELOG.md) historical
   entries, and historical semver literals inside
   [`docs/migration-notes.md`](docs/migration-notes.md) that document past

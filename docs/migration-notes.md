@@ -4,6 +4,17 @@
 
 [← Documentation index](../README.md#documentation)
 
+## RC line → 0.1.0
+
+`0.1.0` is the first non-RC release on the `0.1` line. Copy-paste dependency
+examples use `version = "0.1.0"`.
+
+If you depended on an RC (`0.1.0-rc.1` through `0.1.0-rc.3`), bump to `0.1.0`.
+Behavior changes introduced on the RC line remain in effect, including the
+`0.1.0-rc.2` notes below (`skip = "..."` semantics and
+`SubprocessStderr::Capture` default). No additional API rename is required for a
+derive-only CLI that already tracks current `docs/usage.md`.
+
 ## 0.1.0-rc.1 → 0.1.0-rc.2
 
 Behavior changes on the `0.1.0-rc.2` line that affect existing clap-mcp CLIs:
