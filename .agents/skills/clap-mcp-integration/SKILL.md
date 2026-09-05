@@ -101,7 +101,7 @@ Follow [reference-dependency.md](resources/reference-dependency.md).
 mcp = ["dep:clap-mcp", "dep:schemars"]
 
 [dependencies]
-clap-mcp = { version = "0.1.0-rc.3", optional = true, features = ["output-schema", "http"] }
+clap-mcp = { version = "0.1.0", optional = true, features = ["output-schema", "http"] }
 schemars = { version = "1", optional = true, features = ["derive"] }
 ```
 
