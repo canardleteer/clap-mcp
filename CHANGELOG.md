@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+## `clap-mcp` - [0.1.0](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.1.0-rc.3...clap-mcp-v0.1.0) - 2026-09-05
+
+### Other
+- prepare workspace for first non-RC 0.1.0
 ## `clap-mcp` - [0.1.0-rc.3](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.1.0-rc.2...clap-mcp-v0.1.0-rc.3) - 2026-09-05
 
 ### Added
