@@ -337,6 +337,35 @@ impl ServeMcpBuilder {
         self
     }
 
+    /// Omit a clap default from the advertised MCP schema for one tool (`"*"` = all).
+    pub fn hide_default(
+        mut self,
+        command_name: impl Into<String>,
+        arg_id: impl Into<String>,
+    ) -> Self {
+        self.serve_options
+            .hide_defaults
+            .entry(command_name.into())
+            .or_default()
+            .push(arg_id.into());
+        self
+    }
+
+    /// Replace the advertised MCP default for one tool argument (`"*"` = all).
+    pub fn override_default(
+        mut self,
+        command_name: impl Into<String>,
+        arg_id: impl Into<String>,
+        value: serde_json::Value,
+    ) -> Self {
+        self.serve_options
+            .override_defaults
+            .entry(command_name.into())
+            .or_default()
+            .insert(arg_id.into(), value);
+        self
+    }
+
     /// Subprocess executable for tool calls when not in-process.
     pub fn executable_path(mut self, executable_path: Option<PathBuf>) -> Self {
         self.executable_path = executable_path;
@@ -381,20 +410,12 @@ impl ServeMcpBuilder {
             .ok_or_else(|| missing_field("schema_json"))?;
         let config = self.config.ok_or_else(|| missing_field("config"))?;
         let mut metadata = self.metadata.ok_or_else(|| missing_field("metadata"))?;
-        for (k, v) in &self.serve_options.tool_output_schemas {
-            metadata.tool_output_schemas.insert(k.clone(), v.clone());
-        }
-        for g in &self.serve_options.skip_global_args {
-            if !metadata.skip_global_args.contains(g) {
-                metadata.skip_global_args.push(g.clone());
-            }
-        }
-        for (k, v) in &self.serve_options.skip_args {
-            metadata
-                .skip_args
-                .entry(k.clone())
-                .or_default()
-                .extend(v.clone());
+        crate::merge_serve_options_into_metadata(&mut metadata, &self.serve_options);
+        if !self.serve_options.skip_global_args.is_empty()
+            || !self.serve_options.skip_args.is_empty()
+        {
+            let schema: crate::ClapSchema = serde_json::from_str(&schema_json)?;
+            crate::validate_serve_option_skip_ids(&schema, &self.serve_options)?;
         }
         Ok(ServeMcp {
             listen,

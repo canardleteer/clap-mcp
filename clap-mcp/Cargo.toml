@@ -40,5 +40,7 @@ axum = { version = "0.8", optional = true }
 
 [dev-dependencies]
 clap-mcp-macros = { workspace = true }
+# Avoid default `resolve-http` / rustls features; they conflict with rmcp's reqwest TLS setup in HTTP tests.
+jsonschema = { version = "0.53", default-features = false }
 schemars = "1"
 trybuild = "1.0.116"

@@ -89,7 +89,9 @@ clap-mcp = "0.1.0-rc.2"
   `Ignore`); see
   [logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md#subprocess-stderr-policy)
 * Filter global or per-tool CLI args from MCP schemas while keeping them on the
-  native CLI (`skip_global` / `skip`); see
+  native CLI (`skip_global` / `skip`); unknown skip ids fail serve startup. Hide
+  or override advertised defaults (`hide_default` / `override_default`) without
+  changing clap CLI defaults; see
   [usage](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md#filter-global-arguments-from-mcp-schemas)
 * Custom MCP resources, prompts, and optional raw-schema tools (`custom_tools`);
   see [custom-content](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md)

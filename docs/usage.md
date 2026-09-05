@@ -412,6 +412,26 @@ them from advertised MCP `inputSchema`:
 Native `clap` parsing is unchanged; only MCP schemas and argv built from tool
 calls omit the filtered ids.
 
+Unknown ids in `skip_global` / `skip_args` fail MCP serve startup with
+[`ClapMcpError::InvalidConfig`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.ClapMcpError.html)
+(derive and `get_matches_or_serve_mcp*` validate against the live clap
+`Command`; serve-option overlays validate against the filtered schema). Typos
+cannot silently leave an argument agent-visible.
+
+### Hide or override advertised defaults
+
+Omit or replace JSON Schema `"default"` without changing clap's native CLI
+default:
+
+* Derive: `#[clap_mcp(hide_default = "config_dir")]` on a variant, or on the
+  root (applies as `"*"` to every tool).
+* Imperative: `ClapMcpSchemaMetadata::with_hide_default` /
+  `with_override_default`, or the matching `ServeMcpBuilder` /
+  `ClapMcpServeOptions` helpers (`"*"` targets every tool).
+
+Override wins over hide. The argument stays in `inputSchema`; only the
+advertised default changes.
+
 ### Input schema fidelity notes
 
 Tool `inputSchema` properties mirror clap actions (`boolean` for `SetTrue` /
@@ -424,11 +444,12 @@ so `false` does not count as an active flag.
 Conflict and requirement edges that clap does not expose via public getters are
 read from clap's Debug representation as a best-effort fallback. Prefer public
 clap APIs when they become available; Debug field names can change across patch
-releases.
+releases. Explicit constraint-override metadata is **not** offered yet; revisit
+when clap adds getters or a concrete unrepresentable constraint appears.
 
 Absolute or host-computed clap defaults may still appear in schemas when clap
-surfaces them as default values. Review advertised defaults for multi-host
-deployments.
+surfaces them as default values. Use `hide_default` / `override_default` when
+you must not advertise host-specific paths.
 
 ## Preserve CLI parse
 
