@@ -2009,6 +2009,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let skip_global_args = get_clap_mcp_skip_global(&input.attrs);
     let root_hide_defaults = get_clap_mcp_hide_default(&input.attrs);
     let mut tool_output_schemas: Vec<(String, syn::Type)> = Vec::new();
+    let mut output_type_on_nested_error: Option<syn::Error> = None;
     let mut skip_commands = Vec::<String>::new();
     let mut skip_args: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
@@ -2084,7 +2085,22 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         .extend(variant_hide);
                 }
                 if let Some(ty) = get_clap_mcp_variant_output_type(&v.attrs) {
-                    tool_output_schemas.push((cmd_name.clone(), ty));
+                    let nested_subcommand = v
+                        .fields
+                        .iter()
+                        .any(|f| field_has_command_subcommand(&f.attrs));
+                    if nested_subcommand {
+                        if output_type_on_nested_error.is_none() {
+                            output_type_on_nested_error = Some(syn::Error::new_spanned(
+                                &v.ident,
+                                "clap_mcp: #[clap_mcp(output_type = \"...\")] is not supported on \
+                                 variants that contain #[command(subcommand)]; put output_type on \
+                                 leaf command variants instead",
+                            ));
+                        }
+                    } else {
+                        tool_output_schemas.push((cmd_name.clone(), ty));
+                    }
                 }
                 if has_clap_mcp_task(&v.attrs) {
                     task_tool_names.push(cmd_name.clone());
@@ -2259,11 +2275,30 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         || !task_tool_names.is_empty()
                         || !serialize_tools.is_empty()
                         || !serialize_topic_bindings.is_empty()
-                        || !tool_annotations.is_empty();
+                        || !tool_annotations.is_empty()
+                        || !tool_output_schemas.is_empty();
                     let skip_global_args_lit = skip_global_args.iter().map(|s| {
                         let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
                         quote! { #lit.to_string() }
                     });
+                    let tool_output_schema_entries_local =
+                        tool_output_schemas.iter().map(|(cmd, ty)| {
+                            let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
+                            quote! {
+                                if let Some(schema) = clap_mcp::output_schema_for_type::<#ty>() {
+                                    local.tool_output_schemas.insert(#cmd_lit.to_string(), schema);
+                                }
+                            }
+                        });
+                    let tool_output_schema_entries_m =
+                        tool_output_schemas.iter().map(|(cmd, ty)| {
+                            let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
+                            quote! {
+                                if let Some(schema) = clap_mcp::output_schema_for_type::<#ty>() {
+                                    m.tool_output_schemas.insert(#cmd_lit.to_string(), schema);
+                                }
+                            }
+                        });
                     if merge {
                         let skip_commands_lit = skip_commands.iter().map(|s| {
                             let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
@@ -2383,6 +2418,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     #serialize_topic_entries
                                     #(#flatten_topic_stmts_local)*
                                     #(#tool_annotations_entries_local)*
+                                    #(#tool_output_schema_entries_local)*
                                     #skip_root_assign_local
                                     #output_schema_assign_local
                                     m.merge_from(local);
@@ -2422,6 +2458,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     m.task_augmented_tools = m.task_augmented_tools || #task_augmented_tools_expr;
                                     #(#hide_defaults_entries_light)*
                                     #(#flatten_skip_stmts_m)*
+                                    #(#tool_output_schema_entries_m)*
                                     #skip_root_assign
                                     #output_schema_assign
                                     m
@@ -2439,6 +2476,9 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         return e.to_compile_error();
     }
     if let Some(e) = tool_annotations_error {
+        return e.to_compile_error();
+    }
+    if let Some(e) = output_type_on_nested_error {
         return e.to_compile_error();
     }
 

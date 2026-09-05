@@ -194,7 +194,8 @@ Leaf tools often return different shapes. Prefer a per-tool schema instead of a
 single root-wide `output_type`:
 
 * Derive: `#[clap_mcp(output_type = "MyType")]` or
-  `#[clap_mcp_output_type = "MyType"]` on an enum variant.
+  `#[clap_mcp_output_type = "MyType"]` on a **leaf** enum variant (not on a
+  variant that only wraps `#[command(subcommand)]`).
 * Imperative: `ClapMcpSchemaMetadata::with_tool_output_schema` or
   `ServeMcpBuilder::tool_output_schema` / `ClapMcpServeOptions::with_tool_output_schema`.
 

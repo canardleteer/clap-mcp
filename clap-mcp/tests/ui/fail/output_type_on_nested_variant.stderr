@@ -1,0 +1,5 @@
+error: clap_mcp: #[clap_mcp(output_type = "...")] is not supported on variants that contain #[command(subcommand)]; put output_type on leaf command variants instead
+ --> tests/ui/fail/output_type_on_nested_variant.rs:8:5
+  |
+8 |     Group {
+  |     ^^^^^

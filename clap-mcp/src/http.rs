@@ -35,11 +35,9 @@ async fn build_server_from_schema_json(
     serve_options: &ClapMcpServeOptions,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Result<ClapMcpServer, ClapMcpError> {
-    let mut effective_metadata = metadata.clone();
-    crate::merge_serve_options_into_metadata(&mut effective_metadata, serve_options);
     let schema: crate::ClapSchema = serde_json::from_str(&schema_json)?;
-    crate::validate_serve_option_skip_ids(&schema, serve_options)?;
-    let tools = crate::tools_from_schema_with_metadata(&schema, config, &effective_metadata);
+    // `ServeMcpBuilder::build` already merged serve-option overlays into `metadata`.
+    let tools = crate::tools_from_schema_with_metadata(&schema, config, metadata);
     let root_name = schema.root.name.clone();
     build_clap_mcp_server(
         schema_json,
@@ -49,7 +47,7 @@ async fn build_server_from_schema_json(
         root_name,
         config,
         serve_options,
-        &effective_metadata,
+        metadata,
     )
 }
 
