@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+## `clap-mcp` - [0.1.0-rc.3](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.1.0-rc.2...clap-mcp-v0.1.0-rc.3) - 2026-09-05
+
+### Added
+- *(schema)* strengthen downstream API with validator matrices and guards- *(server,schema)* add stderr policy, schema fidelity, per-tool outputs, and global arg filters
+
+### Fixed
+- *(examples,tests)* keep concurrent task log probes off the TRACE flood- *(schema,docs)* address review follow-ups for nested output_type and serve paths- *(schema)* treat boolean flags with const:true presence semantics- *(schema)* parse clap 4.6.6 conflicts Debug field for dependentSchemas
+
+### Other
+- *(agents)* prefer open chore: release PR for copy-paste versions- *(agents)* protect human Design/logging prose and align RC docs
+## `clap-mcp-macros` - [0.1.0-rc.3](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-macros-v0.1.0-rc.2...clap-mcp-macros-v0.1.0-rc.3) - 2026-09-05
+
+### Added
+- *(schema)* strengthen downstream API with validator matrices and guards- *(server,schema)* add stderr policy, schema fidelity, per-tool outputs, and global arg filters
+
+### Fixed
+- *(schema,docs)* address review follow-ups for nested output_type and serve paths
 ## `clap-mcp` - [0.1.0-rc.2](https://github.com/canardleteer/clap-mcp/compare/clap-mcp-v0.1.0-rc.1...clap-mcp-v0.1.0-rc.2) - 2026-09-04
 
 ### Added
