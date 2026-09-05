@@ -319,9 +319,13 @@ fn run(cmd: Cli) -> String {
 }
 ```
 
-**Skip:** (subcommands or variant-level) use `#[clap_mcp(skip)]` so a variant is
-hidden from MCP; pair with `#[clap_mcp_output_from = "run"]` and a single `run`
-for the exposed variants.
+**Skip:** (subcommands or variant-level) use bare `#[clap_mcp(skip)]` so a
+variant is hidden from MCP; pair with `#[clap_mcp_output_from = "run"]` and a
+single `run` for the exposed variants. On a variant,
+`#[clap_mcp(skip = "arg_id,…")]` keeps the tool and omits only the listed
+argument ids (same as field-level arg filters). See
+[usage — Filter global arguments](usage.md#filter-global-arguments-from-mcp-schemas)
+and [migration notes](migration-notes.md#010-rc1--010-rc2).
 
 ```rust
 use clap::Parser;

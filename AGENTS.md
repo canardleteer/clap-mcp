@@ -71,8 +71,24 @@ draft). Generated `--export-skills` output is separate under `.agents/skills/`
 | [`clap-mcp-lib.md`](.agents/rules/clap-mcp-lib.md) | `clap-mcp/src/**` | Runtime library edits |
 | [`clap-mcp-examples.md`](.agents/rules/clap-mcp-examples.md) | `examples/**` | Example binary edits |
 | [`clap-mcp-readme.md`](.agents/rules/clap-mcp-readme.md) | `README.md` | crates.io-safe absolute links in root README |
+| [`clap-mcp-protected-prose.md`](.agents/rules/clap-mcp-protected-prose.md) | `README.md`, `docs/logging.md` | Do not rewrite protected human prose |
 
 Human-oriented detail and tables: [docs/maintainer-testing.md](docs/maintainer-testing.md).
+
+## Protected human prose
+
+These passages are **maintainer voice**. Agents must not rewrite, paraphrase,
+shorten, “tone-check,” relocate, or delete them. You may edit other parts of the
+same files. If a task seems to require changing protected text, stop and ask the
+maintainer.
+
+| Location | Protected content |
+| --- | --- |
+| [README.md — Design](README.md#design) | The full Design section: first-person rationale, intent bullets, closing paragraph, and the Clanker `> [!WARNING]` callout |
+| [docs/logging.md](docs/logging.md) | The author `> [!NOTE]` immediately after the SEP-2577 `> [!WARNING]` (begins “This was probably one of the most useful features…”) |
+
+Path-scoped checklist:
+[`.agents/rules/clap-mcp-protected-prose.md`](.agents/rules/clap-mcp-protected-prose.md).
 
 ## Development workflow
 
@@ -206,17 +222,17 @@ Every file below must appear in the README Documentation table.
 
 | File | Audience | Purpose |
 | --- | --- | --- |
-| [docs/usage.md](docs/usage.md) | CLI authors | Derive (minimal / with attributes), imperative CLI, struct-root pointer |
+| [docs/usage.md](docs/usage.md) | CLI authors | Derive (minimal / with attributes), imperative CLI, skip/default filters, struct-root pointer |
 | [docs/custom-content.md](docs/custom-content.md) | CLI authors | Custom MCP resources and prompts |
 | [docs/export-skills.md](docs/export-skills.md) | CLI authors | `--export-skills`, Agent Skills generation |
 | [docs/execution-safety.md](docs/execution-safety.md) | CLI authors | `reinvocation_safe`, skip/requires, dual derive, async embedders |
 | [docs/mcp-tasks.md](docs/mcp-tasks.md) | CLI authors | Task-augmented `tools/call`, examples, support matrix |
 | [docs/stateful-tools.md](docs/stateful-tools.md) | CLI authors | Shared session state, `parse_or_serve_mcp_with_state` |
 | [docs/security.md](docs/security.md) | CLI authors | Schema validation, deployment trust model, subprocess and HTTP limits |
-| [docs/tool-output.md](docs/tool-output.md) | CLI authors | `run` return types, structured output, `output-schema` |
-| [docs/logging.md](docs/logging.md) | CLI authors | `tracing` / `log` bridges, MCP notifications |
+| [docs/tool-output.md](docs/tool-output.md) | CLI authors | `run` return types, structured output, per-tool `output_type`, `output-schema` |
+| [docs/logging.md](docs/logging.md) | CLI authors | `tracing` / `log` bridges, MCP notifications, `SubprocessStderr` |
 | [docs/http.md](docs/http.md) | CLI authors | Streamable HTTP listen (`--mcp-http`) |
-| [docs/migration-notes.md](docs/migration-notes.md) | CLI authors / maintainers | rmcp 3.0 / MCP 2026-07-28, historical 0.0.3 → 0.0.4 |
+| [docs/migration-notes.md](docs/migration-notes.md) | CLI authors / maintainers | `0.1.0-rc.2` behavior notes, rmcp 3.0 / MCP 2026-07-28, historical ports |
 | [docs/conformance-baseline.md](docs/conformance-baseline.md) | Maintainers | MCP conformance harness, baseline YAML |
 | [docs/maintainer-testing.md](docs/maintainer-testing.md) | Maintainers | Macro checklist, test filters, example contracts |
 | [docs/supported-cli-shapes.md](docs/supported-cli-shapes.md) | CLI authors | Pattern matrix, attributes per shape, non-goals |
@@ -325,10 +341,11 @@ stateful derive → `docs/stateful-tools.md`; tool output / schemas →
   only.
 * **Copy-paste examples** in README, `docs/*.md`, and hand-authored skills under
   `.agents/skills/`: match the workspace version **exactly**, including any
-  `-rc.N` pre-release suffix (for example `version = "0.1.0-rc.1"`). During this
-  pre-stable phase, readers should depend on the same RC the repo is on. After
-  a stable `0.1.0` (or later) ships, you may relax examples to a broader
-  requirement such as `"0.1.0"` without the RC pin.
+  `-rc.N` pre-release suffix (for example `version = "0.1.0-rc.2"` when that is
+  the workspace version). During this pre-stable phase, readers should depend
+  on the same RC the repo is on. After a stable `0.1.0` (or later) ships, you
+  may relax examples to a broader requirement such as `"0.1.0"` without the RC
+  pin.
 * **Exempt from bump sweeps:** [`CHANGELOG.md`](CHANGELOG.md) historical
   entries, and historical semver literals inside
   [`docs/migration-notes.md`](docs/migration-notes.md) that document past

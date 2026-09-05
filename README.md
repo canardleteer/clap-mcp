@@ -128,7 +128,7 @@ Enable features in `Cargo.toml`:
 
 ```toml
 [dependencies]
-clap-mcp = { version = "0.1.0-rc.1", features = ["tracing"] }
+clap-mcp = { version = "0.1.0-rc.2", features = ["tracing"] }
 ```
 
 ## When and when not to use `clap-mcp`
@@ -196,7 +196,7 @@ Every guide in [`docs/`](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs
 
 | Guide | Topics |
 | --- | --- |
-| [Usage patterns](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md) | Derive (minimal / with attributes), imperative CLI, struct root, setup then serve (embedder) |
+| [Usage patterns](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md) | Derive (minimal / with attributes), imperative CLI, struct root, setup then serve, skip/default filters |
 | [Supported CLI shapes](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/supported-cli-shapes.md) | Pattern matrix, example binaries, non-goals |
 | [Custom resources, prompts, and tools](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md) | `ClapMcpServeOptions`, static/dynamic/blob content, URI templates, subscribe, `custom_tools` |
 | [Exporting agent skills](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/export-skills.md) | `--export-skills`, SKILL.md generation |
@@ -204,10 +204,10 @@ Every guide in [`docs/`](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs
 | [MCP tasks support](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/mcp-tasks.md) | Task-augmented `tools/call`, examples, support matrix |
 | [Stateful MCP tools](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/stateful-tools.md) | Shared session state, `parse_or_serve_mcp_with_state` |
 | [Security](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/security.md) | Schema validation, localhost/single-user model, subprocess and HTTP trust boundaries |
-| [Tool output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md) | `run` return types, structured output, `output-schema` |
-| [Logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md) | `tracing` / `log` bridges, MCP notifications, SEP-2577 deprecation note |
+| [Tool output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md) | `run` return types, structured output, per-tool `output_type`, `output-schema` |
+| [Logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md) | `tracing` / `log` bridges, MCP notifications, `SubprocessStderr`, SEP-2577 note |
 | [Streamable HTTP](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/http.md) | `--mcp-http`, listen env vars |
-| [Migration notes](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/migration-notes.md) | rmcp 3.0 / MCP 2026-07-28, historical 0.0.3 → 0.0.4 |
+| [Migration notes](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/migration-notes.md) | `0.1.0-rc.2` behavior notes, rmcp 3.0 / MCP 2026-07-28, historical ports |
 
 ### Maintainer notes
 
@@ -320,6 +320,8 @@ Path-scoped checklists live in [`.agents/rules/`](https://github.com/canardletee
   full local CI gate before finish on Rust, workflow, or test changes
 * [`.agents/rules/clap-mcp-readme.md`](https://github.com/canardleteer/clap-mcp/blob/HEAD/.agents/rules/clap-mcp-readme.md) —
   absolute GitHub links for `docs/`, `examples/`, and repo-root paths (crates.io)
+* [`.agents/rules/clap-mcp-protected-prose.md`](https://github.com/canardleteer/clap-mcp/blob/HEAD/.agents/rules/clap-mcp-protected-prose.md) —
+  do not rewrite README Design or the logging author NOTE
 * [agent-rules-tool](https://github.com/canardleteer/agent-rules-tool) — lint
   rule files with `agent-rules-tool lint`
 * [Maintainer testing](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/maintainer-testing.md) — macro checklist, test

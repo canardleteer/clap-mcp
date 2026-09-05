@@ -101,7 +101,7 @@ Follow [reference-dependency.md](resources/reference-dependency.md).
 mcp = ["dep:clap-mcp", "dep:schemars"]
 
 [dependencies]
-clap-mcp = { version = "0.1.0-rc.1", optional = true, features = ["output-schema", "http"] }
+clap-mcp = { version = "0.1.0-rc.2", optional = true, features = ["output-schema", "http"] }
 schemars = { version = "1", optional = true, features = ["derive"] }
 ```
 
@@ -209,10 +209,12 @@ Upstream: [tool-output.md](../../../docs/tool-output.md).
 
 1. **`#[clap_mcp_output_from = "run"]`** — one `run` for CLI + MCP.
 2. Return `Result<AsStructured<T>, E>` where `T: Serialize + JsonSchema` and `E: IntoClapMcpToolError`.
-3. With `output-schema` feature: `#[clap_mcp_output_type = "…"]` on the derive site.
+3. With `output-schema` feature: `#[clap_mcp(output_type = "…")]` or
+   `#[clap_mcp_output_type = "…"]` on a **leaf** variant (not on a variant that
+   only wraps `#[command(subcommand)]`).
 4. Gate `JsonSchema` derives with `#[cfg_attr(feature = "mcp", derive(JsonSchema))]` on shared result types.
 
-Subprocess mode does not set `structuredContent` from return types; in-process `AsStructured` does. See the subprocess vs in-process table in [tool-output.md](../../../docs/tool-output.md).
+Subprocess mode does not set `structuredContent` from return types; in-process `AsStructured` does. See the subprocess vs in-process table in [tool-output.md](../../../docs/tool-output.md). Do not advertise `outputSchema` for tools that stay on the default subprocess path.
 
 On Unix in-process tools, optional `ClapMcpServeOptions::capture_stdout` merges human stdout into text results (see [tool-output.md — capture_stdout](../../../docs/tool-output.md)). That redirects **process stdout during tool execution**, not the MCP transport. Custom transport I/O uses `ServeMcpBuilder::stdio_io`; see [logging.md — MCP transport I/O vs tool stdout](../../../docs/logging.md#mcp-transport-io-vs-tool-stdout).
 
@@ -220,7 +222,9 @@ On Unix in-process tools, optional `ClapMcpServeOptions::capture_stdout` merges 
 
 | clap pattern | Attribute |
 |--------------|-----------|
-| CLI-only variant (completion, shell, daemon) | `#[clap_mcp(skip)]` |
+| CLI-only variant (completion, shell, daemon) | bare `#[clap_mcp(skip)]` (hides the whole tool) |
+| Hide specific args, keep the tool | `#[clap_mcp(skip = "arg_id,…")]` on the variant or field |
+| Sensitive globals on every tool | `#[clap_mcp(skip_global = "…")]` on the root |
 | `Option` positional / stdin fallback | `#[clap_mcp(requires = "field")]` |
 | `hide = true` but still listed in MCP | `#[clap_mcp(skip)]` — `hide` does not hide from MCP ([hide vs skip](../../../docs/execution-safety.md#hide-vs-clap_mcpskip)) |
 | Long-running command | `#[clap_mcp(task)]` (only if tasks ship) |
@@ -235,6 +239,8 @@ Wire **only** when the project already uses `tracing` or `log` and MCP clients s
 
 - `tracing`: `ClapMcpTracingLayer` composes with existing layers; pass `log_rx` via `ClapMcpServeOptions` on [`ClapMcpRunOptions`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpRunOptions.html) or [`ServeMcpBuilder::serve_options`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ServeMcpBuilder.html).
 - `log`: `ClapMcpLogBridge` replaces the global logger — skip unless acceptable.
+
+**Subprocess stderr:** default is [`SubprocessStderr::Capture`](https://docs.rs/clap-mcp/latest/clap_mcp/enum.SubprocessStderr.html) (append to result text; no `notifications/message`). Use `Notify` only when clients should receive stderr as logging notifications. See [logging.md — Subprocess stderr policy](../../../docs/logging.md#subprocess-stderr-policy).
 
 If wiring cost exceeds value (no existing subscriber, CLI is silent), **omit** — do not add logging deps solely for MCP.
 
@@ -336,8 +342,10 @@ Use clap-mcp **client** example or project MCP tooling — not fabricated PASS r
 | Conflate MCP transport with process stdout / `capture_stdout` | `stdio_io` for transport; `capture_stdout` only for tool execution |
 | `stdio_io` with `McpListen::Http` | Stdio transport only; use HTTP listen without `stdio_io` |
 | Skip schema test | `schema_from_command_with_metadata` unit test |
-| Rely on `hide = true` to exclude MCP tools | `#[clap_mcp(skip)]` |
+| Rely on `hide = true` to exclude MCP tools | bare `#[clap_mcp(skip)]` |
+| Use `#[clap_mcp(skip = "a,b")]` to hide a whole variant | bare `#[clap_mcp(skip)]` ([migration notes](../../../docs/migration-notes.md#010-rc1--010-rc2)) |
 | Add tracing bridge to a silent CLI | Omit Phase 6 |
+| Expect default subprocess stderr as `notifications/message` | Default is `Capture`; use `SubprocessStderr::Notify` to opt in |
 
 ---
 
