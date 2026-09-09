@@ -1,7 +1,7 @@
 #![allow(unused_assignments, unused_variables)]
 
 use clap::{Parser, Subcommand};
-use clap_mcp::ClapMcp;
+use clap_mcp::{ClapMcp, ClapMcpSchemaMetadataProvider};
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(skip_root_when_subcommands, leaves_only)]
