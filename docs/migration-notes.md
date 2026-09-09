@@ -20,6 +20,13 @@ omits intermediate (non-leaf) commands from `tools/list`. Default remains
 unchanged (parents still appear unless you opt in). See
 [execution-safety.md](execution-safety.md).
 
+## After 0.1.0 — numeric `inputSchema` types
+
+clap-mcp maps known numeric clap value parsers to JSON Schema `"integer"` or
+`"number"` in tool `inputSchema` (previously always `"string"` for `Set` args).
+JSON numbers in `tools/call` arguments still stringify into argv. See
+[usage.md](usage.md#input-schema-fidelity-notes).
+
 ## RC line → 0.1.0
 
 `0.1.0` is the first non-RC release on the `0.1` line. Copy-paste dependency

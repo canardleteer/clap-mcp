@@ -82,7 +82,8 @@ clap-mcp = "0.1.0"
   [logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md)
 * Structured tool output and optional JSON `outputSchema` (global or per-tool);
   tool `inputSchema` advertises JSON Schema draft 2020-12 (`$schema`) with
-  enums, defaults, cardinality, conflicts, and `additionalProperties: false`.
+  enums, defaults, cardinality, conflicts, numeric clap value parsers as
+  `"integer"` / `"number"`, and `additionalProperties: false`.
   Advertised `outputSchema` values are sanitized so clients that require
   `"type": "object"` can list tools. See
   [tool-output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md)

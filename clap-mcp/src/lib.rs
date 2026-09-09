@@ -2449,13 +2449,18 @@ pub struct ClapArg {
     pub min_items: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_items: Option<usize>,
+    /// JSON Schema type for the clap value parser when known (`"integer"` or
+    /// `"number"`). Filled from `Arg::get_value_parser().type_id()` during schema
+    /// extraction. Used by MCP `inputSchema` for `Set` / multi-value args.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_json_type: Option<String>,
 }
 
 /// Returns the MCP input schema type for an argument based on its action (and num_args).
 /// - SetTrue / SetFalse: boolean
 /// - Count: integer
-/// - Append (or multi-value num_args): array of strings
-/// - Set / default: string
+/// - Append (or multi-value num_args): array of item types
+/// - Set / default: [`ClapArg::value_json_type`] when set, otherwise string
 ///
 /// When the arg has a single value_name (e.g. VERSION), the array items schema gets a description
 /// so clients know what each element represents.
@@ -2467,6 +2472,7 @@ fn mcp_type_for_arg(arg: &ClapArg) -> (serde_json::Value, Option<serde_json::Val
             .num_args
             .as_deref()
             .is_some_and(|n| n.contains("..") && !n.contains("=1"));
+    let scalar_type = arg.value_json_type.as_deref().unwrap_or("string");
     let (json_type, items) = if matches!(action, "SetTrue" | "SetFalse") {
         (serde_json::json!("boolean"), None)
     } else if action == "Count" {
@@ -2477,12 +2483,12 @@ fn mcp_type_for_arg(arg: &ClapArg) -> (serde_json::Value, Option<serde_json::Val
             .first()
             .map(|name| format!("A {} value", name));
         let items_schema = match item_desc {
-            Some(desc) => serde_json::json!({ "type": "string", "description": desc }),
-            None => serde_json::json!({ "type": "string" }),
+            Some(desc) => serde_json::json!({ "type": scalar_type, "description": desc }),
+            None => serde_json::json!({ "type": scalar_type }),
         };
         (serde_json::json!("array"), Some(items_schema))
     } else {
-        (serde_json::json!("string"), None)
+        (serde_json::json!(scalar_type), None)
     };
     (json_type, items)
 }
@@ -3890,6 +3896,30 @@ fn parse_arg_debug_constraints(arg: &clap::Arg) -> (Vec<String>, Vec<String>, Ve
     (conflicts, requires, required_unless)
 }
 
+fn value_json_type_from_parser(arg: &clap::Arg) -> Option<&'static str> {
+    use std::any::TypeId;
+    let id = arg.get_value_parser().type_id();
+    if id == TypeId::of::<u8>()
+        || id == TypeId::of::<u16>()
+        || id == TypeId::of::<u32>()
+        || id == TypeId::of::<u64>()
+        || id == TypeId::of::<u128>()
+        || id == TypeId::of::<usize>()
+        || id == TypeId::of::<i8>()
+        || id == TypeId::of::<i16>()
+        || id == TypeId::of::<i32>()
+        || id == TypeId::of::<i64>()
+        || id == TypeId::of::<i128>()
+        || id == TypeId::of::<isize>()
+    {
+        Some("integer")
+    } else if id == TypeId::of::<f32>() || id == TypeId::of::<f64>() {
+        Some("number")
+    } else {
+        None
+    }
+}
+
 fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
     let value_names = arg
         .get_value_names()
@@ -3944,6 +3974,7 @@ fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
         required_unless,
         min_items,
         max_items,
+        value_json_type: value_json_type_from_parser(arg).map(str::to_string),
     }
 }
 
@@ -4807,6 +4838,62 @@ mod tests {
         assert_eq!(
             items,
             Some(json!({ "type": "string", "description": "A NAME value" }))
+        );
+
+        let port_arg = ClapArg {
+            id: "port".to_string(),
+            long: Some("port".to_string()),
+            action: Some("Set".to_string()),
+            value_json_type: Some("integer".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(mcp_type_for_arg(&port_arg).0, json!("integer"));
+    }
+
+    #[test]
+    fn test_numeric_value_parser_in_input_schema_and_argv() {
+        use serde_json::json;
+        let cmd = Command::new("app").subcommand(
+            Command::new("serve").arg(
+                Arg::new("port")
+                    .long("port")
+                    .value_parser(clap::value_parser!(u16))
+                    .action(ArgAction::Set),
+            ),
+        );
+        let schema = schema_from_command(&cmd);
+        let serve = schema
+            .root
+            .subcommands
+            .iter()
+            .find(|c| c.name == "serve")
+            .expect("serve");
+        let port = serve.args.iter().find(|a| a.id == "port").expect("port");
+        assert_eq!(port.value_json_type.as_deref(), Some("integer"));
+
+        let mut metadata = ClapMcpSchemaMetadata::default();
+        metadata.skip_root_command_when_subcommands = true;
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let tool = tools.iter().find(|t| t.name.as_ref() == "serve").unwrap();
+        let props = tool
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            props["port"].get("type").and_then(|v| v.as_str()),
+            Some("integer")
+        );
+
+        let argv = build_tool_argv_with_metadata(
+            &schema,
+            "serve",
+            serde_json::Map::from_iter([("port".to_string(), json!(8080))]),
+            Some(&metadata),
+        );
+        assert!(
+            argv.iter().any(|a| a == "8080"),
+            "JSON number must stringify into argv: {argv:?}"
         );
     }
 

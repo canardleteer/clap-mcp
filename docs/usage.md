@@ -448,9 +448,12 @@ advertised default changes.
 
 Tool `inputSchema` properties mirror clap actions (`boolean` for `SetTrue` /
 `SetFalse`, enums for `value_parser` lists, defaults, cardinality, and closed
-objects). Boolean flags do **not** advertise string `enum` values. Property
-descriptions append short action hints (for example `Set true to enable.`) rather
-than long flag tutorials. Conflicts,
+objects). Integer and floating clap value parsers (`u16`, `i32`, `f64`, and
+similar via `value_parser!(…)`) advertise JSON Schema `"integer"` or
+`"number"` instead of `"string"`. Agents may pass JSON numbers; clap-mcp
+stringifies them when building argv. Boolean flags do **not** advertise string
+`enum` values. Property descriptions append short action hints (for example
+`Set true to enable.`) rather than long flag tutorials. Conflicts,
 `requires`, `required_unless`, and required `ArgGroup`s use JSON Schema
 `if` / `then` / `anyOf` with `const: true` (or `const: false` for `SetFalse`)
 so `false` does not count as an active flag.
