@@ -4,6 +4,15 @@
 
 [← Documentation index](../README.md#documentation)
 
+## After 0.1.0 — client-safe `outputSchema`
+
+clap-mcp sanitizes tool `outputSchema` before advertising it on `tools/list`.
+Schemas whose JSON Schema `"type"` is not `"object"` are omitted. Open
+object-shaped schemas without a type (common for schemars open types) are
+coerced to `"type": "object"` and may gain `"additionalProperties": true`. Prefer
+a concrete `JsonSchema` response type over open JSON values. See
+[tool-output.md](tool-output.md).
+
 ## RC line → 0.1.0
 
 `0.1.0` is the first non-RC release on the `0.1` line. Copy-paste dependency

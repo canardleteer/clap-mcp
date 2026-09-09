@@ -216,6 +216,8 @@ Upstream: [tool-output.md](../../../docs/tool-output.md).
 
 Subprocess mode does not set `structuredContent` from return types; in-process `AsStructured` does. See the subprocess vs in-process table in [tool-output.md](../../../docs/tool-output.md). Do not advertise `outputSchema` for tools that stay on the default subprocess path.
 
+Prefer a concrete response struct or enum for `output_type`. Open types such as `serde_json::Value` often lack JSON Schema `"type": "object"`; clap-mcp sanitizes or omits those schemas so clients that require object schemas can still list tools, but typed structs remain clearer for agents.
+
 On Unix in-process tools, optional `ClapMcpServeOptions::capture_stdout` merges human stdout into text results (see [tool-output.md — capture_stdout](../../../docs/tool-output.md)). That redirects **process stdout during tool execution**, not the MCP transport. Custom transport I/O uses `ServeMcpBuilder::stdio_io`; see [logging.md — MCP transport I/O vs tool stdout](../../../docs/logging.md#mcp-transport-io-vs-tool-stdout).
 
 **Metadata checklist:**
@@ -288,13 +290,21 @@ cargo test   # default features still pass
 
 ---
 
+## Agent client pitfalls
+
+* Prefer concrete `JsonSchema` output types. Open schemas are sanitized to `"type": "object"` when possible; non-object typed schemas are omitted from `tools/list`.
+* After wiring `outputSchema`, smoke `tools/list` in the MCP client you ship against, not only a permissive harness.
+* Nested CLIs: `schema_only` does not hide intermediate tools from `tools/list` (use `leaves_only` when that lands / is available on your clap-mcp version).
+
+---
+
 ## Phase 8 — Runtime smoke
 
 After compile succeeds:
 
 1. `cargo run --features mcp -- --help` — expect `--mcp`, `--export-skills` (and `--mcp-http` if `http` feature), unless the embedder path uses a custom entry (for example `myapp serve`).
 2. Start stdio MCP: `cargo run --features mcp -- --mcp` (or dist binary / custom `serve` subcommand).
-3. Send MCP `tools/list`; confirm leaf tool names match intent.
+3. Send MCP `tools/list`; confirm leaf tool names match intent and tools with `outputSchema` appear in the client.
 4. `tools/call` one read-only tool; confirm `structuredContent` or text.
 
 Use clap-mcp **client** example or project MCP tooling — not fabricated PASS results.

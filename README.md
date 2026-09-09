@@ -83,7 +83,8 @@ clap-mcp = "0.1.0"
 * Structured tool output and optional JSON `outputSchema` (global or per-tool);
   tool `inputSchema` advertises JSON Schema draft 2020-12 (`$schema`) with
   enums, defaults, cardinality, conflicts, and `additionalProperties: false`.
-  See
+  Advertised `outputSchema` values are sanitized so clients that require
+  `"type": "object"` can list tools. See
   [tool-output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md)
 * Subprocess stderr policy (`SubprocessStderr::Capture` default, `Notify`, or
   `Ignore`); see

@@ -1595,11 +1595,58 @@ pub(crate) fn tool_task_eligible(tool_name: &str, metadata: &ClapMcpSchemaMetada
     }
 }
 
+/// Ensures an MCP `outputSchema` is acceptable to clients that require JSON Schema
+/// `"type": "object"`.
+///
+/// Policy:
+/// * Keep schemas whose `"type"` is already `"object"`.
+/// * Omit schemas whose `"type"` is present and not `"object"` (for example string
+///   or array schemas).
+/// * When `"type"` is absent, set `"type": "object"`. Open schemas without
+///   `properties` / `oneOf` / `anyOf` / `allOf` / `$ref` also get
+///   `"additionalProperties": true` when that keyword is missing.
+///
+/// Returns `None` when the value is not a JSON object or cannot be advertised
+/// safely. Call sites that attach `outputSchema` to tools should use this helper
+/// (or [`output_schema_for_type`], which already sanitizes).
+pub fn sanitize_mcp_output_schema(
+    schema: serde_json::Value,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let mut obj = match schema {
+        serde_json::Value::Object(o) => o,
+        _ => return None,
+    };
+    match obj.get("type") {
+        Some(serde_json::Value::String(t)) if t == "object" => Some(obj),
+        Some(serde_json::Value::Array(types)) => {
+            if types.iter().any(|v| v.as_str() == Some("object")) {
+                obj.insert("type".into(), serde_json::json!("object"));
+                Some(obj)
+            } else {
+                None
+            }
+        }
+        Some(_) => None,
+        None => {
+            let has_structure = ["properties", "oneOf", "anyOf", "allOf", "$ref"]
+                .iter()
+                .any(|k| obj.contains_key(*k));
+            obj.insert("type".into(), serde_json::json!("object"));
+            if !has_structure && !obj.contains_key("additionalProperties") {
+                obj.insert("additionalProperties".into(), serde_json::json!(true));
+            }
+            Some(obj)
+        }
+    }
+}
+
 /// Builds a JSON schema for a single type. Used by the derive macro when `#[clap_mcp_output_type = "T"]` is set.
-/// When the `output-schema` feature is enabled and `T: schemars::JsonSchema`, returns the schema; otherwise returns `None`.
+/// When the `output-schema` feature is enabled and `T: schemars::JsonSchema`, returns a
+/// [client-sanitized](sanitize_mcp_output_schema) schema; otherwise returns `None`.
 #[cfg(feature = "output-schema")]
 pub fn output_schema_for_type<T: schemars::JsonSchema>() -> Option<serde_json::Value> {
-    serde_json::to_value(schemars::schema_for!(T)).ok()
+    let raw = serde_json::to_value(schemars::schema_for!(T)).ok()?;
+    sanitize_mcp_output_schema(raw).map(serde_json::Value::Object)
 }
 
 #[cfg(not(feature = "output-schema"))]
@@ -1610,7 +1657,8 @@ pub fn output_schema_for_type<T>() -> Option<serde_json::Value> {
 
 /// Builds a JSON schema with `oneOf` for the given types. Used by the derive macro when
 /// `#[clap_mcp_output_one_of = "T1, T2, T3"]` is set. Requires the `output-schema` feature
-/// and each type must implement `schemars::JsonSchema`.
+/// and each type must implement `schemars::JsonSchema`. The result is passed through
+/// [`sanitize_mcp_output_schema`].
 #[macro_export]
 macro_rules! output_schema_one_of {
     ($($T:ty),+ $(,)?) => {{
@@ -1618,7 +1666,8 @@ macro_rules! output_schema_one_of {
         {
             let mut one_of = vec![];
             $( one_of.push(serde_json::to_value(&schemars::schema_for!($T)).unwrap()); )+
-            Some(serde_json::json!({ "oneOf": one_of }))
+            $crate::sanitize_mcp_output_schema(serde_json::json!({ "oneOf": one_of }))
+                .map(serde_json::Value::Object)
         }
         #[cfg(not(feature = "output-schema"))]
         {
@@ -2348,7 +2397,7 @@ fn command_to_tool_with_config(
         .or(output_schema);
     if let Some(output_schema) = tool_out_schema
         .cloned()
-        .and_then(|v| v.as_object().cloned())
+        .and_then(sanitize_mcp_output_schema)
     {
         tool = tool.with_raw_output_schema(Arc::new(output_schema));
     }
@@ -5846,6 +5895,88 @@ mod tests {
         }
         let schema = output_schema_for_type::<Dummy>();
         assert!(schema.is_some());
+        assert_eq!(
+            schema
+                .as_ref()
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("object")
+        );
+    }
+
+    #[test]
+    fn test_sanitize_mcp_output_schema_keep_object_type() {
+        use serde_json::json;
+        let out = sanitize_mcp_output_schema(json!({
+            "type": "object",
+            "properties": { "x": { "type": "string" } }
+        }))
+        .expect("keep object schema");
+        assert_eq!(out.get("type").and_then(|v| v.as_str()), Some("object"));
+        assert!(out.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_sanitize_mcp_output_schema_omit_non_object_type() {
+        use serde_json::json;
+        assert!(sanitize_mcp_output_schema(json!({ "type": "string" })).is_none());
+        assert!(sanitize_mcp_output_schema(json!({ "type": "array" })).is_none());
+        assert!(sanitize_mcp_output_schema(json!("not-an-object")).is_none());
+    }
+
+    #[test]
+    fn test_sanitize_mcp_output_schema_coerce_open_object() {
+        use serde_json::json;
+        let out = sanitize_mcp_output_schema(json!({ "additionalProperties": true }))
+            .expect("coerce open schema");
+        assert_eq!(out.get("type").and_then(|v| v.as_str()), Some("object"));
+        assert_eq!(
+            out.get("additionalProperties").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+
+        let empty = sanitize_mcp_output_schema(json!({})).expect("coerce empty object");
+        assert_eq!(empty.get("type").and_then(|v| v.as_str()), Some("object"));
+        assert_eq!(
+            empty.get("additionalProperties").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_sanitize_mcp_output_schema_one_of_gets_object_type() {
+        use serde_json::json;
+        let out = sanitize_mcp_output_schema(json!({
+            "oneOf": [
+                { "type": "object", "properties": { "a": { "type": "string" } } },
+                { "type": "object", "properties": { "b": { "type": "integer" } } }
+            ]
+        }))
+        .expect("oneOf root");
+        assert_eq!(out.get("type").and_then(|v| v.as_str()), Some("object"));
+        assert!(out.get("oneOf").is_some());
+    }
+
+    #[test]
+    fn test_tools_attach_sanitized_output_schema() {
+        use serde_json::json;
+        let schema =
+            schema_from_command(&clap::Command::new("app").subcommand(clap::Command::new("ping")));
+        let mut metadata = ClapMcpSchemaMetadata::default();
+        metadata.skip_root_command_when_subcommands = true;
+        metadata =
+            metadata.with_tool_output_schema("ping", json!({ "additionalProperties": true }));
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let ping = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "ping")
+            .expect("ping");
+        let out = ping.output_schema.as_ref().expect("outputSchema attached");
+        assert_eq!(out.get("type").and_then(|v| v.as_str()), Some("object"));
+        assert_eq!(
+            out.get("additionalProperties").and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 
     #[tokio::test]

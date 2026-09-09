@@ -150,6 +150,16 @@ type must implement
 [`schemars::JsonSchema`](https://docs.rs/schemars/latest/schemars/trait.JsonSchema.html)
 (schemars **1.x**). For enums, schemars typically produces a `oneOf` schema.
 
+Prefer a concrete response struct or enum over open JSON types such as
+`serde_json::Value`. Many MCP clients require `outputSchema.type` to be
+`"object"`. clap-mcp runs advertised schemas through
+[`sanitize_mcp_output_schema`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.sanitize_mcp_output_schema.html):
+schemas that already use `"type": "object"` are kept; open object-shaped
+schemas without a type get `"type": "object"` (and
+`"additionalProperties": true` when they have no `properties` / `oneOf` /
+`anyOf` / `allOf` / `$ref`); schemas with a non-object `"type"` are omitted
+from `tools/list` instead of breaking clients that reject the whole tool list.
+
 Excerpt (requires `features = ["output-schema"]` and `JsonSchema` on the type):
 
 ```rust
