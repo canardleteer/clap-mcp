@@ -2687,17 +2687,14 @@ pub(crate) fn merge_serve_options_into_metadata(
 fn mcp_action_description_hint(arg: &ClapArg) -> Option<String> {
     let action = arg.action.as_deref()?;
     let hint: String = match action {
-        "SetTrue" => " Boolean flag: set to true to pass this flag.".into(),
-        "SetFalse" => " Boolean flag: set to false to pass this flag (e.g. --no-xxx).".into(),
-        "Count" => " Number of times the flag is passed (e.g. -vvv).".into(),
+        "SetTrue" => " Set true to enable.".into(),
+        "SetFalse" => " Set false to enable (--no-…).".into(),
+        "Count" => " Repeat count (e.g. -vvv).".into(),
         "Append" => {
             if let Some(name) = arg.value_names.first() {
-                format!(
-                    " List of {} values; pass a JSON array (e.g. [\"a\", \"b\"]).",
-                    name
-                )
+                format!(" JSON array of {name} values.")
             } else {
-                " List of values; pass a JSON array (e.g. [\"a\", \"b\"]).".into()
+                " JSON array of values.".into()
             }
         }
         _ => return None,
@@ -4752,7 +4749,7 @@ mod tests {
         assert!(items.is_none());
         assert_eq!(
             mcp_action_description_hint(&boolean_arg),
-            Some(" Boolean flag: set to true to pass this flag.".to_string())
+            Some(" Set true to enable.".to_string())
         );
 
         let false_arg = ClapArg {
@@ -4762,7 +4759,7 @@ mod tests {
         assert_eq!(mcp_type_for_arg(&false_arg).0, json!("boolean"));
         assert_eq!(
             mcp_action_description_hint(&false_arg),
-            Some(" Boolean flag: set to false to pass this flag (e.g. --no-xxx).".to_string())
+            Some(" Set false to enable (--no-…).".to_string())
         );
 
         let count_arg = ClapArg {
@@ -4772,7 +4769,7 @@ mod tests {
         assert_eq!(mcp_type_for_arg(&count_arg).0, json!("integer"));
         assert_eq!(
             mcp_action_description_hint(&count_arg),
-            Some(" Number of times the flag is passed (e.g. -vvv).".to_string())
+            Some(" Repeat count (e.g. -vvv).".to_string())
         );
 
         let append_arg = ClapArg {
@@ -4788,7 +4785,7 @@ mod tests {
         );
         assert_eq!(
             mcp_action_description_hint(&append_arg),
-            Some(" List of TAG values; pass a JSON array (e.g. [\"a\", \"b\"]).".to_string())
+            Some(" JSON array of TAG values.".to_string())
         );
 
         let multi_value_arg = ClapArg {
@@ -4865,7 +4862,7 @@ mod tests {
             props["verbose"]["description"]
                 .as_str()
                 .expect("verbose description")
-                .contains("Boolean flag")
+                .contains("Set true to enable")
         );
         assert_eq!(
             props["level"].get("type").and_then(|value| value.as_str()),
