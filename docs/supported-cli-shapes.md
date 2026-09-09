@@ -27,7 +27,7 @@ and shapes that are intentionally out of scope. Runnable binaries are listed in
 | Struct root, subcommand only in `run` | Dual derive; delegate | `struct_subcommand_required` | Root globals not in `run` unless struct `output_from` |
 | Struct root + globals in `run` | `output_from` on struct; `schema_only` on nested enums | `struct_subcommand_globals` | Tool execution receives full parsed root; root `#[arg(global)]` appear on leaf tool `inputSchema` |
 | Annotated tools | `#[clap_mcp(read_only, idempotent, destructive, open_world, tool_title = "...")]` or `#[clap_mcp(annotation(...))]` | `docs/usage.md` | Populates `ToolAnnotations` and advertised title in `tools/list` |
-| Multi-level subcommands | `schema_only` on intermediates; auto metadata merge | `nested_subcommands` | Manual `merge_from` rarely needed |
+| Multi-level subcommands | `schema_only` on intermediates; `leaves_only` (+ optional `skip_root_when_subcommands`) for leaf-only `tools/list`; auto metadata merge | `nested_subcommands` | `schema_only` does not hide tools; `leaves_only` does |
 | Skipped shell-only tools | `#[clap_mcp(skip)]`; positionals OK on skipped variants | `optional_commands_and_args` | Skipped variants exempt from multi-positional guard |
 | Interactive / TTY / exec | `skip` | [Execution safety — Interactive](execution-safety.md#interactive-and-session-commands) | Not an MCP tool |
 | Cross-tool locking | `Mutex` / stateful / `parallel_safe = false` | [Execution safety — Cross-tool](execution-safety.md#cross-tool-serialization) | No lock-group attribute |

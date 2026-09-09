@@ -326,6 +326,18 @@ cargo run -p clap-mcp-examples --bin struct_subcommand_required -- add --a 2 --b
 cargo run -p clap-mcp-examples --bin struct_subcommand_required -- --mcp
 ```
 
+### nested_subcommands
+
+Multi-level subcommands with `#[clap_mcp(schema_only)]` on the leaf enum,
+`#[clap_mcp(skip)]` on a shell-only variant, and
+`#[clap_mcp(skip_root_when_subcommands, leaves_only)]` so `tools/list` exposes
+`child` only (not `parent` or the clap root).
+
+```bash
+cargo run -p clap-mcp-examples --bin nested_subcommands -- parent child --value ok
+cargo run -p clap-mcp-examples --bin nested_subcommands -- --mcp
+```
+
 ### struct_subcommand_globals
 
 Struct root with **global flags** and `#[clap_mcp_output_from = "run_cli"]` on
@@ -584,6 +596,7 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | Example            | Path                            | Demonstrates                                                       |
 | ------------------ | ------------------------------- | ------------------------------------------------------------------ |
 | **subcommands**    | `servers/subcommands.rs`        | Text output, structured output, subprocess                         |
+| **nested_subcommands** | `servers/nested_subcommands.rs` | Nested tools; `leaves_only` + `schema_only` |
 | **struct_subcommand_required** | `servers/struct_subcommand_required.rs` | Required subcommand struct root (recommended migration) |
 | **struct_subcommand_globals** | `servers/struct_subcommand_globals.rs` | Struct root `output_from` with global flags |
 | **struct_subcommand** | `servers/struct_subcommand.rs` | Optional subcommand struct root (clap demo only)         |

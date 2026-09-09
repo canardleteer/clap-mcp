@@ -13,6 +13,13 @@ coerced to `"type": "object"` and may gain `"additionalProperties": true`. Prefe
 a concrete `JsonSchema` response type over open JSON values. See
 [tool-output.md](tool-output.md).
 
+## After 0.1.0 — `leaves_only`
+
+Additive: `#[clap_mcp(leaves_only)]` / `ClapMcpSchemaMetadata::leaves_only`
+omits intermediate (non-leaf) commands from `tools/list`. Default remains
+unchanged (parents still appear unless you opt in). See
+[execution-safety.md](execution-safety.md).
+
 ## RC line → 0.1.0
 
 `0.1.0` is the first non-RC release on the `0.1` line. Copy-paste dependency

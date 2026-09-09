@@ -1,6 +1,6 @@
 //! Tests for ClapMcpConfig and configuration possibilities.
 
-use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap::{Arg, Args, Command, CommandFactory, Parser, Subcommand};
 use clap_mcp::AsStructured;
 use clap_mcp::ClapMcp;
 use clap_mcp::{
@@ -232,6 +232,43 @@ fn run_struct_optional_commands(cmd: TestStructOptionalCommands) -> String {
 struct TestRootSkipWhenSubcommands {
     #[command(subcommand)]
     command: Option<TestStructOptionalCommands>,
+}
+
+// Nested parents omitted from tools/list via #[clap_mcp(leaves_only)]
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp(skip_root_when_subcommands, leaves_only)]
+#[clap_mcp_output_from = "run_leaves_only"]
+#[command(name = "test-leaves-only", subcommand_required = true)]
+struct TestLeavesOnly {
+    #[command(subcommand)]
+    command: TestLeavesOnlyTop,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum TestLeavesOnlyTop {
+    Parent {
+        #[command(subcommand)]
+        command: TestLeavesOnlyLeaf,
+    },
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum TestLeavesOnlyLeaf {
+    Child {
+        #[arg(long)]
+        value: String,
+    },
+}
+
+fn run_leaves_only(cli: TestLeavesOnly) -> String {
+    match cli.command {
+        TestLeavesOnlyTop::Parent { command } => match command {
+            TestLeavesOnlyLeaf::Child { value } => format!("child={value}"),
+        },
+    }
 }
 
 // Struct root with task_augmented_tools and schema_only nested enum (no root field attrs)
@@ -1572,6 +1609,48 @@ fn test_skip_root_when_subcommands_derive() {
         names.contains(&"done"),
         "subcommand 'done' should still be in tool list"
     );
+}
+
+#[test]
+fn test_leaves_only_hides_intermediate_tools() {
+    let cmd = Command::new("app")
+        .subcommand(Command::new("parent").subcommand(Command::new("child").arg(Arg::new("value"))))
+        .subcommand(Command::new("leaf"));
+    let schema = schema_from_command(&cmd);
+    let mut metadata = ClapMcpSchemaMetadata::default();
+    metadata.skip_root_command_when_subcommands = true;
+    metadata.leaves_only = true;
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        !names.contains(&"parent"),
+        "intermediate parent should be hidden: {names:?}"
+    );
+    assert!(names.contains(&"child"), "leaf child missing: {names:?}");
+    assert!(names.contains(&"leaf"), "sibling leaf missing: {names:?}");
+}
+
+#[test]
+fn test_leaves_only_derive() {
+    let metadata = TestLeavesOnly::clap_mcp_schema_metadata();
+    assert!(
+        metadata.leaves_only,
+        "derive with #[clap_mcp(leaves_only)] should set the flag"
+    );
+    assert!(metadata.skip_root_command_when_subcommands);
+    let cmd = TestLeavesOnly::command();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        !names.contains(&"test-leaves-only"),
+        "root should be skipped: {names:?}"
+    );
+    assert!(
+        !names.contains(&"parent"),
+        "intermediate parent should be hidden: {names:?}"
+    );
+    assert!(names.contains(&"child"), "leaf child missing: {names:?}");
 }
 
 #[test]

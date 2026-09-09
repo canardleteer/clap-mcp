@@ -2,7 +2,7 @@
 //!
 //! | Example binary | Contract |
 //! | --- | --- |
-//! | `nested_subcommands` | `child` in tools; `internal` not in tools |
+//! | `nested_subcommands` | `child` in tools; `parent` / `internal` not in tools |
 //! | `struct_subcommand_globals` | `greet` + `verbose: true` → `verbose:` in output; global on leaf schema |
 //! | `optional_commands_and_args` | `internal` not in tools; `read` schema requires `path` |
 //! | `struct_subcommand_required` | CLI argv parity (`cli_compat_tests.rs`) |
@@ -56,6 +56,10 @@ async fn example_contract_nested_subcommands_internal_skipped() {
         .tools;
     let names = tool_names(&tools);
     assert!(names.contains(&"child"));
+    assert!(
+        !names.contains(&"parent"),
+        "leaves_only must omit intermediate parent tools: {names:?}"
+    );
     assert!(
         !names.contains(&"internal"),
         "nested #[clap_mcp(skip)] must not appear in MCP tools: {names:?}"

@@ -122,7 +122,7 @@ Swap `Cli::parse()` → `Cli::parse_or_serve_mcp()` and add `#[clap_mcp_output_f
 Match the **sem-tool** pattern when the CLI uses a struct root with required subcommand:
 
 1. Derive `ClapMcp` on **both** root struct and subcommand enum.
-2. Root: `#[clap_mcp(skip_root_when_subcommands)]` — leaf tools are subcommands, not the root.
+2. Root: `#[clap_mcp(skip_root_when_subcommands, leaves_only)]` — leaf tools only; not the clap root or intermediate parents.
 3. Root fields that are CLI-only (e.g. `-o`): `#[clap_mcp(skip)]`.
 4. Subcommand enum: `#[clap_mcp(reinvocation_safe, parallel_safe)]` + `output_from` / `output_type`.
 5. **Single dispatch:** `execute(cmd) -> Result<…>` shared by CLI and MCP; MCP `run` wraps with `AsStructured`.
@@ -294,7 +294,7 @@ cargo test   # default features still pass
 
 * Prefer concrete `JsonSchema` output types. Open schemas are sanitized to `"type": "object"` when possible; non-object typed schemas are omitted from `tools/list`.
 * After wiring `outputSchema`, smoke `tools/list` in the MCP client you ship against, not only a permissive harness.
-* Nested CLIs: `schema_only` does not hide intermediate tools from `tools/list` (use `leaves_only` when that lands / is available on your clap-mcp version).
+* Nested CLIs: use `#[clap_mcp(leaves_only)]` (and `skip_root_when_subcommands`) so `tools/list` is leaf-only. `schema_only` skips executor emit and does **not** hide intermediate tools.
 
 ---
 

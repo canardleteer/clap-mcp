@@ -129,6 +129,8 @@ enum Cli { /* variants */ }
 
 Derive `ClapMcp` on each level; use `#[clap_mcp(schema_only)]` on intermediate enums when `output_from` lives on the root or leaf executor. clap-mcp merges metadata across nested enums — prefer derive over manual `merge_from` unless compile errors force imperative metadata.
 
+`schema_only` does not hide intermediate parents from `tools/list`. Add `#[clap_mcp(leaves_only)]` (and usually `skip_root_when_subcommands`) on the root so agents only see leaf tools.
+
 See [supported-cli-shapes.md](../../../../docs/supported-cli-shapes.md) and **nested_subcommands** in [examples/README.md](../../../../examples/README.md).
 
 ## `IntoClapMcpToolError`

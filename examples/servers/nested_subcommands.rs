@@ -5,6 +5,7 @@ use clap_mcp::{ClapMcp, ParseOrServeMcp};
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+#[clap_mcp(skip_root_when_subcommands, leaves_only)]
 #[command(name = "nested-subcommands", subcommand_required = true)]
 struct Cli {
     #[command(subcommand)]

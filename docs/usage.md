@@ -567,13 +567,20 @@ When `run` must see **global root flags** or other root fields, put
 `#[clap_mcp_output_from = "run"]` on the subcommand enum and delegate from the
 struct (default).
 
+For nested trees, `#[clap_mcp(schema_only)]` does not hide intermediate parents
+from `tools/list`. Use `#[clap_mcp(leaves_only)]` (often with
+`skip_root_when_subcommands`) so agents only see leaf tools. See
+[Execution safety — MCP tool list](execution-safety.md) and
+**nested_subcommands** in [examples/README.md](../examples/README.md).
+
 Full pattern and compilable example:
 [Execution safety — Dual derive](execution-safety.md#dual-derive--root-and-subcommand).
 Runnable binaries: **struct_subcommand_required** (subcommand `run`),
 **struct_subcommand_globals** (struct `run` with globals), **flat_struct_root**
 (single wide tool, no subcommand), **flatten_skip** (skip flatten + serialize_topic),
 **flatten_subcommand_skip_flat** / **flatten_subcommand_skip_nested** (skip flattened
-`Subcommand`) in [examples/README.md](../examples/README.md).
+`Subcommand`), **nested_subcommands** (`leaves_only`) in
+[examples/README.md](../examples/README.md).
 
 ## Related guides
 

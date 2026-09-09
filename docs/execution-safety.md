@@ -504,12 +504,21 @@ to `true` via the derive with `#[clap_mcp(skip_root_when_subcommands)]` on the
 root struct, or imperatively (e.g. implement `ClapMcpSchemaMetadataProvider` for
 the root and set the field, or build metadata manually).
 
+To advertise **only leaf** tools (omit intermediate parents that only hold nested
+`#[command(subcommand)]` trees), set
+[`ClapMcpSchemaMetadata::leaves_only`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.leaves_only)
+via `#[clap_mcp(leaves_only)]` on the root struct or enum, or set the field
+imperatively. Combine with `skip_root_when_subcommands` when the clap root should
+also be excluded. Leaf tool names still match clap leaf names.
+
 **Nested enums (schema only):** When a struct root or ancestor enum owns tool
 execution (manual `ClapMcpToolExecutor` or `#[clap_mcp_output_from]` on the
 executor type), intermediate subcommand enums can use `#[clap_mcp(schema_only)]`
 instead of a dead `#[clap_mcp_output_from]` stub. The derive emits
 `ClapMcpSchemaMetadataProvider` only; skip, requires, task, and serialization
-attrs still apply and merge into ancestor metadata. See **nested_subcommands** in
+attrs still apply and merge into ancestor metadata. `schema_only` does **not**
+hide those intermediate command names from `tools/list`; use `leaves_only` for
+that. See **nested_subcommands** in
 [examples/README.md](../examples/README.md).
 
 ## Runtime config

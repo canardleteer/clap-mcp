@@ -802,6 +802,26 @@ fn has_clap_mcp_skip_root_when_subcommands(attrs: &[syn::Attribute]) -> bool {
     false
 }
 
+/// Parses #[clap_mcp(leaves_only)] — omit intermediate (non-leaf) commands from tools/list.
+fn has_clap_mcp_leaves_only(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        let mut found = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("leaves_only") {
+                found = true;
+            }
+            Ok(())
+        });
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
 /// Parses variant-level #[clap_mcp(requires = "arg1,arg2")] - comma-separated list.
 fn get_clap_mcp_requires_variant(attrs: &[syn::Attribute]) -> Option<Vec<String>> {
     for attr in attrs {
@@ -1285,6 +1305,14 @@ fn nested_subcommand_type_paths_from_enum(data: &syn::DataEnum) -> Vec<syn::Path
 /// When present on a struct root that has `#[command(subcommand)]`, the root command
 /// is excluded from the MCP tool list; only subcommands appear as tools. Equivalent to
 /// setting `ClapMcpSchemaMetadata::skip_root_command_when_subcommands = true` imperatively.
+///
+/// ## `#[clap_mcp(leaves_only)]` (on root struct or enum)
+///
+/// When present, only leaf commands (no nested subcommands) appear as MCP tools.
+/// Intermediate parents that only hold nested subcommand trees are omitted from
+/// `tools/list`. Equivalent to `ClapMcpSchemaMetadata::leaves_only = true`.
+/// Distinct from `#[clap_mcp(schema_only)]`, which skips executor emit and does not
+/// hide tools from the list.
 ///
 /// ## `#[clap_mcp(requires)]` / `#[clap_mcp(requires = "arg_name")]` (on field)
 ///
@@ -2247,6 +2275,11 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         } else {
                             quote! {}
                         };
+                    let leaves_only_assign_local = if has_clap_mcp_leaves_only(&input.attrs) {
+                        quote! { local.leaves_only = true; }
+                    } else {
+                        quote! {}
+                    };
                     let output_schema_assign_local: proc_macro2::TokenStream = if let Some(types) =
                         get_clap_mcp_output_one_of(&input.attrs)
                     {
@@ -2263,6 +2296,11 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     let skip_root_assign = if has_clap_mcp_skip_root_when_subcommands(&input.attrs)
                     {
                         quote! { m.skip_root_command_when_subcommands = true; }
+                    } else {
+                        quote! {}
+                    };
+                    let leaves_only_assign = if has_clap_mcp_leaves_only(&input.attrs) {
+                        quote! { m.leaves_only = true; }
                     } else {
                         quote! {}
                     };
@@ -2420,6 +2458,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     #(#tool_annotations_entries_local)*
                                     #(#tool_output_schema_entries_local)*
                                     #skip_root_assign_local
+                                    #leaves_only_assign_local
                                     #output_schema_assign_local
                                     m.merge_from(local);
                                     m
@@ -2460,6 +2499,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     #(#flatten_skip_stmts_m)*
                                     #(#tool_output_schema_entries_m)*
                                     #skip_root_assign
+                                    #leaves_only_assign
                                     #output_schema_assign
                                     m
                                 }
@@ -2596,6 +2636,12 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         _ => Vec::new(),
     };
 
+    let leaves_only_assign = if has_clap_mcp_leaves_only(&input.attrs) {
+        quote! { m.leaves_only = true; }
+    } else {
+        quote! {}
+    };
+
     quote! {
         impl clap_mcp::ClapMcpSchemaMetadataProvider for #name {
             fn clap_mcp_schema_metadata() -> clap_mcp::ClapMcpSchemaMetadata {
@@ -2616,6 +2662,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 #(#tool_annotations_entries)*
                 #output_schema_assign
                 #(#tool_output_schema_entries)*
+                #leaves_only_assign
                 m
             }
         }

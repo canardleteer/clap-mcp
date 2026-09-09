@@ -1207,6 +1207,13 @@ pub struct ClapMcpSchemaMetadata {
     /// MCP tool list (only subcommands become tools). Use when the meaningful tools are
     /// the leaf subcommands (e.g. explain, compare, sort) and the root is rarely invoked.
     pub skip_root_command_when_subcommands: bool,
+    /// When `true`, only leaf commands (no nested subcommands) become MCP tools.
+    /// Intermediate parent commands that only hold nested `#[command(subcommand)]`
+    /// trees are omitted from `tools/list`. Does not remove them from the clap schema
+    /// used for argv construction. Combine with [`Self::skip_root_command_when_subcommands`]
+    /// when the clap root should also be excluded. Distinct from `#[clap_mcp(schema_only)]`,
+    /// which skips executor emit and does not hide tools.
+    pub leaves_only: bool,
     /// Subcommand tool names that may be invoked with MCP task-augmented `tools/call` when
     /// [`ClapMcpSchemaMetadata::task_augmented_tools`] is enabled. Populated by `#[clap_mcp(task)]` on
     /// enum variants. When **empty**, every tool is eligible for task augmentation (when enabled
@@ -1265,6 +1272,7 @@ impl ClapMcpSchemaMetadata {
         self.task_tool_names.extend(other.task_tool_names);
         self.task_augmented_tools = self.task_augmented_tools || other.task_augmented_tools;
         self.skip_root_command_when_subcommands |= other.skip_root_command_when_subcommands;
+        self.leaves_only |= other.leaves_only;
         for (k, v) in other.serialize_tools {
             self.serialize_tools.insert(k, v);
         }
@@ -1940,7 +1948,7 @@ pub fn tools_from_schema_with_metadata(
     config: &ClapMcpConfig,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Vec<Tool> {
-    let commands: Vec<&ClapCommand> =
+    let mut commands: Vec<&ClapCommand> =
         if metadata.skip_root_command_when_subcommands && !schema.root.subcommands.is_empty() {
             schema
                 .root
@@ -1951,6 +1959,9 @@ pub fn tools_from_schema_with_metadata(
         } else {
             schema.root.all_commands()
         };
+    if metadata.leaves_only {
+        commands.retain(|c| c.subcommands.is_empty());
+    }
     let tools: Vec<Tool> = commands
         .into_iter()
         .map(|cmd| {
