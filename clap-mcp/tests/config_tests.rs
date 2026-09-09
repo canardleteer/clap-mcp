@@ -1617,9 +1617,11 @@ fn test_leaves_only_hides_intermediate_tools() {
         .subcommand(Command::new("parent").subcommand(Command::new("child").arg(Arg::new("value"))))
         .subcommand(Command::new("leaf"));
     let schema = schema_from_command(&cmd);
-    let mut metadata = ClapMcpSchemaMetadata::default();
-    metadata.skip_root_command_when_subcommands = true;
-    metadata.leaves_only = true;
+    let metadata = ClapMcpSchemaMetadata {
+        skip_root_command_when_subcommands: true,
+        leaves_only: true,
+        ..Default::default()
+    };
     let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
     let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(

@@ -4871,8 +4871,10 @@ mod tests {
         let port = serve.args.iter().find(|a| a.id == "port").expect("port");
         assert_eq!(port.value_json_type.as_deref(), Some("integer"));
 
-        let mut metadata = ClapMcpSchemaMetadata::default();
-        metadata.skip_root_command_when_subcommands = true;
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        };
         let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
         let tool = tools.iter().find(|t| t.name.as_ref() == "serve").unwrap();
         let props = tool
@@ -6057,10 +6059,11 @@ mod tests {
         use serde_json::json;
         let schema =
             schema_from_command(&clap::Command::new("app").subcommand(clap::Command::new("ping")));
-        let mut metadata = ClapMcpSchemaMetadata::default();
-        metadata.skip_root_command_when_subcommands = true;
-        metadata =
-            metadata.with_tool_output_schema("ping", json!({ "additionalProperties": true }));
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        }
+        .with_tool_output_schema("ping", json!({ "additionalProperties": true }));
         let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
         let ping = tools
             .iter()
