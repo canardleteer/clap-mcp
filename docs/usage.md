@@ -297,6 +297,8 @@ fn main() -> Result<(), clap_mcp::ClapMcpError> {
 When logging is also configured with `with_log_rx`, application instructions
 appear verbatim first, followed by clap-mcp's logging guidance.
 
+Runnable demo: **server_metadata** in [examples/README.md](../examples/README.md).
+
 ### Tool annotations
 
 Annotate tools declaratively on derive variants or imperatively by tool name:
@@ -451,9 +453,14 @@ Tool `inputSchema` properties mirror clap actions (`boolean` for `SetTrue` /
 objects). Integer and floating clap value parsers advertise JSON Schema
 `"integer"` or `"number"` when derive infers them from a plain numeric field
 type, or when you set `#[clap_mcp(input_type = "...")]` /
-`ClapMcpSchemaMetadata::with_arg_value_json_type`. Custom parsers (any explicit
-clap `value_parser`) stay `"string"` unless you override. Schema extraction
-does not execute value parsers to guess types. Agents may pass JSON numbers;
+`ClapMcpSchemaMetadata::with_arg_value_json_type`. Imperative `Command` builders
+must set numeric types with `with_arg_value_json_type`; derive inference does not
+apply to hand-built schemas. Flattened `Args` forward `input_type` / inferred
+types when the `Args` type uses `#[clap_mcp(args_metadata)]` and the flatten
+field repeats that attribute (or the variant already uses `serialize_topic`).
+Custom parsers (any explicit clap `value_parser`) stay `"string"` unless you
+override. Schema extraction does not execute value parsers to guess types.
+Agents may pass JSON numbers;
 clap-mcp stringifies them when building argv, and integral floats such as
 `8080.0` become `"8080"` without saturating casts. Advertised defaults are
 coerced to the same JSON types (including `u64::MAX` and array item defaults).

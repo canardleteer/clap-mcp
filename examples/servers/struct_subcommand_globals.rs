@@ -1,18 +1,23 @@
 //! Struct root with global flags and `#[clap_mcp_output_from]` on the root type.
 //!
 //! Tool execution receives the full parsed `Cli` (globals + subcommand), not only
-//! the subcommand enum. See **struct_subcommand_globals** in examples/README.md.
+//! the subcommand enum. `skip_global` keeps transport-only globals off MCP schemas.
+//! See **struct_subcommand_globals** in examples/README.md.
 
 use clap::{Parser, Subcommand};
 use clap_mcp::{ClapMcp, ParseOrServeMcp};
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false, skip_global = "api_token")]
 #[clap_mcp_output_from = "run_cli"]
 #[command(name = "struct-subcommand-globals", subcommand_required = true)]
 struct Cli {
     #[arg(long, global = true)]
     verbose: bool,
+
+    /// Present on the native CLI only; omitted from MCP `inputSchema`.
+    #[arg(long, global = true)]
+    api_token: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -31,10 +36,15 @@ fn run_cli(cli: Cli) -> String {
     let who = match &cli.command {
         Commands::Greet { name } => name.as_deref().unwrap_or("world"),
     };
-    if cli.verbose {
-        format!("verbose: Hello, {who}!")
+    let token_note = if cli.api_token.is_some() {
+        " (token set)"
     } else {
-        format!("Hello, {who}!")
+        ""
+    };
+    if cli.verbose {
+        format!("verbose: Hello, {who}!{token_note}")
+    } else {
+        format!("Hello, {who}!{token_note}")
     }
 }
 

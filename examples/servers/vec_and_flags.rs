@@ -6,14 +6,23 @@
 //!   as an MCP **array**; clients pass a list and it becomes multiple positional values in order.
 //! - `bool` with `SetTrue` is exposed as **boolean** with a hint.
 //! - `u8` with `Count` (e.g. `-v -v -v`) is exposed as **integer** with a hint.
+//! - Plain numeric fields advertise `"integer"` / `"number"`; lexical `value_parser`s stay
+//!   `"string"` unless you set `#[clap_mcp(input_type = "...")]`.
 //!
 //! Run:
 //!   cargo run -p clap-mcp-examples --bin vec_and_flags -- --help
 //!   cargo run -p clap-mcp-examples --bin vec_and_flags -- --mcp
-//!   cargo run -p clap-mcp-examples --bin vec_and_flags -- run --files a --files b --files c 1.0 2.0 --dry-run -vv
+//!   cargo run -p clap-mcp-examples --bin vec_and_flags -- run --files a --files b --files c 1.0 2.0 --dry-run -vv --port 8080 --size 8MiB
 
 use clap::Parser;
 use clap_mcp::{ClapMcp, ParseOrServeMcp};
+
+fn parse_mib(s: &str) -> Result<u64, String> {
+    s.strip_suffix("MiB")
+        .unwrap_or(s)
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())
+}
 
 #[derive(Debug, Parser, ClapMcp)]
 #[clap_mcp(reinvocation_safe, parallel_safe = true)]
@@ -41,6 +50,19 @@ enum Cli {
         /// Verbosity level, e.g. -v -v -v for 3 (MCP shows this as integer).
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbose: u8,
+
+        /// Plain numeric field (MCP advertises JSON Schema integer).
+        #[arg(long)]
+        port: Option<u16>,
+
+        /// Lexical size parser (`8MiB`); stays string in MCP unless overridden.
+        #[arg(long, num_args(1), value_parser = parse_mib)]
+        size: Option<u64>,
+
+        /// Force a string field to advertise as number (demo of `input_type`).
+        #[arg(long)]
+        #[clap_mcp(input_type = "number")]
+        ratio: Option<String>,
     },
 }
 
@@ -51,14 +73,20 @@ fn run(cmd: Cli) -> String {
             versions,
             dry_run,
             verbose,
+            port,
+            size,
+            ratio,
         } => format!(
-            "files={:?} (len={}), versions={:?} (len={}), dry_run={}, verbose={}",
+            "files={:?} (len={}), versions={:?} (len={}), dry_run={}, verbose={}, port={:?}, size={:?}, ratio={:?}",
             files,
             files.len(),
             versions,
             versions.as_ref().map(|v| v.len()).unwrap_or(0),
             dry_run,
-            verbose
+            verbose,
+            port,
+            size,
+            ratio
         ),
     }
 }
@@ -72,10 +100,13 @@ fn main() {
             versions,
             dry_run,
             verbose,
+            port,
+            size,
+            ratio,
         } => {
             println!(
-                "files={:?}, versions={:?}, dry_run={}, verbose={}",
-                files, versions, dry_run, verbose
+                "files={:?}, versions={:?}, dry_run={}, verbose={}, port={:?}, size={:?}, ratio={:?}",
+                files, versions, dry_run, verbose, port, size, ratio
             );
         }
     }

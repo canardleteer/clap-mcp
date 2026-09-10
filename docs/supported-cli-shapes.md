@@ -60,9 +60,9 @@ Every tool `inputSchema` advertises JSON Schema draft 2020-12 via `$schema`
 * `skip_commands` entries are global by subcommand name across the schema tree.
 * Duplicate leaf clap names under different parents are unsupported for MCP:
   both tools advertise the bare leaf name, and `command_path` / argv use the
-  first DFS match. See
-  `test_duplicate_leaf_names_advertise_bare_and_first_match_dispatch`. Path-qualified
-  tool identity is a follow-up.
+  first DFS match. Keep clap command names unique across the tree until
+  path-qualified tool identity lands. See
+  `test_duplicate_leaf_names_advertise_bare_and_first_match_dispatch`.
 * Topical serialization (`serialized`, `serialize_topic`) gates concurrent tool
   entry only; it does not isolate
   [`ClapMcpToolExecutorWithState`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.ClapMcpToolExecutorWithState.html)

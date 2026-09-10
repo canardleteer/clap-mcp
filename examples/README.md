@@ -66,7 +66,7 @@ public `ClapMcpServer` / `build_clap_mcp_server`. See
   **async_embedder_serve**,
   **task_tools_dedicated**,
   **task_tools_shared**, **subprocess_exit_handling**, **panic_catch_opt_in**,
-  **custom_resources_prompts**, **vec_and_flags**, **arg_group_hints**, **preserve_cli_parse**,
+  **custom_resources_prompts**, **server_metadata**, **vec_and_flags**, **arg_group_hints**, **preserve_cli_parse**,
   **flat_struct_root**, **flatten_skip**, **flatten_subcommand_skip_flat**,
   **flatten_subcommand_skip_nested**, **passthrough_args**,
   **passthrough_args_subprocess**, **custom_mcp_flags**, **stateful_counter**)
@@ -163,15 +163,30 @@ cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --export-skills
 cargo run -p clap-mcp-examples --bin custom_resources_prompts -- --export-skills=./out
 ```
 
+### server_metadata
+
+Sets MCP initialize `instructions` and `Implementation` via
+`ClapMcpServeOptions`, plus per-tool annotations (`read_only` / `destructive`,
+`tool_title`). Same knobs exist on `ServeMcpBuilder`.
+
+```bash
+cargo run -p clap-mcp-examples --bin server_metadata -- status
+cargo run -p clap-mcp-examples --bin server_metadata -- --mcp
+```
+
+See [Usage — Server metadata and instructions](../docs/usage.md#server-metadata-and-instructions).
+
 ### vec_and_flags
 
 Demonstrates **Vec (list)** and **action-based** args in MCP: `--files` and
 positional `versions` are exposed as arrays, `dry_run` as boolean, and `verbose`
-as integer (count). Plain text output only.
+as integer (count). Plain `port: u16` advertises `"integer"`; a lexical
+`value_parser` (`--size 8MiB`) stays `"string"`; `#[clap_mcp(input_type = "number")]`
+overrides `ratio`.
 
 ```bash
 # Normal CLI: option list (--files a --files b), positional list (1.0 2.0)
-cargo run -p clap-mcp-examples --bin vec_and_flags -- run --files a --files b --files c 1.0 2.0 --dry-run -vv
+cargo run -p clap-mcp-examples --bin vec_and_flags -- run --files a --files b --files c 1.0 2.0 --dry-run -vv --port 8080 --size 8MiB
 
 # MCP server mode (inspect tool schema: files and versions = array, dry_run = boolean, verbose = integer)
 cargo run -p clap-mcp-examples --bin vec_and_flags -- --mcp
@@ -207,8 +222,9 @@ See [Usage — Preserve CLI parse](../docs/usage.md#preserve-cli-parse).
 ### flat_struct_root
 
 Struct root with **no subcommand**: one MCP tool whose `inputSchema` includes root
-flags and flattened `Args` fields. Demonstrates the wide-schema tradeoff documented
-in [Supported CLI shapes](../docs/supported-cli-shapes.md#flat-struct-tradeoff).
+flags and flattened `Args` fields. Also demos `hide_default` on `config_dir` and
+`override_default` on `env` (serve options). See
+[Supported CLI shapes](../docs/supported-cli-shapes.md#flat-struct-tradeoff).
 
 ```bash
 cargo run -p clap-mcp-examples --bin flat_struct_root -- --verbose --target prod --email a@b.c
@@ -343,6 +359,7 @@ cargo run -p clap-mcp-examples --bin nested_subcommands -- --mcp
 Struct root with **global flags** and `#[clap_mcp_output_from = "run_cli"]` on
 the root type so MCP execution sees the full `Cli` (not only the subcommand
 enum). Nested `Commands` uses `#[clap_mcp(schema_only)]`.
+`#[clap_mcp(skip_global = "api_token")]` keeps a CLI-only global off MCP schemas.
 
 ```bash
 cargo run -p clap-mcp-examples --bin struct_subcommand_globals -- greet --verbose --name Rust
@@ -598,21 +615,22 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **subcommands**    | `servers/subcommands.rs`        | Text output, structured output, subprocess                         |
 | **nested_subcommands** | `servers/nested_subcommands.rs` | Nested tools; `leaves_only` + `schema_only` |
 | **struct_subcommand_required** | `servers/struct_subcommand_required.rs` | Required subcommand struct root (recommended migration) |
-| **struct_subcommand_globals** | `servers/struct_subcommand_globals.rs` | Struct root `output_from` with global flags |
+| **struct_subcommand_globals** | `servers/struct_subcommand_globals.rs` | Struct root `output_from` with globals; `skip_global` |
 | **struct_subcommand** | `servers/struct_subcommand.rs` | Optional subcommand struct root (clap demo only)         |
 | **optional_commands_and_args** | `servers/optional_commands_and_args.rs` | `#[clap_mcp(skip)]`, `#[clap_mcp(requires)]` (arg and variant-level) |
 | **passthrough_args** | `servers/passthrough_args.rs` | Trailing `Vec` passthrough (in-process); see `passthrough_common.rs` |
 | **passthrough_args_subprocess** | `servers/passthrough_args_subprocess.rs` | Same patterns, subprocess reinvocation |
 | **custom_mcp_flags** | `servers/custom_mcp_flags.rs` | Renamed stdio flag when `--mcp` is already taken |
-| **vec_and_flags** | `servers/vec_and_flags.rs` | Vec/list and flag/count args in MCP schema |
+| **server_metadata** | `servers/server_metadata.rs` | Initialize instructions / `server_info` + tool annotations |
+| **vec_and_flags** | `servers/vec_and_flags.rs` | Vec/list, flags, numeric `input_type` / lexical parsers |
 | **arg_group_hints** | `servers/arg_group_hints.rs` | ArgGroup hints in `meta.clapMcp.argGroups` (advisory, not schema `oneOf`) |
 | **preserve_cli_parse** | `servers/preserve_cli_parse.rs` | `parse_or_serve_mcp_preserve_cli` for native clap Usage on invalid argv |
-| **flat_struct_root** | `servers/flat_struct_root.rs` | Flat struct root — single MCP tool, wide `inputSchema` |
+| **flat_struct_root** | `servers/flat_struct_root.rs` | Flat struct root; `hide_default` / `override_default` |
 | **flatten_skip** | `servers/flatten_skip.rs` | Skip flattened `Args`, skip variants, `args_metadata` + `serialize_topic` |
 | **flatten_subcommand_skip_flat** | `servers/flatten_subcommand_skip_flat.rs` | Skip flattened `Subcommand` enum (flat hidden tools) |
 | **flatten_subcommand_skip_nested** | `servers/flatten_subcommand_skip_nested.rs` | Skip flattened `Subcommand` enum (nested hidden tools) |
 | **result_output**  | `servers/result_output.rs`      | `#[clap_mcp_output_from]` with `Result<T, E>`, `IntoClapMcpToolError` for structured errors |
-| **structured**     | `servers/structured.rs`         | Structured output via `#[clap_mcp_output_from]` and `AsStructured<T>` |
+| **structured**     | `servers/structured.rs`         | Structured output + per-tool `output_type` / `outputSchema` |
 | **tracing_bridge** | `servers/tracing_bridge.rs`  | Tracing integration, MCP log forwarding, prompts   |
 | **log_bridge**     | `servers/log_bridge.rs`      | `log` crate integration, MCP log forwarding       |
 | **async_sleep**       | `servers/async_sleep.rs`        | Async tokio, 3 sleep tasks, `share_runtime = false` |
@@ -628,6 +646,7 @@ cargo run -p clap-mcp-examples --bin log_bridge -- --mcp
 | **task_panic_catch** | `servers/task_panic_catch.rs` | Task-augmented panic catching (`catch_in_process_panics`) |
 | **task_augmented_client** | `task_augmented_client.rs` | rmcp client + task polling |
 | **subprocess_exit_handling** | `servers/subprocess_exit_handling.rs` | Subprocess non-zero exit → MCP `is_error: true` |
+| **stderr_success** | `servers/stderr_success.rs` | Subprocess success stderr via `SubprocessStderr::Notify` |
 | **panic_catch_opt_in** | `servers/panic_catch_opt_in.rs` | In-process panic catching (opt-in), server stays up |
 | **client**            | `client.rs`                    | MCP client that exercises the server examples      |
 

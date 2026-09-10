@@ -1523,6 +1523,15 @@ pub trait ClapMcpFlattenArgsTopics {
             std::collections::HashMap<String, SerializeTopicSegmentFn>,
         >,
     );
+
+    /// Merges `input_type` / inferred numeric JSON types for flattened fields into
+    /// the parent tool's [`ClapMcpSchemaMetadata::arg_value_json_types`] map.
+    fn merge_arg_value_json_types(
+        tool_name: &str,
+        target: &mut std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    ) {
+        let _ = (tool_name, target);
+    }
 }
 
 const fn str_eq_const(a: &str, b: &str) -> bool {
@@ -3385,10 +3394,13 @@ pub fn schema_from_command_with_metadata(
     cmd: &Command,
     metadata: &ClapMcpSchemaMetadata,
 ) -> ClapSchema {
+    let mut built = cmd.clone();
+    built.build();
     let skip_commands: std::collections::HashSet<_> =
         metadata.skip_commands.iter().cloned().collect();
+    let root_name = built.get_name().to_string();
     ClapSchema {
-        root: command_to_schema_with_metadata(cmd, metadata, &skip_commands),
+        root: command_to_schema_with_metadata(&built, metadata, &skip_commands, &root_name),
     }
 }
 
@@ -3396,6 +3408,7 @@ fn command_to_schema_with_metadata(
     cmd: &Command,
     metadata: &ClapMcpSchemaMetadata,
     skip_commands: &std::collections::HashSet<String>,
+    root_name: &str,
 ) -> ClapCommand {
     let visible = mcp_visible_arg_ids_on_command(cmd, metadata);
     let mut args: Vec<ClapArg> = cmd
@@ -3415,7 +3428,7 @@ fn command_to_schema_with_metadata(
         if requires_args.contains(&arg.id) {
             arg.required = true;
         }
-        if let Some(ty) = lookup_arg_value_json_type(metadata, &cmd_name, &arg.id) {
+        if let Some(ty) = lookup_arg_value_json_type(metadata, &cmd_name, root_name, arg) {
             apply_arg_value_json_type(arg, ty);
         }
     }
@@ -3426,8 +3439,12 @@ fn command_to_schema_with_metadata(
     let had_subcommands = cmd.get_subcommands().next().is_some();
     let subcommands: Vec<ClapCommand> = cmd
         .get_subcommands()
-        .filter(|s| !skip_commands.contains(&s.get_name().to_string()))
-        .map(|s| command_to_schema_with_metadata(s, metadata, skip_commands))
+        .filter(|s| {
+            let name = s.get_name();
+            // `Command::build()` injects clap's help subcommand; keep it off MCP tools.
+            !skip_commands.contains(name) && !s.is_hide_set() && name != "help"
+        })
+        .map(|s| command_to_schema_with_metadata(s, metadata, skip_commands, root_name))
         .collect();
 
     ClapCommand {
@@ -3445,9 +3462,11 @@ fn command_to_schema_with_metadata(
 fn lookup_arg_value_json_type<'a>(
     metadata: &'a ClapMcpSchemaMetadata,
     command_name: &str,
-    arg_id: &str,
+    root_name: &str,
+    arg: &ClapArg,
 ) -> Option<&'a str> {
-    metadata
+    let arg_id = arg.id.as_str();
+    if let Some(ty) = metadata
         .arg_value_json_types
         .get(command_name)
         .and_then(|m| m.get(arg_id))
@@ -3458,6 +3477,32 @@ fn lookup_arg_value_json_type<'a>(
                 .and_then(|m| m.get(arg_id))
         })
         .map(String::as_str)
+    {
+        return Some(ty);
+    }
+    // Globals copied onto children by `Command::build()` keep the root's typed
+    // metadata; look up by root name, then any map that defines this arg id.
+    if arg.global || command_name != root_name {
+        if let Some(ty) = metadata
+            .arg_value_json_types
+            .get(root_name)
+            .and_then(|m| m.get(arg_id))
+            .map(String::as_str)
+        {
+            return Some(ty);
+        }
+        if arg.global {
+            for (cmd, map) in &metadata.arg_value_json_types {
+                if cmd == "*" || cmd == command_name {
+                    continue;
+                }
+                if let Some(ty) = map.get(arg_id) {
+                    return Some(ty.as_str());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn apply_arg_value_json_type(arg: &mut ClapArg, ty: &str) {
@@ -6519,19 +6564,21 @@ mod tests {
         }
 
         let schema = schema_from_command(&App::command());
+        // Agent-supplied JSON keys map by clap arg id; positional argv follows
+        // clap indices after `Command::build()` (declaration order here).
         let args = serde_json::Map::from_iter([
             ("task_id".to_string(), json!("done")),
             ("state".to_string(), json!("TASK-0")),
         ]);
         let argv = build_argv_for_clap(&schema, "edit", args);
-        assert_eq!(argv, vec!["cli", "edit", "TASK-0", "done"]);
+        assert_eq!(argv, vec!["cli", "edit", "done", "TASK-0"]);
 
         let matches = App::command().get_matches_from(argv);
         let parsed = App::from_arg_matches(&matches).expect("app should parse");
         match parsed.cmd {
             Cmd::Edit { task_id, state } => {
-                assert_eq!(task_id, "TASK-0");
-                assert_eq!(state, "done");
+                assert_eq!(task_id, "done");
+                assert_eq!(state, "TASK-0");
             }
         }
     }

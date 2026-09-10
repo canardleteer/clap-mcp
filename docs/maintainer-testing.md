@@ -46,7 +46,8 @@ applies:
 | Derive metadata clap arg ids | `clap_arg_id_from_field` for skip/requires/serialize keys | `test_skip_custom_clap_arg_id`, `test_requires_custom_clap_arg_id`, `test_serialize_topic_custom_clap_arg_id`, `tests/ui/pass/custom_arg_id_metadata.rs` |
 | Macro/runtime coverage after new tests | `cargo llvm-cov` on `clap-mcp` + `clap-mcp-macros` | Quick filters above |
 | New `#[clap_mcp(...)]` config flag | Documented in supported-shapes matrix if embedder-visible | [supported-cli-shapes.md](supported-cli-shapes.md) |
-| Tool annotations (`#[clap_mcp(read_only, ...)]`, `#[clap_mcp(annotation(...))]`) | Populates `tool_annotations` on root or variant; propagated to `tools/list`; non-bool rejects at compile time | `server_metadata_and_annotations_tests`, `test_tool_annotations_in_metadata_and_serve_options`, UI pass/fail in `tests/ui/` |
+| Numeric `inputSchema` types (`input_type`, inference, flatten forward, globals after `Command::build`) | Schema property types match metadata; custom `value_parser` stays string | `test_num_args_before_value_parser_disables_numeric_inference`, `test_struct_root_numeric_metadata_uses_clap_command_name`, `test_flatten_args_metadata_forwards_input_types`, `test_global_numeric_type_survives_command_build`, `example_contract_vec_and_flags_*` |
+| Tool annotations (`#[clap_mcp(read_only, ...)]`, `#[clap_mcp(annotation(...))]`) | Populates `tool_annotations` on root or variant; propagated to `tools/list`; non-bool rejects at compile time | `server_metadata_and_annotations_tests`, `test_tool_annotations_in_metadata_and_serve_options`, `example_contract_server_metadata_*`, UI pass/fail in `tests/ui/` |
 | New `[[bin]]` in examples | Auto-included in `cargo xtask examples-help` unless on exclude list | [examples/Cargo.toml](../examples/Cargo.toml), [examples/README.md](../examples/README.md); add contract test if MCP semantics matter |
 | ArgGroup hints (`argGroups` meta, description suffix) | `mcp_visible_arg_ids_on_command` shared with schema args; per-node groups only | `test_arg_groups_*` in `lib.rs`, `example_contract_arg_group_hints_*`, `arg_group_hints` example; rustdoc `-D warnings` |
 
@@ -72,15 +73,19 @@ Documented in [`example_contract_tests.rs`](../clap-mcp/tests/example_contract_t
 | Example binary | Contract |
 | --- | --- |
 | `nested_subcommands` | `child` in tools; `parent` / `internal` not in tools |
-| `struct_subcommand_globals` | `greet` in tools; `verbose` on greet `inputSchema`; `greet` + `verbose: true` → output contains `verbose:` |
+| `struct_subcommand_globals` | `greet` in tools; `verbose` on greet `inputSchema`; `api_token` skipped; `greet` + `verbose: true` → output contains `verbose:` |
 | `optional_commands_and_args` | `internal` not in tools; `read` schema requires `path` |
 | `struct_subcommand_required` | CLI argv parity (see `cli_compat_tests.rs`) |
 | `arg_group_hints` | `search` exposes `meta.clapMcp.argGroups`; exec-only round-trip; both exec flags → `is_error` |
 | `preserve_cli_parse` | Invalid argv → non-zero exit + `Usage` in stderr (`cli_compat_tests.rs`); MCP `--mcp` via `launch_example` |
-| `flat_struct_root` | Exactly one tool (`flat-struct-root`); schema includes root + flattened arg ids |
+| `flat_struct_root` | Exactly one tool (`flat-struct-root`); schema includes root + flattened arg ids; `config_dir` default hidden; `env` default overridden |
 | `flatten_skip` | Skipped connection args absent; `reindex`/`repair` not in tools; `flush` has `serialized` meta |
 | `flatten_subcommand_skip_flat` | One root tool; `visible` on schema; `hidden-a`/`hidden-b` absent |
 | `flatten_subcommand_skip_nested` | `build`/`compile`/`link`/`clean` absent from tools |
+| `server_metadata` | Initialize `server_info` + instructions; `status`/`reset` titles and annotation hints |
+| `vec_and_flags` | `port` integer; lexical `size` string; `ratio` number via `input_type` |
+| `structured` | `add` object `outputSchema`; `echo` none |
+| `stderr_success` | `SubprocessStderr::Notify` advertises logging; success text includes stderr |
 
 ## Adding an example
 

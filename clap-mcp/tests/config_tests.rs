@@ -2092,6 +2092,267 @@ fn test_derive_infers_numeric_input_type_without_custom_value_parser() {
 }
 
 #[test]
+fn test_num_args_before_value_parser_disables_numeric_inference() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_mib"]
+    #[command(name = "test-mib-parser", subcommand_required = true)]
+    enum TestMibParser {
+        Size {
+            #[arg(long, num_args(1), value_parser = parse_mib)]
+            size: u64,
+            #[arg(long)]
+            plain: u64,
+        },
+    }
+
+    fn parse_mib(s: &str) -> Result<u64, String> {
+        s.strip_suffix("MiB")
+            .unwrap_or(s)
+            .parse()
+            .map_err(|e: std::num::ParseIntError| e.to_string())
+    }
+
+    fn run_mib(_: TestMibParser) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestMibParser::clap_mcp_schema_metadata();
+    assert!(
+        metadata
+            .arg_value_json_types
+            .get("size")
+            .and_then(|m| m.get("size"))
+            .is_none(),
+        "num_args(1) before value_parser must not infer integer: {:?}",
+        metadata.arg_value_json_types
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("size")
+            .and_then(|m| m.get("plain"))
+            .map(String::as_str),
+        Some("integer")
+    );
+
+    let schema = schema_from_command_with_metadata(&TestMibParser::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let size_tool = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "size")
+        .expect("size");
+    let props = size_tool
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("size")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("string"),
+        "lexical MiB parser must advertise string: {props:?}"
+    );
+    assert_eq!(
+        props
+            .get("plain")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_struct_root_numeric_metadata_uses_clap_command_name() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp_output_from = "run_plain_root"]
+    // No #[command(name = ...)]: clap defaults to the package name, not "plain-root".
+    struct PlainRoot {
+        #[arg(long)]
+        port: u16,
+        #[arg(long)]
+        #[clap_mcp(input_type = "number")]
+        ratio: f64,
+    }
+
+    fn run_plain_root(_: PlainRoot) -> String {
+        "ok".into()
+    }
+
+    let metadata = PlainRoot::clap_mcp_schema_metadata();
+    let clap_root = PlainRoot::command().get_name().to_string();
+    assert_ne!(
+        clap_root, "plain-root",
+        "test assumes clap package name differs from kebab struct name"
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get(&clap_root)
+            .and_then(|m| m.get("port"))
+            .map(String::as_str),
+        Some("integer"),
+        "metadata must be keyed by clap root name {clap_root:?}: {:?}",
+        metadata.arg_value_json_types
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get(&clap_root)
+            .and_then(|m| m.get("ratio"))
+            .map(String::as_str),
+        Some("number")
+    );
+
+    let schema = schema_from_command_with_metadata(&PlainRoot::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let root = tools
+        .iter()
+        .find(|t| t.name.as_ref() == clap_root)
+        .unwrap_or_else(|| panic!("tool named {clap_root}"));
+    let props = root
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("port")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_flatten_args_metadata_forwards_input_types() {
+    #[derive(Debug, clap::Args, ClapMcp)]
+    #[clap_mcp(args_metadata)]
+    struct SharedArgs {
+        #[arg(long)]
+        count: u32,
+        #[arg(long)]
+        #[clap_mcp(input_type = "integer")]
+        forced: String,
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_types"]
+    #[command(name = "test-flat-types", subcommand_required = true)]
+    enum TestFlatTypes {
+        Apply {
+            #[command(flatten)]
+            #[clap_mcp(args_metadata)]
+            args: SharedArgs,
+        },
+    }
+
+    fn run_flat_types(_: TestFlatTypes) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestFlatTypes::clap_mcp_schema_metadata();
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("apply")
+            .and_then(|m| m.get("count"))
+            .map(String::as_str),
+        Some("integer"),
+        "flattened inference missing: {:?}",
+        metadata.arg_value_json_types
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("apply")
+            .and_then(|m| m.get("forced"))
+            .map(String::as_str),
+        Some("integer")
+    );
+
+    let schema = schema_from_command_with_metadata(&TestFlatTypes::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let apply = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "apply")
+        .expect("apply");
+    let props = apply
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("count")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+    assert_eq!(
+        props
+            .get("forced")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_global_numeric_type_survives_command_build() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_global_num"]
+    #[command(name = "test-global-num", subcommand_required = true)]
+    struct TestGlobalNum {
+        #[arg(long, global = true)]
+        workers: Option<u32>,
+        #[command(subcommand)]
+        command: GlobalNumCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum GlobalNumCmd {
+        Run,
+    }
+
+    fn run_global_num(_: TestGlobalNum) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestGlobalNum::clap_mcp_schema_metadata();
+    let mut cmd = TestGlobalNum::command();
+    cmd.build();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let run = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "run")
+        .expect("run");
+    let props = run
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("workers")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer"),
+        "built command must keep root global numeric type on leaf: {props:?}"
+    );
+}
+
+#[test]
 fn test_leaves_only_equals_false_disables_flag() {
     #[derive(Debug, Parser, ClapMcp)]
     #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
