@@ -27,7 +27,7 @@ and shapes that are intentionally out of scope. Runnable binaries are listed in
 | Struct root, subcommand only in `run` | Dual derive; delegate | `struct_subcommand_required` | Root globals not in `run` unless struct `output_from` |
 | Struct root + globals in `run` | `output_from` on struct; `schema_only` on nested enums | `struct_subcommand_globals` | Tool execution receives full parsed root; root `#[arg(global)]` appear on leaf tool `inputSchema` |
 | Annotated tools | `#[clap_mcp(read_only, idempotent, destructive, open_world, tool_title = "...")]` or `#[clap_mcp(annotation(...))]` | `docs/usage.md` | Populates `ToolAnnotations` and advertised title in `tools/list` |
-| Multi-level subcommands | `schema_only` on intermediates; `leaves_only` (+ optional `skip_root_when_subcommands`) for leaf-only `tools/list`; auto metadata merge | `nested_subcommands` | `schema_only` does not hide tools; `leaves_only` does; duplicate leaf names become path-qualified (`parent__leaf`) |
+| Multi-level subcommands | `schema_only` on intermediates; `leaves_only` (+ optional `skip_root_when_subcommands`) for leaf-only `tools/list`; auto metadata merge | `nested_subcommands` | `schema_only` does not hide tools; `leaves_only` does |
 | Skipped shell-only tools | `#[clap_mcp(skip)]`; positionals OK on skipped variants | `optional_commands_and_args` | Skipped variants exempt from multi-positional guard |
 | Interactive / TTY / exec | `skip` | [Execution safety — Interactive](execution-safety.md#interactive-and-session-commands) | Not an MCP tool |
 | Cross-tool locking | `Mutex` / stateful / `parallel_safe = false` | [Execution safety — Cross-tool](execution-safety.md#cross-tool-serialization) | No lock-group attribute |
@@ -58,11 +58,11 @@ Every tool `inputSchema` advertises JSON Schema draft 2020-12 via `$schema`
   `Args` / `Subcommand` types visible to the proc macro. Opaque or dependency
   types need imperative `skip_commands`, `skip_args`, or `serialize_topic_args`.
 * `skip_commands` entries are global by subcommand name across the schema tree.
-* When two advertised tools would share a clap leaf name, MCP tool names are
-  path-qualified with `__` between segments under the root (for example
-  `foo__child`). Unique leaf names stay bare. Per-tool metadata maps keyed only
-  by the bare leaf name still apply; prefer the advertised name when the leaf is
-  ambiguous.
+* Duplicate leaf clap names under different parents are unsupported for MCP:
+  both tools advertise the bare leaf name, and `command_path` / argv use the
+  first DFS match. See
+  `test_duplicate_leaf_names_advertise_bare_and_first_match_dispatch`. Path-qualified
+  tool identity is a follow-up.
 * Topical serialization (`serialized`, `serialize_topic`) gates concurrent tool
   entry only; it does not isolate
   [`ClapMcpToolExecutorWithState`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.ClapMcpToolExecutorWithState.html)

@@ -37,7 +37,7 @@ applies:
 | Struct executor path change | Struct `output_from` receives full root; default still delegates | `complex_cli_struct_output_from_*`, `struct_subcommand_globals` example |
 | Struct-root metadata delegate (light path) | Root flags OR onto nested metadata (`task_augmented_tools`, `skip_root_when_subcommands`, `output_schema`) | `test_struct_root_task_augmented_tools_metadata_delegate` |
 | Leaf tool schema / argv / validation | Root `#[arg(global)]` on struct roots appear on nested leaf tools | `complex_cli_leaf_tool_schema_includes_root_global`, `example_contract_struct_subcommand_globals_*` |
-| Ambiguous leaf names / `leaves_only` globals | Path-qualify duplicate leaves (`parent__leaf`); unique leaves inherit root globals | `test_ambiguous_leaf_names_path_qualify_and_route`, `test_leaves_only_unique_leaf_inherits_root_global` |
+| `leaves_only` globals / duplicate leaf names | Unique leaves inherit root globals; duplicate bare leaf names remain a known limitation | `test_leaves_only_unique_leaf_inherits_root_global`, `test_duplicate_leaf_names_advertise_bare_and_first_match_dispatch` |
 | Downstream catalog follow-ups | Stderr policy, schema fidelity, per-tool `outputSchema`, `skip_global` | `downstream_catalog_acceptance_tests` |
 | Input schema Draft 2020-12 matrices | SetTrue/SetFalse conflicts, requires, required_unless, ArgGroups | `input_schema_validation_tests` |
 | `#[clap_mcp(skip)]` on `#[command(flatten)]` | `Args::augment_args` probe skips every flattened arg id | `test_skip_flattened_args_excludes_all_arg_ids`, `test_skip_explicit_arg_id_list`, `tests/ui/pass/skip_arg_list.rs` |

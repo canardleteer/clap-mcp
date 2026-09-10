@@ -514,11 +514,7 @@ remaining children after filtering, so a parent whose only children were skipped
 does not appear as a tool and older serialized schemas that omit
 `had_subcommands` still hide visibly nested parents. Combine with
 `skip_root_when_subcommands` when the clap root should also be excluded.
-Leaf tool names still match clap leaf names when those names are unique across
-the advertised tool set. When the same leaf name appears under more than one
-parent, clap-mcp advertises path-qualified tool names joined with
-`__` (root binary name omitted), for example `foo__child` and `bar__child`.
-`tools/call` must use the advertised name so argv routes to the intended parent.
+Leaf tool names still match clap leaf names.
 
 **Nested enums (schema only):** When a struct root or ancestor enum owns tool
 execution (manual `ClapMcpToolExecutor` or `#[clap_mcp_output_from]` on the
