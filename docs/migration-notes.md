@@ -11,9 +11,10 @@ Schemas whose JSON Schema `"type"` is not `"object"` are omitted. Open
 object-shaped schemas without a type (common for schemars open types) are
 coerced to `"type": "object"` and may gain `"additionalProperties": true`.
 `oneOf` / `anyOf` / `allOf` without an object type are kept only when every
-branch is object-compatible; string/array unions are omitted rather than
-advertised as impossible `type: object` schemas. Prefer a concrete `JsonSchema`
-response type over open JSON values. See [tool-output.md](tool-output.md).
+branch is object-compatible after resolving local `$ref` targets in `$defs` /
+`definitions` (cycles and non-object targets omit the schema). Prefer a
+concrete `JsonSchema` response type over open JSON values. See
+[tool-output.md](tool-output.md).
 
 ## After 0.1.0 — `leaves_only`
 
@@ -23,13 +24,34 @@ on clap nesting before `skip_commands` filtering. Default remains unchanged
 (parents still appear unless you opt in). See
 [execution-safety.md](execution-safety.md).
 
+### `ClapCommand::had_subcommands` source compatibility
+
+Schema extraction now sets
+[`ClapCommand::had_subcommands`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapCommand.html#structfield.had_subcommands)
+so `leaves_only` can see pre-skip nesting. Hand-built `ClapCommand { … }`
+struct literals that listed every field must add `had_subcommands` or use
+struct update syntax:
+
+```rust
+root: ClapCommand {
+    subcommands: leaves,
+    ..native.root
+},
+```
+
+`#[serde(default)]` keeps deserialized schemas compatible when the field is
+absent.
+
 ## After 0.1.0 — numeric `inputSchema` types
 
 clap-mcp maps known numeric clap value parsers to JSON Schema `"integer"` or
 `"number"` in tool `inputSchema` (previously always `"string"` for `Set` args),
-except when the arg has visible possible values (lexical enum stays string).
-JSON numbers in `tools/call` arguments still stringify into argv. Advertised
-defaults are coerced to match the property type. See
+except when the arg's value parser exposes possible values (lexical CLI tokens
+stay `"string"`, even if `hide_possible_values` hides the enum from help /
+`inputSchema`). JSON numbers in `tools/call` arguments still stringify into
+argv. Advertised defaults are coerced to match the property type; values that
+cannot be represented as JSON numbers (for example `u128::MAX` or `inf`) omit
+the `default` keyword instead of advertising a string. See
 [usage.md](usage.md#input-schema-fidelity-notes).
 
 ## RC line → 0.1.0

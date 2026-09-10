@@ -452,9 +452,12 @@ objects). Integer and floating clap value parsers (`u16`, `i32`, `f64`, and
 similar via `value_parser!(…)`) advertise JSON Schema `"integer"` or
 `"number"` instead of `"string"`. Agents may pass JSON numbers; clap-mcp
 stringifies them when building argv. Advertised defaults are coerced to the
-same JSON types (including `u64::MAX` and array item defaults). Args with
-visible possible values keep `"type": "string"` and `enum` (lexical CLI tokens),
-even when the parser maps those tokens onto an integer Rust type. Boolean flags
+same JSON types (including `u64::MAX` and array item defaults). Values that
+cannot be represented as JSON numbers (for example `u128::MAX` or `inf`) omit
+`default` instead of advertising a string. Args whose value parser exposes
+possible values keep `"type": "string"` (and `enum` when those choices are not
+hidden), even when the parser maps those tokens onto an integer Rust type or
+`hide_possible_values` is set. Boolean flags
 do **not** advertise string `enum` values. Property descriptions append short
 action hints (for example `Set true to enable.`) rather than long flag
 tutorials. Conflicts,

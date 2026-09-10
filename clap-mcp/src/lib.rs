@@ -1613,8 +1613,9 @@ pub(crate) fn tool_task_eligible(tool_name: &str, metadata: &ClapMcpSchemaMetada
 /// * Omit schemas whose `"type"` is present and not `"object"` (for example string
 ///   or array schemas).
 /// * When `"type"` is absent and the schema uses `oneOf` / `anyOf` / `allOf`, keep
-///   only if every branch is itself object-compatible; otherwise omit (do not invent
-///   `"type": "object"` over string/array unions).
+///   only if every branch is itself object-compatible (local `$ref` targets are
+///   resolved via `$defs` / `definitions` with cycle detection); otherwise omit.
+/// * Bare `$ref` roots are kept only when the resolved target is object-compatible.
 /// * When `"type"` is absent otherwise, set `"type": "object"`. Open schemas without
 ///   `properties` / `oneOf` / `anyOf` / `allOf` / `$ref` also get
 ///   `"additionalProperties": true` when that keyword is missing.
@@ -1644,7 +1645,13 @@ pub fn sanitize_mcp_output_schema(
             for key in ["oneOf", "anyOf", "allOf"] {
                 if let Some(branches) = obj.get(key).and_then(|v| v.as_array()) {
                     if branches.is_empty()
-                        || !branches.iter().all(schema_branch_is_object_compatible)
+                        || !branches.iter().all(|b| {
+                            schema_is_object_compatible(
+                                b,
+                                &obj,
+                                &mut std::collections::HashSet::new(),
+                            )
+                        })
                     {
                         return None;
                     }
@@ -1652,7 +1659,19 @@ pub fn sanitize_mcp_output_schema(
                     return Some(obj);
                 }
             }
-            let has_structure = ["properties", "$ref"].iter().any(|k| obj.contains_key(*k));
+            if obj.contains_key("$ref") {
+                let mut visiting = std::collections::HashSet::new();
+                if !schema_is_object_compatible(
+                    &serde_json::Value::Object(obj.clone()),
+                    &obj,
+                    &mut visiting,
+                ) {
+                    return None;
+                }
+                obj.insert("type".into(), serde_json::json!("object"));
+                return Some(obj);
+            }
+            let has_structure = obj.contains_key("properties");
             obj.insert("type".into(), serde_json::json!("object"));
             if !has_structure && !obj.contains_key("additionalProperties") {
                 obj.insert("additionalProperties".into(), serde_json::json!(true));
@@ -1663,11 +1682,27 @@ pub fn sanitize_mcp_output_schema(
 }
 
 /// Whether a JSON Schema fragment can be advertised under MCP `outputSchema` with
-/// top-level `"type": "object"` (structs / maps / refs / nested object unions).
-fn schema_branch_is_object_compatible(schema: &serde_json::Value) -> bool {
+/// top-level `"type": "object"`. Resolves local `#/$defs/…` and `#/definitions/…`
+/// references against `root`; cycles or unresolvable refs are not object-compatible.
+fn schema_is_object_compatible(
+    schema: &serde_json::Value,
+    root: &serde_json::Map<String, serde_json::Value>,
+    visiting: &mut std::collections::HashSet<String>,
+) -> bool {
     let Some(obj) = schema.as_object() else {
         return false;
     };
+    if let Some(ref_str) = obj.get("$ref").and_then(|v| v.as_str()) {
+        if !visiting.insert(ref_str.to_string()) {
+            return false;
+        }
+        let resolved = resolve_local_schema_ref(ref_str, root);
+        let ok = resolved
+            .map(|target| schema_is_object_compatible(target, root, visiting))
+            .unwrap_or(false);
+        visiting.remove(ref_str);
+        return ok;
+    }
     match obj.get("type") {
         Some(serde_json::Value::String(t)) => t == "object",
         Some(serde_json::Value::Array(types)) => types.iter().any(|v| v.as_str() == Some("object")),
@@ -1676,15 +1711,38 @@ fn schema_branch_is_object_compatible(schema: &serde_json::Value) -> bool {
             for key in ["oneOf", "anyOf", "allOf"] {
                 if let Some(branches) = obj.get(key).and_then(|v| v.as_array()) {
                     return !branches.is_empty()
-                        && branches.iter().all(schema_branch_is_object_compatible);
+                        && branches
+                            .iter()
+                            .all(|b| schema_is_object_compatible(b, root, visiting));
                 }
             }
             obj.contains_key("properties")
                 || obj.contains_key("additionalProperties")
-                || obj.contains_key("$ref")
                 || obj.is_empty()
         }
     }
+}
+
+/// Resolve `#/$defs/Name` or `#/definitions/Name` against the root schema object.
+fn resolve_local_schema_ref<'a>(
+    reference: &str,
+    root: &'a serde_json::Map<String, serde_json::Value>,
+) -> Option<&'a serde_json::Value> {
+    let path = reference.strip_prefix("#/")?;
+    let mut cur = root;
+    let mut last: Option<&serde_json::Value> = None;
+    for segment in path.split('/') {
+        let next = cur.get(segment)?;
+        last = Some(next);
+        match next.as_object() {
+            Some(map) => cur = map,
+            None => {
+                // Final segment may be a non-object schema (string/array); still return it.
+                return Some(next);
+            }
+        }
+    }
+    last
 }
 
 /// Builds a JSON schema for a single type. Used by the derive macro when `#[clap_mcp_output_type = "T"]` is set.
@@ -2599,12 +2657,12 @@ fn advertised_default_for_arg(
     Some(match json_type {
         Some("array") => {
             let item_ty = arg.value_json_type.as_deref().unwrap_or("string");
-            let items: Vec<serde_json::Value> = arg
+            let items: Option<Vec<serde_json::Value>> = arg
                 .default_values
                 .iter()
                 .map(|s| coerce_default_scalar(s, item_ty))
                 .collect();
-            serde_json::Value::Array(items)
+            return items.map(serde_json::Value::Array);
         }
         Some("boolean") => {
             let b = arg
@@ -2614,46 +2672,51 @@ fn advertised_default_for_arg(
                 .unwrap_or(false);
             serde_json::Value::Bool(b)
         }
-        Some("integer") => coerce_default_scalar(
-            arg.default_values
-                .first()
-                .map(String::as_str)
-                .unwrap_or("0"),
-            "integer",
-        ),
-        Some("number") => coerce_default_scalar(
-            arg.default_values
-                .first()
-                .map(String::as_str)
-                .unwrap_or("0"),
-            "number",
-        ),
+        Some("integer") => {
+            return coerce_default_scalar(
+                arg.default_values
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("0"),
+                "integer",
+            );
+        }
+        Some("number") => {
+            return coerce_default_scalar(
+                arg.default_values
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("0"),
+                "number",
+            );
+        }
         _ => serde_json::json!(arg.default_values.first()),
     })
 }
 
 /// Coerce a clap default string into a JSON value matching the advertised schema type.
-fn coerce_default_scalar(raw: &str, json_type: &str) -> serde_json::Value {
+/// Returns `None` when the value cannot be represented (for example `u128::MAX` under
+/// integer, or non-finite floats under number); callers omit the default.
+fn coerce_default_scalar(raw: &str, json_type: &str) -> Option<serde_json::Value> {
     match json_type {
         "integer" => {
             if let Ok(i) = raw.parse::<i64>() {
-                return serde_json::json!(i);
+                return Some(serde_json::json!(i));
             }
             if let Ok(u) = raw.parse::<u64>() {
-                return serde_json::json!(u);
+                return Some(serde_json::json!(u));
             }
-            serde_json::Value::String(raw.to_string())
+            None
         }
         "number" => {
-            if let Ok(f) = raw.parse::<f64>()
-                && let Some(n) = serde_json::Number::from_f64(f)
-            {
-                return serde_json::Value::Number(n);
+            let f = raw.parse::<f64>().ok()?;
+            if !f.is_finite() {
+                return None;
             }
-            serde_json::Value::String(raw.to_string())
+            serde_json::Number::from_f64(f).map(serde_json::Value::Number)
         }
-        "boolean" => serde_json::Value::Bool(raw == "true"),
-        _ => serde_json::Value::String(raw.to_string()),
+        "boolean" => Some(serde_json::Value::Bool(raw == "true")),
+        _ => Some(serde_json::Value::String(raw.to_string())),
     }
 }
 
@@ -4039,6 +4102,10 @@ fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
 
     let (conflicts_with, requires, required_unless) = parse_arg_debug_constraints(arg);
 
+    // Parser choice tokens (PossibleValuesParser, etc.) imply lexical CLI input even
+    // when hide_possible_values hides them from help / advertised enum.
+    let parser_has_choices = !arg.get_possible_values().is_empty();
+
     ClapArg {
         id: arg.get_id().to_string(),
         long: arg.get_long().map(|s| s.to_string()),
@@ -4051,19 +4118,19 @@ fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
         action: Some(format!("{:?}", arg.get_action())),
         value_names,
         num_args: arg.get_num_args().map(|r| format!("{r:?}")),
-        possible_values: possible_values.clone(),
+        possible_values,
         default_values,
         conflicts_with,
         requires,
         required_unless,
         min_items,
         max_items,
-        // Lexical possible values (e.g. PossibleValuesParser "low"/"high" → u8) stay
-        // JSON strings with enum; parser TypeId alone does not imply numeric input.
-        value_json_type: if possible_values.is_empty() {
-            value_json_type_from_parser(arg).map(str::to_string)
-        } else {
+        // Lexical parser choices stay JSON strings; TypeId alone does not imply
+        // numeric input (including when choices are hidden from the schema enum).
+        value_json_type: if parser_has_choices {
             None
+        } else {
+            value_json_type_from_parser(arg).map(str::to_string)
         },
     }
 }
@@ -6161,6 +6228,42 @@ mod tests {
     }
 
     #[test]
+    fn test_sanitize_mcp_output_schema_omits_non_object_defs_refs() {
+        use serde_json::json;
+        // Untagged enum via $defs refs (Text=string, List=array) must not gain
+        // type:object over unresolved-as-object references.
+        assert!(
+            sanitize_mcp_output_schema(json!({
+                "oneOf": [
+                    { "$ref": "#/$defs/Text" },
+                    { "$ref": "#/$defs/List" }
+                ],
+                "$defs": {
+                    "Text": { "type": "string" },
+                    "List": { "type": "array", "items": { "type": "string" } }
+                }
+            }))
+            .is_none()
+        );
+
+        let object_refs = sanitize_mcp_output_schema(json!({
+            "oneOf": [
+                { "$ref": "#/$defs/A" },
+                { "$ref": "#/$defs/B" }
+            ],
+            "$defs": {
+                "A": { "type": "object", "properties": { "a": { "type": "string" } } },
+                "B": { "type": "object", "properties": { "b": { "type": "integer" } } }
+            }
+        }))
+        .expect("object $defs refs");
+        assert_eq!(
+            object_refs.get("type").and_then(|v| v.as_str()),
+            Some("object")
+        );
+    }
+
+    #[test]
     fn test_possible_values_parser_stays_string_enum_not_integer() {
         use serde_json::json;
         // PossibleValuesParser maps lexical "low"/"high" to u8; TypeId is u8 but
@@ -6210,6 +6313,58 @@ mod tests {
             Some("string")
         );
         assert_eq!(props["level"].get("enum"), Some(&json!(["low", "high"])));
+    }
+
+    #[test]
+    fn test_hidden_possible_values_still_block_integer_type() {
+        let cmd = Command::new("app").subcommand(
+            Command::new("run").arg(
+                Arg::new("level")
+                    .long("level")
+                    .hide_possible_values(true)
+                    .value_parser({
+                        use clap::builder::TypedValueParser as _;
+                        clap::builder::PossibleValuesParser::new(["low", "high"]).map(|s| {
+                            match s.as_str() {
+                                "low" => 0u8,
+                                "high" => 1u8,
+                                _ => unreachable!(),
+                            }
+                        })
+                    })
+                    .action(ArgAction::Set),
+            ),
+        );
+        let schema = schema_from_command(&cmd);
+        let level = schema.root.subcommands[0]
+            .args
+            .iter()
+            .find(|a| a.id == "level")
+            .expect("level");
+        assert!(
+            level.possible_values.is_empty(),
+            "hidden choices must not appear in advertised enum"
+        );
+        assert!(
+            level.value_json_type.is_none(),
+            "hidden lexical choices must still block integer TypeId: {:?}",
+            level.value_json_type
+        );
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        };
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let props = tools[0]
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            props["level"].get("type").and_then(|v| v.as_str()),
+            Some("string")
+        );
+        assert!(props["level"].get("enum").is_none());
     }
 
     #[test]
@@ -6265,6 +6420,69 @@ mod tests {
         assert_eq!(
             props["max"].get("type").and_then(|v| v.as_str()),
             Some("integer")
+        );
+    }
+
+    #[test]
+    fn test_unrepresentable_numeric_defaults_are_omitted() {
+        let cmd = Command::new("app").subcommand(
+            Command::new("tune")
+                .arg(
+                    Arg::new("huge")
+                        .long("huge")
+                        .value_parser(clap::value_parser!(u128))
+                        .default_value("340282366920938463463374607431768211455")
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("rate")
+                        .long("rate")
+                        .value_parser(clap::value_parser!(f64))
+                        .default_value("inf")
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("ports")
+                        .long("ports")
+                        .value_parser(clap::value_parser!(u16))
+                        .num_args(1..)
+                        .default_values(["80", "inf"])
+                        .action(ArgAction::Set),
+                ),
+        );
+        let schema = schema_from_command(&cmd);
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        };
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let props = tools[0]
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            props["huge"].get("type").and_then(|v| v.as_str()),
+            Some("integer")
+        );
+        assert!(
+            props["huge"].get("default").is_none(),
+            "u128::MAX must not become a string default: {:?}",
+            props["huge"].get("default")
+        );
+        assert_eq!(
+            props["rate"].get("type").and_then(|v| v.as_str()),
+            Some("number")
+        );
+        assert!(
+            props["rate"].get("default").is_none(),
+            "non-finite float must not become a string default: {:?}",
+            props["rate"].get("default")
+        );
+        assert!(
+            props["ports"].get("default").is_none(),
+            "array default with unrepresentable item must be omitted: {:?}",
+            props["ports"].get("default")
         );
     }
 
