@@ -295,7 +295,7 @@ cargo test   # default features still pass
 * Prefer concrete `JsonSchema` output types. Open schemas are sanitized to `"type": "object"` when possible; non-object typed schemas are omitted from `tools/list`.
 * After wiring `outputSchema`, smoke `tools/list` in the MCP client you ship against, not only a permissive harness.
 * Nested CLIs: use `#[clap_mcp(leaves_only)]` (and `skip_root_when_subcommands`) so `tools/list` is leaf-only. `schema_only` skips executor emit and does **not** hide intermediate tools.
-* Numeric clap parsers (`u16`, `i32`, `f64`, …) advertise JSON `"integer"` / `"number"`; agents may send JSON numbers on `tools/call`.
+* Numeric clap parsers (`u16`, `i32`, `f64`, …) advertise JSON `"integer"` / `"number"`; agents may send JSON numbers on `tools/call`. Args with possible values stay string enums.
 
 ---
 
