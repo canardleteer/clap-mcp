@@ -794,9 +794,11 @@ fn has_clap_mcp_leaves_only(attrs: &[syn::Attribute]) -> bool {
 
 /// True when any `#[clap_mcp(...)]` list contains the bare (or valued) flag `name`.
 ///
-/// Consumes `= value` on every nested meta so later flags remain visible (for example
-/// `#[clap_mcp(parallel_safe = false, leaves_only)]`). Does not discard parse errors
-/// before checking whether the flag was seen.
+/// Consumes `= value` and parenthesized nested meta on every other key so later
+/// flags remain visible (for example
+/// `#[clap_mcp(parallel_safe = false, leaves_only)]` and
+/// `#[clap_mcp(annotation(read_only = true), leaves_only)]`). Does not discard
+/// parse errors before checking whether the flag was seen.
 fn clap_mcp_attr_has_flag(attrs: &[syn::Attribute], name: &str) -> bool {
     for attr in attrs {
         if !attr.path().is_ident("clap_mcp") {
@@ -807,10 +809,23 @@ fn clap_mcp_attr_has_flag(attrs: &[syn::Attribute], name: &str) -> bool {
             if meta.path.is_ident(name) {
                 if meta.input.peek(syn::token::Eq) {
                     let _: Expr = meta.value()?.parse()?;
+                } else if meta.input.peek(syn::token::Paren) {
+                    // Unusual but legal: `leaves_only(...)` — drain nested tokens.
+                    meta.parse_nested_meta(|_| Ok(()))?;
                 }
                 found = true;
             } else if meta.input.peek(syn::token::Eq) {
                 let _: Expr = meta.value()?.parse()?;
+            } else if meta.input.peek(syn::token::Paren) {
+                // Consume `annotation(read_only = true)` / similar nested lists.
+                meta.parse_nested_meta(|inner| {
+                    if inner.input.peek(syn::token::Eq) {
+                        let _: Expr = inner.value()?.parse()?;
+                    } else if inner.input.peek(syn::token::Paren) {
+                        inner.parse_nested_meta(|_| Ok(()))?;
+                    }
+                    Ok(())
+                })?;
             }
             Ok(())
         });
@@ -2325,8 +2340,17 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         tool_output_schemas.iter().map(|(cmd, ty)| {
                             let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
                             quote! {
-                                if let Some(schema) = clap_mcp::output_schema_for_type::<#ty>() {
-                                    local.tool_output_schemas.insert(#cmd_lit.to_string(), schema);
+                                match clap_mcp::output_schema_for_type::<#ty>() {
+                                    Some(schema) => {
+                                        local.tool_output_schemas
+                                            .insert(#cmd_lit.to_string(), schema);
+                                    }
+                                    None => {
+                                        let name = #cmd_lit.to_string();
+                                        if !local.omit_tool_output_schemas.contains(&name) {
+                                            local.omit_tool_output_schemas.push(name);
+                                        }
+                                    }
                                 }
                             }
                         });
@@ -2334,8 +2358,16 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         tool_output_schemas.iter().map(|(cmd, ty)| {
                             let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
                             quote! {
-                                if let Some(schema) = clap_mcp::output_schema_for_type::<#ty>() {
-                                    m.tool_output_schemas.insert(#cmd_lit.to_string(), schema);
+                                match clap_mcp::output_schema_for_type::<#ty>() {
+                                    Some(schema) => {
+                                        m.tool_output_schemas.insert(#cmd_lit.to_string(), schema);
+                                    }
+                                    None => {
+                                        let name = #cmd_lit.to_string();
+                                        if !m.omit_tool_output_schemas.contains(&name) {
+                                            m.omit_tool_output_schemas.push(name);
+                                        }
+                                    }
                                 }
                             }
                         });
@@ -2616,8 +2648,16 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let tool_output_schema_entries = tool_output_schemas.iter().map(|(cmd, ty)| {
         let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
         quote! {
-            if let Some(schema) = clap_mcp::output_schema_for_type::<#ty>() {
-                m.tool_output_schemas.insert(#cmd_lit.to_string(), schema);
+            match clap_mcp::output_schema_for_type::<#ty>() {
+                Some(schema) => {
+                    m.tool_output_schemas.insert(#cmd_lit.to_string(), schema);
+                }
+                None => {
+                    let name = #cmd_lit.to_string();
+                    if !m.omit_tool_output_schemas.contains(&name) {
+                        m.omit_tool_output_schemas.push(name);
+                    }
+                }
             }
         }
     });

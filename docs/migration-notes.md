@@ -7,15 +7,20 @@
 ## After 0.1.0 — client-safe `outputSchema`
 
 clap-mcp sanitizes tool `outputSchema` before advertising it on `tools/list`.
-Schemas whose JSON Schema `"type"` is not `"object"` are omitted. Open
-object-shaped schemas without a type (common for schemars open types) are
-coerced to `"type": "object"` and may gain `"additionalProperties": true`.
-`oneOf` / `anyOf` / `allOf` without an object type are kept only when every
-branch is object-compatible after resolving local `$ref` targets in `$defs` /
-`definitions` (JSON Pointer escapes, cycles, and non-object targets omit the
-schema). Type unions such as `["object","null"]` are omitted rather than
-narrowed to `"object"`. Prefer a concrete `JsonSchema` response type over open
-JSON values. See [tool-output.md](tool-output.md).
+Schemas whose JSON Schema `"type"` is not `"object"` are omitted. Schemas with
+`properties` (or a non-boolean `additionalProperties` schema) and no type gain
+`"type": "object"`. Unrestricted / free-form schemas (empty objects, title-only
+schemars `AnyValue`, or bare `"additionalProperties": true`) are omitted so
+tools that can return arrays or scalars do not advertise a false object
+contract. `oneOf` / `anyOf` / `allOf` without an object type are kept only when
+every branch is object-compatible after resolving local `$ref` targets in
+`$defs` / `definitions` (JSON Pointer escapes, cycles, and non-object targets
+omit the schema). Type unions such as `["object","null"]` are omitted rather
+than narrowed to `"object"`. Prefer a concrete `JsonSchema` response type over
+open JSON values. See [tool-output.md](tool-output.md).
+
+When a per-tool `output_type` cannot be advertised after sanitization, clap-mcp
+records an omit marker so that leaf does not inherit a global `output_schema`.
 
 ## After 0.1.0 — `leaves_only`
 
@@ -49,11 +54,13 @@ clap-mcp maps known numeric clap value parsers to JSON Schema `"integer"` or
 `"number"` in tool `inputSchema` (previously always `"string"` for `Set` args),
 except when the arg's value parser exposes possible values (lexical CLI tokens
 stay `"string"`, even if `hide_possible_values` hides the enum from help /
-`inputSchema`). JSON numbers in `tools/call` arguments still stringify into
-argv. Advertised defaults are coerced to match the property type; values that
-cannot be represented as JSON numbers (for example `u128::MAX` or `inf`) omit
-the `default` keyword instead of advertising a string. See
-[usage.md](usage.md#input-schema-fidelity-notes).
+`inputSchema`) or when a custom parser accepts non-numeric tokens such as
+`"4KiB"` while returning a numeric Rust type. JSON numbers in `tools/call`
+arguments stringify into argv; integral floats such as `8080.0` normalize to
+`"8080"` so stock integer parsers accept them. Advertised defaults are coerced
+to match the property type; values that cannot be represented as JSON numbers
+(for example `u128::MAX` or `inf`) omit the `default` keyword instead of
+advertising a string. See [usage.md](usage.md#input-schema-fidelity-notes).
 
 ## RC line → 0.1.0
 

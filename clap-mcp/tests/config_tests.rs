@@ -1889,6 +1889,125 @@ fn test_tools_from_schema_with_metadata_output_schema() {
     }
 }
 
+#[cfg(feature = "output-schema")]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct GlobalObjectOut {
+    ok: bool,
+}
+
+#[cfg(feature = "output-schema")]
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp(skip_root_when_subcommands)]
+#[clap_mcp_output_from = "run_omit_leaf_schema"]
+#[clap_mcp_output_type = "GlobalObjectOut"]
+#[command(name = "test-omit-leaf-schema", subcommand_required = true)]
+enum TestOmitLeafSchema {
+    Objectish,
+    #[clap_mcp(output_type = "Vec<String>")]
+    Listed,
+}
+
+#[cfg(feature = "output-schema")]
+fn run_omit_leaf_schema(cmd: TestOmitLeafSchema) -> AsStructured<serde_json::Value> {
+    match cmd {
+        TestOmitLeafSchema::Objectish => AsStructured(serde_json::json!({ "ok": true })),
+        TestOmitLeafSchema::Listed => AsStructured(serde_json::json!(["a", "b"])),
+    }
+}
+
+#[cfg(feature = "output-schema")]
+#[test]
+fn test_non_object_leaf_output_type_does_not_inherit_global_schema() {
+    let metadata = TestOmitLeafSchema::clap_mcp_schema_metadata();
+    assert!(
+        metadata.output_schema.is_some(),
+        "global object output schema expected"
+    );
+    assert!(
+        metadata
+            .omit_tool_output_schemas
+            .iter()
+            .any(|n| n == "listed"),
+        "Vec<String> leaf must be recorded as omitted: {:?}",
+        metadata.omit_tool_output_schemas
+    );
+    assert!(
+        !metadata.tool_output_schemas.contains_key("listed"),
+        "unsanitizable leaf must not keep a tool_output_schemas entry"
+    );
+
+    let cmd = TestOmitLeafSchema::command();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let listed = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "listed")
+        .expect("listed");
+    assert!(
+        listed.output_schema.is_none(),
+        "non-object leaf override must not fall back to global object schema"
+    );
+    let objectish = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "objectish")
+        .expect("objectish");
+    assert!(
+        objectish.output_schema.is_some(),
+        "siblings without omit still inherit the global schema"
+    );
+}
+
+#[test]
+fn test_leaves_only_after_annotation_nested_meta() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(annotation(read_only = true), leaves_only)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_ann_leaves"]
+    #[command(name = "test-ann-leaves", subcommand_required = true)]
+    struct TestAnnLeaves {
+        #[command(subcommand)]
+        command: AnnTop,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum AnnTop {
+        Parent {
+            #[command(subcommand)]
+            command: AnnLeaf,
+        },
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum AnnLeaf {
+        Child,
+    }
+
+    fn run_ann_leaves(_: TestAnnLeaves) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestAnnLeaves::clap_mcp_schema_metadata();
+    assert!(
+        metadata.leaves_only,
+        "leaves_only after annotation(...) must remain visible"
+    );
+    let schema = schema_from_command_with_metadata(&TestAnnLeaves::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        !names.iter().any(|n| n.contains("parent")),
+        "intermediate parent must stay hidden: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n.contains("child")),
+        "leaf must remain: {names:?}"
+    );
+}
+
 #[test]
 fn test_preserve_cli_argv_detection_for_normal_cli() {
     let flags = TestCliDefaults::clap_mcp_config().builtin_flags;
