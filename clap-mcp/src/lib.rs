@@ -5319,6 +5319,157 @@ mod tests {
     }
 
     #[test]
+    fn test_custom_duration_parser_contract_stays_string_and_retains_token() {
+        use serde_json::json;
+        // Distinct from KiB/MiB samples: a "250ms" parser must not be guessed as integer.
+        let cmd = Command::new("app").subcommand(
+            Command::new("wait").arg(
+                Arg::new("delay")
+                    .long("delay")
+                    .value_parser(|s: &str| -> Result<u64, String> {
+                        let ms = s
+                            .strip_suffix("ms")
+                            .ok_or_else(|| format!("expected <n>ms, got {s}"))?;
+                        ms.parse::<u64>().map_err(|e| e.to_string())
+                    })
+                    .action(ArgAction::Set),
+            ),
+        );
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        };
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "wait")
+            .expect("wait");
+        let props = tool
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            props["delay"].get("type").and_then(|v| v.as_str()),
+            Some("string"),
+            "custom duration parser must advertise string"
+        );
+
+        let args = serde_json::Map::from_iter([("delay".to_string(), json!("250ms"))]);
+        let tool_argv =
+            build_tool_argv_with_metadata(&schema, "wait", args.clone(), Some(&metadata));
+        assert!(
+            tool_argv.windows(2).any(|w| w == ["--delay", "250ms"]),
+            "lexical token must be preserved in tool argv: {tool_argv:?}"
+        );
+        let argv = build_argv_for_clap_with_metadata(&schema, "wait", args, Some(&metadata));
+        assert!(
+            argv.windows(2).any(|w| w == ["--delay", "250ms"]),
+            "representative lexical input must reach clap argv unchanged: {argv:?}"
+        );
+        assert!(
+            cmd.clone()
+                .try_get_matches_from(argv.iter().map(String::as_str))
+                .is_ok(),
+            "argv must parse through the custom duration parser"
+        );
+        assert!(
+            cmd.try_get_matches_from(["app", "wait", "--delay", "250"])
+                .is_err(),
+            "bare integer must fail the lexical parser"
+        );
+    }
+
+    #[test]
+    fn test_numeric_input_contract_validates_reaches_command_and_preserves_value() {
+        use serde_json::json;
+        let cmd = Command::new("app").subcommand(
+            Command::new("serve")
+                .arg(
+                    Arg::new("host")
+                        .long("host")
+                        .required(true)
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("port")
+                        .long("port")
+                        .required(true)
+                        .requires("host")
+                        .value_parser(clap::value_parser!(u16))
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("quota")
+                        .long("quota")
+                        .value_parser(clap::value_parser!(u128))
+                        .action(ArgAction::Set),
+                ),
+        );
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        }
+        .with_arg_value_json_type("serve", "port", "integer")
+        .with_arg_value_json_type("serve", "quota", "integer");
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "serve")
+            .expect("serve");
+        let props = tool
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            props["port"].get("type").and_then(|v| v.as_str()),
+            Some("integer")
+        );
+        assert_eq!(
+            props["quota"].get("type").and_then(|v| v.as_str()),
+            Some("integer")
+        );
+
+        let args = serde_json::Map::from_iter([
+            ("host".to_string(), json!("localhost")),
+            ("port".to_string(), json!(8080.0)),
+            // 2^64 as f64 — must not saturate to u64::MAX when building argv for u128.
+            ("quota".to_string(), json!(18446744073709551616.0)),
+        ]);
+        let argv = build_argv_for_clap_with_metadata(&schema, "serve", args, Some(&metadata));
+        assert!(
+            argv.windows(2).any(|w| w == ["--port", "8080"]),
+            "integral float port must normalize without a trailing .0: {argv:?}"
+        );
+        assert!(
+            argv.windows(2)
+                .any(|w| w == ["--quota", "18446744073709551616"]),
+            "u64-boundary float must preserve full decimal for u128: {argv:?}"
+        );
+        assert!(
+            !argv.iter().any(|a| a == "18446744073709551615"),
+            "must not saturate to u64::MAX: {argv:?}"
+        );
+
+        let matches = cmd
+            .try_get_matches_from(argv.iter().map(String::as_str))
+            .expect("argv must parse with requires/host intact");
+        let serve = matches.subcommand_matches("serve").expect("serve");
+        assert_eq!(
+            serve.get_one::<String>("host").map(String::as_str),
+            Some("localhost")
+        );
+        assert_eq!(serve.get_one::<u16>("port").copied(), Some(8080));
+        assert_eq!(
+            serve.get_one::<u128>("quota").copied(),
+            Some(18446744073709551616)
+        );
+    }
+
+    #[test]
     fn test_json_number_to_cli_string_preserves_u64_boundary_float() {
         use serde_json::Number;
         // 2^64 as f64 — must not saturate to u64::MAX via integer cast.
