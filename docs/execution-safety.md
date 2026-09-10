@@ -508,8 +508,10 @@ To advertise **only leaf** tools (omit intermediate parents that only hold neste
 `#[command(subcommand)]` trees), set
 [`ClapMcpSchemaMetadata::leaves_only`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.leaves_only)
 via `#[clap_mcp(leaves_only)]` on the root struct or enum, or set the field
-imperatively. Combine with `skip_root_when_subcommands` when the clap root should
-also be excluded. Leaf tool names still match clap leaf names.
+imperatively. Leaf status uses clap nesting **before** `skip_commands` filtering,
+so a parent whose only children were skipped does not appear as a tool. Combine
+with `skip_root_when_subcommands` when the clap root should also be excluded.
+Leaf tool names still match clap leaf names.
 
 **Nested enums (schema only):** When a struct root or ancestor enum owns tool
 execution (manual `ClapMcpToolExecutor` or `#[clap_mcp_output_from]` on the

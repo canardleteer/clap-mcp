@@ -9,22 +9,27 @@
 clap-mcp sanitizes tool `outputSchema` before advertising it on `tools/list`.
 Schemas whose JSON Schema `"type"` is not `"object"` are omitted. Open
 object-shaped schemas without a type (common for schemars open types) are
-coerced to `"type": "object"` and may gain `"additionalProperties": true`. Prefer
-a concrete `JsonSchema` response type over open JSON values. See
-[tool-output.md](tool-output.md).
+coerced to `"type": "object"` and may gain `"additionalProperties": true`.
+`oneOf` / `anyOf` / `allOf` without an object type are kept only when every
+branch is object-compatible; string/array unions are omitted rather than
+advertised as impossible `type: object` schemas. Prefer a concrete `JsonSchema`
+response type over open JSON values. See [tool-output.md](tool-output.md).
 
 ## After 0.1.0 — `leaves_only`
 
 Additive: `#[clap_mcp(leaves_only)]` / `ClapMcpSchemaMetadata::leaves_only`
-omits intermediate (non-leaf) commands from `tools/list`. Default remains
-unchanged (parents still appear unless you opt in). See
+omits intermediate (non-leaf) commands from `tools/list`. Leaf status is based
+on clap nesting before `skip_commands` filtering. Default remains unchanged
+(parents still appear unless you opt in). See
 [execution-safety.md](execution-safety.md).
 
 ## After 0.1.0 — numeric `inputSchema` types
 
 clap-mcp maps known numeric clap value parsers to JSON Schema `"integer"` or
-`"number"` in tool `inputSchema` (previously always `"string"` for `Set` args).
-JSON numbers in `tools/call` arguments still stringify into argv. See
+`"number"` in tool `inputSchema` (previously always `"string"` for `Set` args),
+except when the arg has visible possible values (lexical enum stays string).
+JSON numbers in `tools/call` arguments still stringify into argv. Advertised
+defaults are coerced to match the property type. See
 [usage.md](usage.md#input-schema-fidelity-notes).
 
 ## RC line → 0.1.0
