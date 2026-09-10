@@ -2009,6 +2009,89 @@ fn test_leaves_only_after_annotation_nested_meta() {
 }
 
 #[test]
+fn test_derive_infers_numeric_input_type_without_custom_value_parser() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_numeric_infer"]
+    #[command(name = "test-numeric-infer", subcommand_required = true)]
+    enum TestNumericInfer {
+        Serve {
+            #[arg(long)]
+            port: u16,
+            #[arg(long)]
+            #[clap_mcp(input_type = "string")]
+            size: u64,
+            #[arg(long, value_parser = parse_kib)]
+            kib: u64,
+        },
+    }
+
+    fn parse_kib(s: &str) -> Result<u64, String> {
+        s.strip_suffix("KiB")
+            .unwrap_or(s)
+            .parse()
+            .map_err(|e: std::num::ParseIntError| e.to_string())
+    }
+
+    fn run_numeric_infer(_: TestNumericInfer) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestNumericInfer::clap_mcp_schema_metadata();
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("serve")
+            .and_then(|m| m.get("port"))
+            .map(String::as_str),
+        Some("integer")
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("serve")
+            .and_then(|m| m.get("size"))
+            .map(String::as_str),
+        Some("string")
+    );
+    assert!(
+        metadata
+            .arg_value_json_types
+            .get("serve")
+            .and_then(|m| m.get("kib"))
+            .is_none(),
+        "explicit value_parser must not infer integer: {:?}",
+        metadata.arg_value_json_types
+    );
+
+    let schema = schema_from_command_with_metadata(&TestNumericInfer::command(), &metadata);
+    let serve = schema
+        .root
+        .subcommands
+        .iter()
+        .find(|c| c.name == "serve")
+        .expect("serve");
+    assert_eq!(
+        serve
+            .args
+            .iter()
+            .find(|a| a.id == "port")
+            .and_then(|a| a.value_json_type.as_deref()),
+        Some("integer")
+    );
+    assert!(
+        serve
+            .args
+            .iter()
+            .find(|a| a.id == "kib")
+            .unwrap()
+            .value_json_type
+            .is_none()
+    );
+}
+
+#[test]
 fn test_leaves_only_equals_false_disables_flag() {
     #[derive(Debug, Parser, ClapMcp)]
     #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]

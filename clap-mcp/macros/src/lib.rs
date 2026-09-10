@@ -1074,6 +1074,129 @@ fn inner_type_if_option(ty: &Type) -> Option<&Type> {
     })
 }
 
+fn inner_type_if_vec(ty: &Type) -> Option<&Type> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let last = type_path.path.segments.last()?;
+    if last.ident != "Vec" {
+        return None;
+    }
+    let PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    args.args.first().and_then(|a| {
+        if let GenericArgument::Type(t) = a {
+            Some(t)
+        } else {
+            None
+        }
+    })
+}
+
+/// Peel `Option` / `Vec` wrappers to the scalar type used for MCP input typing.
+fn peel_value_json_type_ty(ty: &Type) -> &Type {
+    let mut t = ty;
+    if let Some(inner) = inner_type_if_option(t) {
+        t = inner;
+    }
+    if let Some(inner) = inner_type_if_vec(t) {
+        t = inner;
+    }
+    t
+}
+
+fn rust_type_value_json_type(ty: &Type) -> Option<&'static str> {
+    let Type::Path(type_path) = peel_value_json_type_ty(ty) else {
+        return None;
+    };
+    let last = type_path.path.segments.last()?;
+    match last.ident.to_string().as_str() {
+        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128"
+        | "isize" => Some("integer"),
+        "f32" | "f64" => Some("number"),
+        _ => None,
+    }
+}
+
+fn field_has_explicit_value_parser(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("arg") {
+            continue;
+        }
+        let mut found = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("value_parser") {
+                found = true;
+                drain_clap_mcp_nested_meta(&meta)?;
+            } else {
+                drain_clap_mcp_nested_meta(&meta)?;
+            }
+            Ok(())
+        });
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
+/// Parses `#[clap_mcp(input_type = "integer"|"number"|"string")]` on a field.
+fn get_clap_mcp_input_type(attrs: &[syn::Attribute]) -> syn::Result<Option<String>> {
+    let mut result = None;
+    for attr in attrs {
+        if !attr.path().is_ident("clap_mcp") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("input_type") {
+                let value = meta_string_value(&meta)?;
+                match value.as_str() {
+                    "integer" | "number" | "string" => result = Some(value),
+                    _ => {
+                        return Err(
+                            meta.error("input_type must be \"integer\", \"number\", or \"string\"")
+                        );
+                    }
+                }
+            } else {
+                drain_clap_mcp_nested_meta(&meta)?;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(result)
+}
+
+fn record_field_arg_value_json_type(
+    map: &mut std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    cmd_name: &str,
+    arg_id: &str,
+    field_attrs: &[syn::Attribute],
+    field_ty: &Type,
+) -> syn::Result<()> {
+    if field_has_command_subcommand(field_attrs) || field_has_command_flatten(field_attrs) {
+        return Ok(());
+    }
+    if let Some(explicit) = get_clap_mcp_input_type(field_attrs)? {
+        map.entry(cmd_name.to_string())
+            .or_default()
+            .insert(arg_id.to_string(), explicit);
+        return Ok(());
+    }
+    // Conservative: any explicit clap `value_parser` may accept lexical forms that
+    // are not plain JSON numbers — leave inputSchema as string unless overridden.
+    if field_has_explicit_value_parser(field_attrs) {
+        return Ok(());
+    }
+    if let Some(ty) = rust_type_value_json_type(field_ty) {
+        map.entry(cmd_name.to_string())
+            .or_default()
+            .insert(arg_id.to_string(), ty.to_string());
+    }
+    Ok(())
+}
+
 fn ident_to_kebab(ident: &syn::Ident) -> String {
     let s = ident.to_string();
     let mut out = String::new();
@@ -1327,6 +1450,14 @@ fn nested_subcommand_type_paths_from_enum(data: &syn::DataEnum) -> Vec<syn::Path
 /// the flag. Equivalent to `ClapMcpSchemaMetadata::leaves_only = true` when set.
 /// Distinct from `#[clap_mcp(schema_only)]`, which skips executor emit and does not
 /// hide tools from the list.
+///
+/// ## `#[clap_mcp(input_type = "integer"|"number"|"string")]` (on field)
+///
+/// Sets the MCP `inputSchema` scalar type for this argument. Prefer this when a
+/// field uses a custom clap `value_parser` that still accepts plain JSON numbers,
+/// or to force `"string"` for a numeric Rust type. Without this attribute, derive
+/// infers `"integer"` / `"number"` only for plain numeric fields that do not set
+/// an explicit `value_parser` (schema extraction never executes parsers to guess).
 ///
 /// ## `#[clap_mcp(requires)]` / `#[clap_mcp(requires = "arg_name")]` (on field)
 ///
@@ -2070,6 +2201,10 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     }
     let mut requires_args: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
+    let mut arg_value_json_types: std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, String>,
+    > = std::collections::HashMap::new();
     let mut task_tool_names = Vec::<String>::new();
     let mut serialize_tools: std::collections::HashMap<String, ClapMcpSerialized> =
         std::collections::HashMap::new();
@@ -2080,6 +2215,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let mut flatten_skip_entries: Vec<FlattenSkipEntry> = Vec::new();
     let mut flatten_skip_error: Option<syn::Error> = None;
     let mut tool_annotations_error: Option<syn::Error> = None;
+    let mut input_type_error: Option<syn::Error> = None;
     let mut warn_optional_positional = false;
 
     let optional_positional_warn_block: proc_macro2::TokenStream = quote! {
@@ -2215,11 +2351,21 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         ));
                     }
                     if let Some(req) = get_clap_mcp_requires(&f.attrs) {
-                        let req_id = if req.is_empty() { arg_id } else { req };
+                        let req_id = if req.is_empty() { arg_id.clone() } else { req };
                         requires_args
                             .entry(cmd_name.clone())
                             .or_default()
                             .push(req_id);
+                    }
+                    if let Err(e) = record_field_arg_value_json_type(
+                        &mut arg_value_json_types,
+                        &cmd_name,
+                        &arg_id,
+                        &f.attrs,
+                        &f.ty,
+                    ) && input_type_error.is_none()
+                    {
+                        input_type_error = Some(e);
                     }
                 }
             }
@@ -2280,11 +2426,21 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     flatten_skip_error = Some(e);
                 }
                 if let Some(req) = get_clap_mcp_requires(&f.attrs) {
-                    let req_id = if req.is_empty() { arg_id } else { req };
+                    let req_id = if req.is_empty() { arg_id.clone() } else { req };
                     requires_args
                         .entry(root_name.clone())
                         .or_default()
                         .push(req_id);
+                }
+                if let Err(e) = record_field_arg_value_json_type(
+                    &mut arg_value_json_types,
+                    &root_name,
+                    &arg_id,
+                    &f.attrs,
+                    &f.ty,
+                ) && input_type_error.is_none()
+                {
+                    input_type_error = Some(e);
                 }
             }
             if let Some(sub_field) = subcommand_field {
@@ -2330,6 +2486,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         || !hide_defaults.is_empty()
                         || !flatten_skip_entries.is_empty()
                         || !requires_args.is_empty()
+                        || !arg_value_json_types.is_empty()
                         || !task_tool_names.is_empty()
                         || !serialize_tools.is_empty()
                         || !serialize_topic_bindings.is_empty()
@@ -2420,6 +2577,24 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 local.requires_args.entry(#k_lit.to_string()).or_default().extend([#(#vs),*]);
                             }
                         });
+                        let arg_value_json_type_entries =
+                            arg_value_json_types.iter().map(|(k, args)| {
+                                let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+                                let pairs = args.iter().map(|(arg, ty)| {
+                                    let a_lit =
+                                        syn::LitStr::new(arg, proc_macro2::Span::call_site());
+                                    let t_lit =
+                                        syn::LitStr::new(ty, proc_macro2::Span::call_site());
+                                    quote! {
+                                        local
+                                            .arg_value_json_types
+                                            .entry(#k_lit.to_string())
+                                            .or_default()
+                                            .insert(#a_lit.to_string(), #t_lit.to_string());
+                                    }
+                                });
+                                quote! { #(#pairs)* }
+                            });
                         let serialize_tools_entries = serialize_tools.iter().map(|(k, scope)| {
                             let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
                             match scope {
@@ -2489,6 +2664,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     #(#hide_defaults_entries)*
                                     #(#flatten_skip_stmts_local)*
                                     #(#requires_args_entries)*
+                                    #(#arg_value_json_type_entries)*
                                     #(#serialize_tools_entries)*
                                     #serialize_topic_entries
                                     #(#flatten_topic_stmts_local)*
@@ -2558,6 +2734,9 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     if let Some(e) = output_type_on_nested_error {
         return e.to_compile_error();
     }
+    if let Some(e) = input_type_error {
+        return e.to_compile_error();
+    }
 
     let skip_commands_lit = skip_commands.iter().map(|s| {
         let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
@@ -2595,6 +2774,20 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         quote! {
             m.requires_args.insert(#k_lit.to_string(), vec![#(#vs),*]);
         }
+    });
+    let arg_value_json_type_entries = arg_value_json_types.iter().map(|(k, args)| {
+        let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+        let pairs = args.iter().map(|(arg, ty)| {
+            let a_lit = syn::LitStr::new(arg, proc_macro2::Span::call_site());
+            let t_lit = syn::LitStr::new(ty, proc_macro2::Span::call_site());
+            quote! {
+                m.arg_value_json_types
+                    .entry(#k_lit.to_string())
+                    .or_default()
+                    .insert(#a_lit.to_string(), #t_lit.to_string());
+            }
+        });
+        quote! { #(#pairs)* }
     });
     let serialize_tools_entries = serialize_tools.iter().map(|(k, scope)| {
         let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
@@ -2701,6 +2894,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 #(#hide_defaults_entries)*
                 #(#flatten_skip_stmts)*
                 #(#requires_args_entries)*
+                #(#arg_value_json_type_entries)*
                 #(#serialize_tools_entries)*
                 #serialize_topic_entries
                 #(#flatten_topic_stmts)*

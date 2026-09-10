@@ -448,18 +448,20 @@ advertised default changes.
 
 Tool `inputSchema` properties mirror clap actions (`boolean` for `SetTrue` /
 `SetFalse`, enums for `value_parser` lists, defaults, cardinality, and closed
-objects). Integer and floating clap value parsers (`u16`, `i32`, `f64`, and
-similar via `value_parser!(…)`) advertise JSON Schema `"integer"` or
-`"number"` instead of `"string"`. Custom parsers that accept non-numeric CLI
-tokens (for example `"4KiB"` while returning `u64`) stay `"string"`. Agents may
-pass JSON numbers; clap-mcp stringifies them when building argv, and integral
-floats such as `8080.0` become `"8080"` for stock integer parsers. Advertised
-defaults are coerced to the same JSON types (including `u64::MAX` and array
-item defaults). Values that cannot be represented as JSON numbers (for example
-`u128::MAX` or `inf`) omit `default` instead of advertising a string. Args
-whose value parser exposes possible values keep `"type": "string"` (and `enum`
-when those choices are not hidden), even when the parser maps those tokens onto
-an integer Rust type or `hide_possible_values` is set. Boolean flags
+objects). Integer and floating clap value parsers advertise JSON Schema
+`"integer"` or `"number"` when derive infers them from a plain numeric field
+type, or when you set `#[clap_mcp(input_type = "...")]` /
+`ClapMcpSchemaMetadata::with_arg_value_json_type`. Custom parsers (any explicit
+clap `value_parser`) stay `"string"` unless you override. Schema extraction
+does not execute value parsers to guess types. Agents may pass JSON numbers;
+clap-mcp stringifies them when building argv, and integral floats such as
+`8080.0` become `"8080"` without saturating casts. Advertised defaults are
+coerced to the same JSON types (including `u64::MAX` and array item defaults).
+Values that cannot be represented as JSON numbers (for example `u128::MAX` or
+`inf`) omit `default` instead of advertising a string. Args whose value parser
+exposes possible values keep `"type": "string"` (and `enum` when those choices
+are not hidden), even when the parser maps those tokens onto an integer Rust
+type or `hide_possible_values` is set. Boolean flags
 do **not** advertise string `enum` values. Property descriptions append short
 action hints (for example `Set true to enable.`) rather than long flag
 tutorials. Conflicts,

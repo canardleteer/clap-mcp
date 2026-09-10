@@ -1250,6 +1250,14 @@ pub struct ClapMcpSchemaMetadata {
     /// Tool names whose per-tool `output_type` cannot be advertised after
     /// sanitization. These must not inherit [`Self::output_schema`].
     pub omit_tool_output_schemas: Vec<String>,
+    /// Per-command argument JSON Schema scalar types for MCP `inputSchema`
+    /// (`"integer"`, `"number"`, or `"string"`). Keyed by command name
+    /// (`"*"` = every tool) then arg id. Derive fills this for plain numeric
+    /// fields; `#[clap_mcp(input_type = "...")]` and
+    /// [`Self::with_arg_value_json_type`] set it explicitly. Schema extraction
+    /// does not execute clap value parsers to infer these types.
+    pub arg_value_json_types:
+        std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     /// Global CLI argument ids to omit from all MCP tool schemas.
     pub skip_global_args: Vec<String>,
     /// Per-command argument ids whose clap defaults must not be advertised in
@@ -1304,6 +1312,12 @@ impl ClapMcpSchemaMetadata {
                 self.omit_tool_output_schemas.push(name);
             }
         }
+        for (tool, args) in other.arg_value_json_types {
+            let entry = self.arg_value_json_types.entry(tool).or_default();
+            for (arg, ty) in args {
+                entry.insert(arg, ty);
+            }
+        }
         for g in other.skip_global_args {
             if !self.skip_global_args.contains(&g) {
                 self.skip_global_args.push(g);
@@ -1345,6 +1359,24 @@ impl ClapMcpSchemaMetadata {
         if !self.omit_tool_output_schemas.contains(&name) {
             self.omit_tool_output_schemas.push(name);
         }
+        self
+    }
+
+    /// Set the MCP `inputSchema` scalar type for one argument (`"*"` = every tool).
+    ///
+    /// Use `"integer"`, `"number"`, or `"string"`. Prefer this (or derive
+    /// `#[clap_mcp(input_type = "...")]`) over relying on clap value-parser
+    /// TypeIds; schema extraction does not execute parsers to infer types.
+    pub fn with_arg_value_json_type(
+        mut self,
+        command_name: impl Into<String>,
+        arg_id: impl Into<String>,
+        json_type: impl Into<String>,
+    ) -> Self {
+        self.arg_value_json_types
+            .entry(command_name.into())
+            .or_default()
+            .insert(arg_id.into(), json_type.into());
         self
     }
 
@@ -2617,12 +2649,13 @@ pub struct ClapArg {
     pub min_items: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_items: Option<usize>,
-    /// JSON Schema type for the clap value parser when known (`"integer"` or
-    /// `"number"`). Filled from stock numeric clap parsers during schema
-    /// extraction. Custom lexical parsers that share a numeric Rust output type
-    /// (for example accepting `"4KiB"` while returning `u64`) leave this unset
-    /// so MCP `inputSchema` stays `"string"`. Used by MCP `inputSchema` for
-    /// `Set` / multi-value args.
+    /// JSON Schema type for MCP `inputSchema` when set (`"integer"` or
+    /// `"number"`). Populated from [`ClapMcpSchemaMetadata::arg_value_json_types`]
+    /// (derive inference for plain numeric fields, `#[clap_mcp(input_type = "...")]`,
+    /// or imperative helpers). Not inferred by executing clap value parsers.
+    /// Custom lexical parsers that return a numeric Rust type stay unset so the
+    /// property remains `"string"`. Used by MCP `inputSchema` for `Set` /
+    /// multi-value args.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_json_type: Option<String>,
 }
@@ -3382,6 +3415,9 @@ fn command_to_schema_with_metadata(
         if requires_args.contains(&arg.id) {
             arg.required = true;
         }
+        if let Some(ty) = lookup_arg_value_json_type(metadata, &cmd_name, &arg.id) {
+            apply_arg_value_json_type(arg, ty);
+        }
     }
     args.sort_by(|a, b| a.id.cmp(&b.id));
 
@@ -3403,6 +3439,34 @@ fn command_to_schema_with_metadata(
         arg_groups,
         had_subcommands,
         subcommands,
+    }
+}
+
+fn lookup_arg_value_json_type<'a>(
+    metadata: &'a ClapMcpSchemaMetadata,
+    command_name: &str,
+    arg_id: &str,
+) -> Option<&'a str> {
+    metadata
+        .arg_value_json_types
+        .get(command_name)
+        .and_then(|m| m.get(arg_id))
+        .or_else(|| {
+            metadata
+                .arg_value_json_types
+                .get("*")
+                .and_then(|m| m.get(arg_id))
+        })
+        .map(String::as_str)
+}
+
+fn apply_arg_value_json_type(arg: &mut ClapArg, ty: &str) {
+    match ty {
+        "string" => arg.value_json_type = None,
+        "integer" | "number" if arg.possible_values.is_empty() => {
+            arg.value_json_type = Some(ty.to_string());
+        }
+        _ => {}
     }
 }
 
@@ -4110,65 +4174,6 @@ fn parse_arg_debug_constraints(arg: &clap::Arg) -> (Vec<String>, Vec<String>, Ve
     (conflicts, requires, required_unless)
 }
 
-fn value_json_type_from_parser(arg: &clap::Arg) -> Option<&'static str> {
-    use std::any::TypeId;
-    let id = arg.get_value_parser().type_id();
-    let kind = if id == TypeId::of::<u8>()
-        || id == TypeId::of::<u16>()
-        || id == TypeId::of::<u32>()
-        || id == TypeId::of::<u64>()
-        || id == TypeId::of::<u128>()
-        || id == TypeId::of::<usize>()
-        || id == TypeId::of::<i8>()
-        || id == TypeId::of::<i16>()
-        || id == TypeId::of::<i32>()
-        || id == TypeId::of::<i64>()
-        || id == TypeId::of::<i128>()
-        || id == TypeId::of::<isize>()
-    {
-        "integer"
-    } else if id == TypeId::of::<f32>() || id == TypeId::of::<f64>() {
-        "number"
-    } else {
-        return None;
-    };
-
-    // TypeId alone is the parser *output* type. Custom lexical parsers (for
-    // example accepting "4KiB" while returning u64) share that TypeId with stock
-    // clap numeric parsers but must stay JSON "string" in inputSchema.
-    let probes: &[&str] = match kind {
-        "integer" => &["4KiB", "1.0", "1e2", "0x10"],
-        "number" => &["4KiB", "0x10", "not-a-number"],
-        _ => return None,
-    };
-    if probes
-        .iter()
-        .any(|token| value_parser_accepts_token(arg, token))
-    {
-        return None;
-    }
-    Some(kind)
-}
-
-/// Whether `arg`'s value parser accepts `token` on a minimal probe command.
-fn value_parser_accepts_token(arg: &clap::Arg, token: &str) -> bool {
-    let probe = clap::Command::new("__clap_mcp_probe")
-        .disable_help_flag(true)
-        .disable_version_flag(true)
-        .arg(arg.clone().required(false));
-    let mut argv = vec!["__clap_mcp_probe".to_string()];
-    if let Some(long) = arg.get_long() {
-        argv.push(format!("--{long}"));
-        argv.push(token.to_string());
-    } else if let Some(short) = arg.get_short() {
-        argv.push(format!("-{short}"));
-        argv.push(token.to_string());
-    } else {
-        argv.push(token.to_string());
-    }
-    probe.try_get_matches_from(argv).is_ok()
-}
-
 fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
     let value_names = arg
         .get_value_names()
@@ -4204,10 +4209,6 @@ fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
 
     let (conflicts_with, requires, required_unless) = parse_arg_debug_constraints(arg);
 
-    // Parser choice tokens (PossibleValuesParser, etc.) imply lexical CLI input even
-    // when hide_possible_values hides them from help / advertised enum.
-    let parser_has_choices = !arg.get_possible_values().is_empty();
-
     ClapArg {
         id: arg.get_id().to_string(),
         long: arg.get_long().map(|s| s.to_string()),
@@ -4227,13 +4228,9 @@ fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
         required_unless,
         min_items,
         max_items,
-        // Lexical parser choices stay JSON strings; TypeId alone does not imply
-        // numeric input (including when choices are hidden from the schema enum).
-        value_json_type: if parser_has_choices {
-            None
-        } else {
-            value_json_type_from_parser(arg).map(str::to_string)
-        },
+        // Numeric JSON types come from metadata (`arg_value_json_types` / derive
+        // `input_type`), not from executing or TypeId-matching the value parser.
+        value_json_type: None,
     }
 }
 
@@ -4646,7 +4643,9 @@ fn value_to_string(v: &serde_json::Value) -> Option<String> {
 /// Format a JSON number for clap argv.
 ///
 /// Integral floats such as `8080.0` become `"8080"` so stock integer value
-/// parsers accept values that JSON Schema `"integer"` allowed through.
+/// parsers accept values that JSON Schema `"integer"` allowed through. Uses
+/// decimal formatting rather than a saturating integer cast so values at the
+/// `u64` boundary (for example `2^64` as `f64`) are not silently changed.
 fn json_number_to_cli_string(n: &serde_json::Number) -> String {
     if let Some(u) = n.as_u64() {
         return u.to_string();
@@ -4658,12 +4657,7 @@ fn json_number_to_cli_string(n: &serde_json::Number) -> String {
         && f.is_finite()
         && f.fract() == 0.0
     {
-        if f >= 0.0 && f <= u64::MAX as f64 {
-            return (f as u64).to_string();
-        }
-        if f < 0.0 && f >= i64::MIN as f64 {
-            return (f as i64).to_string();
-        }
+        return format!("{f:.0}");
     }
     n.to_string()
 }
@@ -5145,7 +5139,14 @@ mod tests {
                     .action(ArgAction::Set),
             ),
         );
-        let schema = schema_from_command(&cmd);
+        // Imperative clap: advertise integer via metadata (schema extraction does
+        // not execute value parsers to infer types).
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        }
+        .with_arg_value_json_type("serve", "port", "integer");
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
         let serve = schema
             .root
             .subcommands
@@ -5155,10 +5156,6 @@ mod tests {
         let port = serve.args.iter().find(|a| a.id == "port").expect("port");
         assert_eq!(port.value_json_type.as_deref(), Some("integer"));
 
-        let metadata = ClapMcpSchemaMetadata {
-            skip_root_command_when_subcommands: true,
-            ..Default::default()
-        };
         let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
         let tool = tools.iter().find(|t| t.name.as_ref() == "serve").unwrap();
         let props = tool
@@ -5199,14 +5196,76 @@ mod tests {
     }
 
     #[test]
-    fn test_custom_lexical_numeric_parser_stays_string_in_input_schema() {
+    fn test_schema_extraction_does_not_execute_value_parsers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static PARSE_COUNT: AtomicUsize = AtomicUsize::new(0);
+        PARSE_COUNT.store(0, Ordering::SeqCst);
+
+        let cmd = Command::new("app")
+            .subcommand(
+                Command::new("serve")
+                    .arg(
+                        Arg::new("host")
+                            .long("host")
+                            .required(true)
+                            .action(ArgAction::Set),
+                    )
+                    .arg(
+                        Arg::new("port")
+                            .long("port")
+                            .required(true)
+                            .requires("host")
+                            .value_parser(|s: &str| -> Result<u16, String> {
+                                PARSE_COUNT.fetch_add(1, Ordering::SeqCst);
+                                s.parse()
+                                    .map_err(|e: std::num::ParseIntError| e.to_string())
+                            })
+                            .action(ArgAction::Set),
+                    ),
+            )
+            .subcommand(
+                Command::new("run")
+                    .arg(
+                        Arg::new("first")
+                            .index(1)
+                            .required(true)
+                            .action(ArgAction::Set),
+                    )
+                    .arg(
+                        Arg::new("second")
+                            .index(2)
+                            .required(true)
+                            .value_parser(|s: &str| -> Result<u32, String> {
+                                PARSE_COUNT.fetch_add(1, Ordering::SeqCst);
+                                s.parse()
+                                    .map_err(|e: std::num::ParseIntError| e.to_string())
+                            })
+                            .action(ArgAction::Set),
+                    ),
+            );
+
+        // Must not panic (requires / positional context) and must not run parsers.
+        let _schema = schema_from_command(&cmd);
+        assert_eq!(
+            PARSE_COUNT.load(Ordering::SeqCst),
+            0,
+            "schema extraction must not execute value parsers"
+        );
+    }
+
+    #[test]
+    fn test_custom_lexical_numeric_parser_stays_string_without_metadata() {
         use serde_json::json;
         let cmd = Command::new("app").subcommand(
             Command::new("alloc").arg(
                 Arg::new("size")
                     .long("size")
                     .value_parser(|s: &str| -> Result<u64, String> {
-                        if let Some(n) = s.strip_suffix("KiB") {
+                        if let Some(n) = s.strip_suffix("MiB") {
+                            n.parse::<u64>()
+                                .map(|x| x * 1024 * 1024)
+                                .map_err(|e| e.to_string())
+                        } else if let Some(n) = s.strip_suffix("KiB") {
                             n.parse::<u64>()
                                 .map(|x| x * 1024)
                                 .map_err(|e| e.to_string())
@@ -5227,7 +5286,7 @@ mod tests {
         let size = alloc.args.iter().find(|a| a.id == "size").expect("size");
         assert!(
             size.value_json_type.is_none(),
-            "custom lexical parser returning u64 must not advertise integer: {:?}",
+            "custom lexical parser must stay string without explicit metadata: {:?}",
             size.value_json_type
         );
 
@@ -5250,13 +5309,24 @@ mod tests {
         let argv = build_tool_argv_with_metadata(
             &schema,
             "alloc",
-            serde_json::Map::from_iter([("size".to_string(), json!("4KiB"))]),
+            serde_json::Map::from_iter([("size".to_string(), json!("8MiB"))]),
             Some(&metadata),
         );
         assert!(
-            argv.iter().any(|a| a == "4KiB"),
+            argv.iter().any(|a| a == "8MiB"),
             "lexical size token must reach argv: {argv:?}"
         );
+    }
+
+    #[test]
+    fn test_json_number_to_cli_string_preserves_u64_boundary_float() {
+        use serde_json::Number;
+        // 2^64 as f64 — must not saturate to u64::MAX via integer cast.
+        let n = Number::from_f64(18446744073709551616.0).expect("f64");
+        assert_eq!(json_number_to_cli_string(&n), "18446744073709551616");
+        assert_eq!(json_number_to_cli_string(&Number::from(8080u64)), "8080");
+        let integral = Number::from_f64(8080.0).expect("f64");
+        assert_eq!(json_number_to_cli_string(&integral), "8080");
     }
 
     #[test]
@@ -6649,11 +6719,14 @@ mod tests {
                         .action(ArgAction::Set),
                 ),
         );
-        let schema = schema_from_command(&cmd);
         let metadata = ClapMcpSchemaMetadata {
             skip_root_command_when_subcommands: true,
             ..Default::default()
-        };
+        }
+        .with_arg_value_json_type("tune", "ratio", "number")
+        .with_arg_value_json_type("tune", "ports", "integer")
+        .with_arg_value_json_type("tune", "max", "integer");
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
         let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
         let props = tools[0]
             .input_schema
@@ -6704,11 +6777,14 @@ mod tests {
                         .action(ArgAction::Set),
                 ),
         );
-        let schema = schema_from_command(&cmd);
         let metadata = ClapMcpSchemaMetadata {
             skip_root_command_when_subcommands: true,
             ..Default::default()
-        };
+        }
+        .with_arg_value_json_type("tune", "huge", "integer")
+        .with_arg_value_json_type("tune", "rate", "number")
+        .with_arg_value_json_type("tune", "ports", "integer");
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
         let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
         let props = tools[0]
             .input_schema

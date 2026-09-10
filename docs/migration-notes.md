@@ -40,8 +40,10 @@ must account for:
 | Field | Type | Notes |
 | --- | --- | --- |
 | [`ClapCommand::had_subcommands`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapCommand.html#structfield.had_subcommands) | `bool` | Pre-skip nesting; `#[serde(default)]` when deserializing |
-| [`ClapArg::value_json_type`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapArg.html#structfield.value_json_type) | `Option<String>` | `"integer"` / `"number"` for stock numeric parsers; `#[serde(default)]` |
+| [`ClapArg::value_json_type`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapArg.html#structfield.value_json_type) | `Option<String>` | `"integer"` / `"number"` from metadata; `#[serde(default)]` |
 | [`ClapMcpSchemaMetadata::leaves_only`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.leaves_only) | `bool` | Defaults to `false` via `Default` |
+| [`ClapMcpSchemaMetadata::omit_tool_output_schemas`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.omit_tool_output_schemas) | `Vec<String>` | Per-tool outputSchema suppressions; defaults empty |
+| [`ClapMcpSchemaMetadata::arg_value_json_types`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.arg_value_json_types) | nested `HashMap` | Per-arg `"integer"` / `"number"` / `"string"`; defaults empty |
 
 Hand-built `ClapCommand { … }` / `ClapArg { … }` struct literals that listed every
 field must add the new fields or use struct update syntax:
@@ -66,17 +68,23 @@ or `value_json_type` is absent.
 
 ## After 0.1.0 — numeric `inputSchema` types
 
-clap-mcp maps known numeric clap value parsers to JSON Schema `"integer"` or
-`"number"` in tool `inputSchema` (previously always `"string"` for `Set` args),
-except when the arg's value parser exposes possible values (lexical CLI tokens
-stay `"string"`, even if `hide_possible_values` hides the enum from help /
-`inputSchema`) or when a custom parser accepts non-numeric tokens such as
-`"4KiB"` while returning a numeric Rust type. JSON numbers in `tools/call`
-arguments stringify into argv; integral floats such as `8080.0` normalize to
-`"8080"` so stock integer parsers accept them. Advertised defaults are coerced
-to match the property type; values that cannot be represented as JSON numbers
-(for example `u128::MAX` or `inf`) omit the `default` keyword instead of
-advertising a string. See [usage.md](usage.md#input-schema-fidelity-notes).
+clap-mcp can advertise JSON Schema `"integer"` or `"number"` in tool
+`inputSchema` for numeric args (previously always `"string"` for `Set` args).
+Schema extraction does **not** execute clap value parsers or trust parser
+TypeIds alone (custom lexical parsers share numeric TypeIds). Types come from:
+
+* Derive inference for plain numeric fields without an explicit clap
+  `value_parser`
+* `#[clap_mcp(input_type = "integer"|"number"|"string")]` on a field
+* Imperative [`ClapMcpSchemaMetadata::with_arg_value_json_type`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#method.with_arg_value_json_type)
+
+Args whose value parser exposes possible values stay `"string"` (and `enum`
+when those choices are not hidden). JSON numbers in `tools/call` arguments
+stringify into argv; integral floats such as `8080.0` normalize to `"8080"`
+without saturating integer casts. Advertised defaults are coerced to match the
+property type; values that cannot be represented as JSON numbers (for example
+`u128::MAX` or `inf`) omit the `default` keyword instead of advertising a
+string. See [usage.md](usage.md#input-schema-fidelity-notes).
 
 ## RC line → 0.1.0
 
