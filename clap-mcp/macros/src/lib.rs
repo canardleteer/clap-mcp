@@ -2229,8 +2229,12 @@ fn quote_tool_annotations(ann: &ParsedToolAnnotations) -> proc_macro2::TokenStre
     }
 }
 
-/// Emit `arg_value_json_types` inserts. Keys that match the derive's compile-time
-/// root name are remapped to clap's live root name via [`clap::CommandFactory`].
+/// Emit `arg_value_json_types` inserts.
+///
+/// When `remap_live_root` is true (struct `Parser` roots only), keys that match
+/// the compile-time root name are remapped to clap's live root name via
+/// [`clap::CommandFactory`]. Enum / `schema_only` Subcommand derives must pass
+/// `false` so a variant named like the enum does not require `CommandFactory`.
 fn quote_arg_value_json_type_entries(
     map_ident: &syn::Ident,
     arg_value_json_types: &std::collections::HashMap<
@@ -2239,12 +2243,13 @@ fn quote_arg_value_json_type_entries(
     >,
     root_ty: &syn::Ident,
     compile_time_root: &str,
+    remap_live_root: bool,
 ) -> proc_macro2::TokenStream {
     let entries = arg_value_json_types.iter().map(|(k, args)| {
         let pairs = args.iter().map(|(arg, ty)| {
             let a_lit = syn::LitStr::new(arg, proc_macro2::Span::call_site());
             let t_lit = syn::LitStr::new(ty, proc_macro2::Span::call_site());
-            if k == compile_time_root {
+            if remap_live_root && k == compile_time_root {
                 quote! {
                     {
                         let __clap_mcp_root = <#root_ty as ::clap::CommandFactory>::command()
@@ -2536,6 +2541,14 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 ) {
                     flatten_skip_error = Some(e);
                 }
+                if field_has_command_flatten(&f.attrs) {
+                    let flat_ty = inner_type_if_option(&f.ty).unwrap_or(&f.ty).clone();
+                    if matches!(flattened_type_kind(&flat_ty), Ok(FlattenSkipKindTag::Args))
+                        && has_clap_mcp_args_metadata(&f.attrs)
+                    {
+                        flatten_args_json_type_cmds.push((root_name.clone(), flat_ty));
+                    }
+                }
                 if let Some(req) = get_clap_mcp_requires(&f.attrs) {
                     let req_id = if req.is_empty() { arg_id.clone() } else { req };
                     requires_args
@@ -2695,6 +2708,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                             &arg_value_json_types,
                             name,
                             &root_name,
+                            true,
                         );
                         let serialize_tools_entries = serialize_tools.iter().map(|(k, scope)| {
                             let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
@@ -2889,11 +2903,13 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         }
     });
     let enum_root_name = get_command_name(&input.attrs, name);
+    let remap_live_root = matches!(&input.data, syn::Data::Struct(_));
     let arg_value_json_type_entries = quote_arg_value_json_type_entries(
         &quote::format_ident!("m"),
         &arg_value_json_types,
         name,
         &enum_root_name,
+        remap_live_root,
     );
     let serialize_tools_entries = serialize_tools.iter().map(|(k, scope)| {
         let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());

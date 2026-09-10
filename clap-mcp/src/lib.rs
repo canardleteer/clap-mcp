@@ -3394,13 +3394,43 @@ pub fn schema_from_command_with_metadata(
     cmd: &Command,
     metadata: &ClapMcpSchemaMetadata,
 ) -> ClapSchema {
+    // Record application subcommands before `build()` injects clap's help.
+    let mut pre_build_children: std::collections::HashMap<
+        Vec<String>,
+        std::collections::HashSet<String>,
+    > = std::collections::HashMap::new();
+    collect_pre_build_subcommand_children(cmd, &[], &mut pre_build_children);
+
     let mut built = cmd.clone();
     built.build();
     let skip_commands: std::collections::HashSet<_> =
         metadata.skip_commands.iter().cloned().collect();
-    let root_name = built.get_name().to_string();
     ClapSchema {
-        root: command_to_schema_with_metadata(&built, metadata, &skip_commands, &root_name),
+        root: command_to_schema_with_metadata(
+            &built,
+            metadata,
+            &skip_commands,
+            &[],
+            &pre_build_children,
+        ),
+    }
+}
+
+/// Maps each command path (root → … → self) to its direct child names before `build()`.
+fn collect_pre_build_subcommand_children(
+    cmd: &Command,
+    ancestors: &[String],
+    out: &mut std::collections::HashMap<Vec<String>, std::collections::HashSet<String>>,
+) {
+    let mut path = ancestors.to_vec();
+    path.push(cmd.get_name().to_string());
+    let children: std::collections::HashSet<String> = cmd
+        .get_subcommands()
+        .map(|s| s.get_name().to_string())
+        .collect();
+    out.insert(path.clone(), children);
+    for sub in cmd.get_subcommands() {
+        collect_pre_build_subcommand_children(sub, &path, out);
     }
 }
 
@@ -3408,7 +3438,8 @@ fn command_to_schema_with_metadata(
     cmd: &Command,
     metadata: &ClapMcpSchemaMetadata,
     skip_commands: &std::collections::HashSet<String>,
-    root_name: &str,
+    ancestors: &[String],
+    pre_build_children: &std::collections::HashMap<Vec<String>, std::collections::HashSet<String>>,
 ) -> ClapCommand {
     let visible = mcp_visible_arg_ids_on_command(cmd, metadata);
     let mut args: Vec<ClapArg> = cmd
@@ -3428,7 +3459,7 @@ fn command_to_schema_with_metadata(
         if requires_args.contains(&arg.id) {
             arg.required = true;
         }
-        if let Some(ty) = lookup_arg_value_json_type(metadata, &cmd_name, root_name, arg) {
+        if let Some(ty) = lookup_arg_value_json_type(metadata, &cmd_name, ancestors, arg) {
             apply_arg_value_json_type(arg, ty);
         }
     }
@@ -3436,15 +3467,36 @@ fn command_to_schema_with_metadata(
 
     let arg_groups = extract_arg_groups(cmd, metadata);
 
+    let mut self_path = ancestors.to_vec();
+    self_path.push(cmd_name.clone());
+    let app_children = pre_build_children.get(&self_path);
+
     let had_subcommands = cmd.get_subcommands().next().is_some();
     let subcommands: Vec<ClapCommand> = cmd
         .get_subcommands()
         .filter(|s| {
             let name = s.get_name();
-            // `Command::build()` injects clap's help subcommand; keep it off MCP tools.
-            !skip_commands.contains(name) && !s.is_hide_set() && name != "help"
+            if skip_commands.contains(name) {
+                return false;
+            }
+            // Drop only clap-injected `help` (absent before `build()`). Keep
+            // application `help` and `hide(true)` commands (`#[clap_mcp(skip)]`
+            // is the MCP visibility control, not clap `hide`).
+            let injected_help = name == "help"
+                && app_children
+                    .map(|children| !children.contains("help"))
+                    .unwrap_or(true);
+            !injected_help
         })
-        .map(|s| command_to_schema_with_metadata(s, metadata, skip_commands, root_name))
+        .map(|s| {
+            command_to_schema_with_metadata(
+                s,
+                metadata,
+                skip_commands,
+                &self_path,
+                pre_build_children,
+            )
+        })
         .collect();
 
     ClapCommand {
@@ -3462,7 +3514,7 @@ fn command_to_schema_with_metadata(
 fn lookup_arg_value_json_type<'a>(
     metadata: &'a ClapMcpSchemaMetadata,
     command_name: &str,
-    root_name: &str,
+    ancestors: &[String],
     arg: &ClapArg,
 ) -> Option<&'a str> {
     let arg_id = arg.id.as_str();
@@ -3480,25 +3532,17 @@ fn lookup_arg_value_json_type<'a>(
     {
         return Some(ty);
     }
-    // Globals copied onto children by `Command::build()` keep the root's typed
-    // metadata; look up by root name, then any map that defines this arg id.
-    if arg.global || command_name != root_name {
-        if let Some(ty) = metadata
-            .arg_value_json_types
-            .get(root_name)
-            .and_then(|m| m.get(arg_id))
-            .map(String::as_str)
-        {
-            return Some(ty);
-        }
-        if arg.global {
-            for (cmd, map) in &metadata.arg_value_json_types {
-                if cmd == "*" || cmd == command_name {
-                    continue;
-                }
-                if let Some(ty) = map.get(arg_id) {
-                    return Some(ty.as_str());
-                }
+    // Globals copied onto descendants by `Command::build()` keep typed metadata
+    // on the defining command. Inherit only along ancestors (nearest first).
+    if arg.global {
+        for ancestor in ancestors.iter().rev() {
+            if let Some(ty) = metadata
+                .arg_value_json_types
+                .get(ancestor)
+                .and_then(|m| m.get(arg_id))
+                .map(String::as_str)
+            {
+                return Some(ty);
             }
         }
     }

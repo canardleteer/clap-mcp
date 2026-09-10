@@ -458,9 +458,12 @@ must set numeric types with `with_arg_value_json_type`; derive inference does no
 apply to hand-built schemas. Flattened `Args` forward `input_type` / inferred
 types when the `Args` type uses `#[clap_mcp(args_metadata)]` and the flatten
 field repeats that attribute (or the variant already uses `serialize_topic`).
-Custom parsers (any explicit clap `value_parser`) stay `"string"` unless you
-override. Schema extraction does not execute value parsers to guess types.
-Agents may pass JSON numbers;
+Global numeric types inherit only along the command ancestor chain after
+`Command::build()`; the same argument id on an unrelated command must not change
+another tool's `inputSchema`. Clap `hide` does not remove MCP tools (use
+`#[clap_mcp(skip)]`). Custom parsers (any explicit clap `value_parser`) stay
+`"string"` unless you override. Schema extraction does not execute value parsers
+to guess types. Agents may pass JSON numbers;
 clap-mcp stringifies them when building argv, and integral floats such as
 `8080.0` become `"8080"` without saturating casts. Advertised defaults are
 coerced to the same JSON types (including `u64::MAX` and array item defaults).

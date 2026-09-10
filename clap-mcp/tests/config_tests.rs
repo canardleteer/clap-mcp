@@ -2353,6 +2353,288 @@ fn test_global_numeric_type_survives_command_build() {
 }
 
 #[test]
+fn test_nonglobal_root_numeric_id_does_not_leak_to_child_string_id() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_id_leak"]
+    #[command(name = "test-id-leak", subcommand_required = true)]
+    struct TestIdLeak {
+        #[arg(long)]
+        id: u32,
+        #[command(subcommand)]
+        command: IdLeakCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum IdLeakCmd {
+        Show {
+            #[arg(long)]
+            id: String,
+        },
+    }
+
+    fn run_id_leak(_: TestIdLeak) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestIdLeak::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&TestIdLeak::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let show = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "show")
+        .expect("show");
+    let props = show
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("id")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("string"),
+        "child string --id must not inherit root integer --id: {props:?}"
+    );
+}
+
+#[test]
+fn test_global_string_id_does_not_inherit_sibling_integer_metadata() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_sibling_id"]
+    #[command(name = "test-sibling-id", subcommand_required = true)]
+    enum TestSiblingId {
+        Alpha {
+            #[arg(long, global = true, default_value = "")]
+            id: String,
+        },
+        Beta {
+            #[arg(long)]
+            id: u32,
+        },
+    }
+
+    fn run_sibling_id(_: TestSiblingId) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestSiblingId::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&TestSiblingId::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let alpha = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "alpha")
+        .expect("alpha");
+    let props = alpha
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("id")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("string"),
+        "global string --id must not pick up sibling integer metadata: {props:?}"
+    );
+    let beta = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "beta")
+        .expect("beta");
+    assert_eq!(
+        beta.input_schema
+            .get("properties")
+            .and_then(|v| v.get("id"))
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_hide_true_subcommand_stays_in_mcp_catalog() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_hide_keep"]
+    #[command(name = "test-hide-keep", subcommand_required = true)]
+    enum TestHideKeep {
+        Visible,
+        #[command(hide = true)]
+        ShellOnly,
+    }
+
+    fn run_hide_keep(_: TestHideKeep) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestHideKeep::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&TestHideKeep::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        names.contains(&"shell-only"),
+        "clap hide must not remove MCP tools (use #[clap_mcp(skip)]): {names:?}"
+    );
+    assert!(names.contains(&"visible"), "{names:?}");
+    assert!(
+        !names.contains(&"help"),
+        "injected help must stay out: {names:?}"
+    );
+}
+
+#[test]
+fn test_application_help_subcommand_stays_in_mcp_catalog() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_app_help"]
+    #[command(
+        name = "test-app-help",
+        subcommand_required = true,
+        disable_help_subcommand = true
+    )]
+    enum TestAppHelp {
+        Run,
+        /// Application-defined help tool (not clap's injected help).
+        Help,
+    }
+
+    fn run_app_help(_: TestAppHelp) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestAppHelp::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&TestAppHelp::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        names.contains(&"help"),
+        "explicit application help must remain an MCP tool: {names:?}"
+    );
+    assert!(names.contains(&"run"), "{names:?}");
+}
+
+#[test]
+fn test_struct_root_flatten_args_metadata_forwards_input_types() {
+    #[derive(Debug, clap::Args, ClapMcp)]
+    #[clap_mcp(args_metadata)]
+    struct FlatSharedArgs {
+        #[arg(long)]
+        count: u32,
+        #[arg(long)]
+        #[clap_mcp(input_type = "integer")]
+        code: String,
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp_output_from = "run_flat_struct_types"]
+    #[command(name = "test-flat-struct-types")]
+    struct TestFlatStructTypes {
+        #[command(flatten)]
+        #[clap_mcp(args_metadata)]
+        args: FlatSharedArgs,
+    }
+
+    fn run_flat_struct_types(_: TestFlatStructTypes) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestFlatStructTypes::clap_mcp_schema_metadata();
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("test-flat-struct-types")
+            .and_then(|m| m.get("count"))
+            .map(String::as_str),
+        Some("integer"),
+        "struct-root flatten must forward inference: {:?}",
+        metadata.arg_value_json_types
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("test-flat-struct-types")
+            .and_then(|m| m.get("code"))
+            .map(String::as_str),
+        Some("integer")
+    );
+
+    let schema = schema_from_command_with_metadata(&TestFlatStructTypes::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    assert_eq!(tools.len(), 1);
+    let props = tools[0]
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("count")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+    assert_eq!(
+        props
+            .get("code")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_schema_only_enum_matching_variant_name_compiles_with_numeric_types() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_status_root"]
+    #[command(name = "test-status-root", subcommand_required = true)]
+    struct TestStatusRoot {
+        #[command(subcommand)]
+        command: Status,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum Status {
+        Status {
+            #[arg(long)]
+            count: u32,
+        },
+    }
+
+    fn run_status_root(_: TestStatusRoot) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestStatusRoot::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&TestStatusRoot::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let status = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "status")
+        .expect("status");
+    assert_eq!(
+        status
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.get("count"))
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
 fn test_leaves_only_equals_false_disables_flag() {
     #[derive(Debug, Parser, ClapMcp)]
     #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
