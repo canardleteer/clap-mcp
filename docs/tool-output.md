@@ -160,7 +160,8 @@ schemas that already use `"type": "object"` are kept; schemas with `properties`
 schemars `AnyValue`, or bare `"additionalProperties": true`) are omitted;
 `oneOf` / `anyOf` / `allOf` roots are kept only when every branch is
 object-compatible after resolving local `$defs` / `definitions` references
-(JSON Pointer `~0` / `~1` escapes included). Type unions that mix `object`
+(JSON Pointer `~0` / `~1` escapes are decoded; cycles and non-object targets
+omit the schema). Type unions that mix `object`
 with other tokens (for example `["object","null"]` from `Option<Map<…>>`) are
 omitted rather than narrowed. Non-object `"type"` values are omitted from
 `tools/list` instead of breaking clients that reject the whole tool list. A

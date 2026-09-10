@@ -2009,6 +2009,52 @@ fn test_leaves_only_after_annotation_nested_meta() {
 }
 
 #[test]
+fn test_leaves_only_equals_false_disables_flag() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(leaves_only = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_leaves_false"]
+    #[command(name = "test-leaves-false", subcommand_required = true)]
+    struct TestLeavesFalse {
+        #[command(subcommand)]
+        command: LeavesFalseTop,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum LeavesFalseTop {
+        Parent {
+            #[command(subcommand)]
+            command: LeavesFalseLeaf,
+        },
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum LeavesFalseLeaf {
+        Child,
+    }
+
+    fn run_leaves_false(_: TestLeavesFalse) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestLeavesFalse::clap_mcp_schema_metadata();
+    assert!(
+        !metadata.leaves_only,
+        "leaves_only = false must disable the flag, not enable it"
+    );
+    let schema = schema_from_command_with_metadata(&TestLeavesFalse::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        names.iter().any(|n| n.contains("parent")),
+        "with leaves_only disabled, intermediate parents stay advertised: {names:?}"
+    );
+}
+
+#[test]
 fn test_preserve_cli_argv_detection_for_normal_cli() {
     let flags = TestCliDefaults::clap_mcp_config().builtin_flags;
     let normal = vec!["greet".to_string(), "--name".to_string(), "Ada".to_string()];

@@ -1,0 +1,5 @@
+error: expected boolean literal (`true` or `false`)
+ --> tests/ui/fail/leaves_only_non_bool_value.rs:6:26
+  |
+6 | #[clap_mcp(leaves_only = "yes")]
+  |                          ^^^^^

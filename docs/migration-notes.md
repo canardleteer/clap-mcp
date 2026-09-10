@@ -14,39 +14,55 @@ schemars `AnyValue`, or bare `"additionalProperties": true`) are omitted so
 tools that can return arrays or scalars do not advertise a false object
 contract. `oneOf` / `anyOf` / `allOf` without an object type are kept only when
 every branch is object-compatible after resolving local `$ref` targets in
-`$defs` / `definitions` (JSON Pointer escapes, cycles, and non-object targets
-omit the schema). Type unions such as `["object","null"]` are omitted rather
-than narrowed to `"object"`. Prefer a concrete `JsonSchema` response type over
-open JSON values. See [tool-output.md](tool-output.md).
+`$defs` / `definitions`. Local refs decode JSON Pointer escapes (`~0` / `~1`);
+cycles and non-object targets omit the schema. Type unions such as
+`["object","null"]` are omitted rather than narrowed to `"object"`. Prefer a
+concrete `JsonSchema` response type over open JSON values. See
+[tool-output.md](tool-output.md).
 
 When a per-tool `output_type` cannot be advertised after sanitization, clap-mcp
 records an omit marker so that leaf does not inherit a global `output_schema`.
 
 ## After 0.1.0 — `leaves_only`
 
-Additive: `#[clap_mcp(leaves_only)]` / `ClapMcpSchemaMetadata::leaves_only`
-omits intermediate (non-leaf) commands from `tools/list`. Leaf status is based
-on clap nesting before `skip_commands` filtering. Default remains unchanged
+Additive: `#[clap_mcp(leaves_only)]` / `leaves_only = true|false` /
+`ClapMcpSchemaMetadata::leaves_only` omits intermediate (non-leaf) commands from
+`tools/list`. A leaf must have `had_subcommands == false` (pre-skip clap nesting)
+and an empty `subcommands` list after filtering. Default remains unchanged
 (parents still appear unless you opt in). See
 [execution-safety.md](execution-safety.md).
 
-### `ClapCommand::had_subcommands` source compatibility
+### Struct-literal compatibility for new schema fields
 
-Schema extraction now sets
-[`ClapCommand::had_subcommands`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapCommand.html#structfield.had_subcommands)
-so `leaves_only` can see pre-skip nesting. Hand-built `ClapCommand { … }`
-struct literals that listed every field must add `had_subcommands` or use
-struct update syntax:
+Schema extraction and metadata now include fields that older hand-built literals
+must account for:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| [`ClapCommand::had_subcommands`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapCommand.html#structfield.had_subcommands) | `bool` | Pre-skip nesting; `#[serde(default)]` when deserializing |
+| [`ClapArg::value_json_type`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapArg.html#structfield.value_json_type) | `Option<String>` | `"integer"` / `"number"` for stock numeric parsers; `#[serde(default)]` |
+| [`ClapMcpSchemaMetadata::leaves_only`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.leaves_only) | `bool` | Defaults to `false` via `Default` |
+
+Hand-built `ClapCommand { … }` / `ClapArg { … }` struct literals that listed every
+field must add the new fields or use struct update syntax:
 
 ```rust
 root: ClapCommand {
     subcommands: leaves,
     ..existing.root
 },
+arg: ClapArg {
+    id: "port".into(),
+    ..existing_arg
+},
+metadata: ClapMcpSchemaMetadata {
+    leaves_only: true,
+    ..existing_metadata
+},
 ```
 
-`#[serde(default)]` keeps deserialized schemas compatible when the field is
-absent.
+`#[serde(default)]` keeps deserialized schemas compatible when `had_subcommands`
+or `value_json_type` is absent.
 
 ## After 0.1.0 — numeric `inputSchema` types
 

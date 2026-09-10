@@ -1209,9 +1209,11 @@ pub struct ClapMcpSchemaMetadata {
     pub skip_root_command_when_subcommands: bool,
     /// When `true`, only leaf commands become MCP tools. A leaf is a command that
     /// had no nested subcommands in clap **before** `skip_commands` filtering
-    /// (`ClapCommand::had_subcommands` is false). Intermediate parents whose only
-    /// children were skipped therefore stay hidden. Does not remove parents from
-    /// the clap schema used for argv construction. Combine with
+    /// (`ClapCommand::had_subcommands` is false) **and** has no remaining children
+    /// after filtering (`subcommands` is empty). Intermediate parents whose only
+    /// children were skipped therefore stay hidden, and older serialized schemas
+    /// that omit `had_subcommands` still hide visibly nested parents. Does not
+    /// remove parents from the clap schema used for argv construction. Combine with
     /// [`Self::skip_root_command_when_subcommands`] when the clap root should also
     /// be excluded. Distinct from `#[clap_mcp(schema_only)]`, which skips executor
     /// emit and does not hide tools.
@@ -2114,9 +2116,12 @@ pub fn tools_from_schema_with_metadata(
             schema.root.all_commands()
         };
     if metadata.leaves_only {
-        // Use pre-skip clap nesting (`had_subcommands`), not the filtered
-        // `subcommands` list, so parents of only-skipped children stay hidden.
-        commands.retain(|c| !c.had_subcommands);
+        // A leaf must have had no clap nesting before skip filtering and no
+        // remaining children after it. `had_subcommands` alone misses older
+        // serialized schemas that default the field to false while still
+        // carrying a parent → child `subcommands` tree; `subcommands.is_empty()`
+        // alone would advertise parents whose only children were skipped.
+        commands.retain(|c| !c.had_subcommands && c.subcommands.is_empty());
     }
     let tools: Vec<Tool> = commands
         .into_iter()
@@ -6775,6 +6780,60 @@ mod tests {
             "parent of only-skipped children must not become a leaf tool: {names:?}"
         );
         assert!(names.is_empty(), "expected no tools, got {names:?}");
+    }
+
+    #[test]
+    fn test_leaves_only_hides_parent_when_had_subcommands_defaults_false() {
+        // Older serialized schemas omit `had_subcommands` (serde default false)
+        // while still carrying a parent → child tree.
+        let schema = ClapSchema {
+            root: ClapCommand {
+                name: "app".into(),
+                about: None,
+                long_about: None,
+                version: None,
+                args: vec![],
+                arg_groups: vec![],
+                had_subcommands: false,
+                subcommands: vec![ClapCommand {
+                    name: "parent".into(),
+                    about: None,
+                    long_about: None,
+                    version: None,
+                    args: vec![],
+                    arg_groups: vec![],
+                    had_subcommands: false,
+                    subcommands: vec![ClapCommand {
+                        name: "child".into(),
+                        about: None,
+                        long_about: None,
+                        version: None,
+                        args: vec![],
+                        arg_groups: vec![],
+                        had_subcommands: false,
+                        subcommands: vec![],
+                    }],
+                }],
+            },
+        };
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig::default(),
+            &ClapMcpSchemaMetadata {
+                skip_root_command_when_subcommands: true,
+                leaves_only: true,
+                ..Default::default()
+            },
+        );
+        let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+        assert!(
+            !names.contains(&"parent"),
+            "visibly nested parent must stay hidden when had_subcommands defaults false: {names:?}"
+        );
+        assert!(
+            names.contains(&"child"),
+            "leaf child must remain: {names:?}"
+        );
     }
 
     #[test]

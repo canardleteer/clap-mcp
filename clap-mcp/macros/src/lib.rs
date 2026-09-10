@@ -781,62 +781,58 @@ fn build_args_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     }
 }
 
-/// Parses #[clap_mcp(skip_root_when_subcommands)] from root struct attributes.
-/// When present on a struct root with a subcommand, the root is excluded from the MCP tool list.
-fn has_clap_mcp_skip_root_when_subcommands(attrs: &[syn::Attribute]) -> bool {
-    clap_mcp_attr_has_flag(attrs, "skip_root_when_subcommands")
+/// Parses `#[clap_mcp(skip_root_when_subcommands)]` / `= true|false` from root attributes.
+fn has_clap_mcp_skip_root_when_subcommands(attrs: &[syn::Attribute]) -> syn::Result<bool> {
+    clap_mcp_attr_bool_flag(attrs, "skip_root_when_subcommands")
 }
 
-/// Parses #[clap_mcp(leaves_only)] — omit intermediate (non-leaf) commands from tools/list.
-fn has_clap_mcp_leaves_only(attrs: &[syn::Attribute]) -> bool {
-    clap_mcp_attr_has_flag(attrs, "leaves_only")
+/// Parses `#[clap_mcp(leaves_only)]` / `= true|false` — omit intermediate commands from tools/list.
+fn has_clap_mcp_leaves_only(attrs: &[syn::Attribute]) -> syn::Result<bool> {
+    clap_mcp_attr_bool_flag(attrs, "leaves_only")
 }
 
-/// True when any `#[clap_mcp(...)]` list contains the bare (or valued) flag `name`.
+/// Drain `= value` or `(...)` after a nested meta path so later keys remain visible.
+fn drain_clap_mcp_nested_meta(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
+    if meta.input.peek(syn::token::Eq) {
+        let _: Expr = meta.value()?.parse()?;
+    } else if meta.input.peek(syn::token::Paren) {
+        meta.parse_nested_meta(|inner| drain_clap_mcp_nested_meta(&inner))?;
+    }
+    Ok(())
+}
+
+/// Parse a bare or boolean `#[clap_mcp]` flag (`name` / `name = true|false`).
 ///
 /// Consumes `= value` and parenthesized nested meta on every other key so later
 /// flags remain visible (for example
 /// `#[clap_mcp(parallel_safe = false, leaves_only)]` and
-/// `#[clap_mcp(annotation(read_only = true), leaves_only)]`). Does not discard
-/// parse errors before checking whether the flag was seen.
-fn clap_mcp_attr_has_flag(attrs: &[syn::Attribute], name: &str) -> bool {
+/// `#[clap_mcp(annotation(read_only = true), leaves_only)]`). Propagates parse
+/// errors instead of silently dropping trailing flags. Boolean values are
+/// honored (`leaves_only = false` disables the flag).
+fn clap_mcp_attr_bool_flag(attrs: &[syn::Attribute], name: &str) -> syn::Result<bool> {
+    let mut value = false;
     for attr in attrs {
         if !attr.path().is_ident("clap_mcp") {
             continue;
         }
-        let mut found = false;
-        let parse_result = attr.parse_nested_meta(|meta| {
+        attr.parse_nested_meta(|meta| {
             if meta.path.is_ident(name) {
                 if meta.input.peek(syn::token::Eq) {
-                    let _: Expr = meta.value()?.parse()?;
+                    value = meta_bool_value(&meta)?;
                 } else if meta.input.peek(syn::token::Paren) {
-                    // Unusual but legal: `leaves_only(...)` — drain nested tokens.
-                    meta.parse_nested_meta(|_| Ok(()))?;
+                    return Err(meta.error(format!(
+                        "`{name}(...)` is not supported; use `{name}` or `{name} = true|false`"
+                    )));
+                } else {
+                    value = true;
                 }
-                found = true;
-            } else if meta.input.peek(syn::token::Eq) {
-                let _: Expr = meta.value()?.parse()?;
-            } else if meta.input.peek(syn::token::Paren) {
-                // Consume `annotation(read_only = true)` / similar nested lists.
-                meta.parse_nested_meta(|inner| {
-                    if inner.input.peek(syn::token::Eq) {
-                        let _: Expr = inner.value()?.parse()?;
-                    } else if inner.input.peek(syn::token::Paren) {
-                        inner.parse_nested_meta(|_| Ok(()))?;
-                    }
-                    Ok(())
-                })?;
+            } else {
+                drain_clap_mcp_nested_meta(&meta)?;
             }
             Ok(())
-        });
-        match parse_result {
-            Ok(()) if found => return true,
-            Ok(()) => {}
-            Err(_) if found => return true,
-            Err(_) => {}
-        }
+        })?;
     }
-    false
+    Ok(value)
 }
 
 /// Parses variant-level #[clap_mcp(requires = "arg1,arg2")] - comma-separated list.
@@ -1323,11 +1319,12 @@ fn nested_subcommand_type_paths_from_enum(data: &syn::DataEnum) -> Vec<syn::Path
 /// is excluded from the MCP tool list; only subcommands appear as tools. Equivalent to
 /// setting `ClapMcpSchemaMetadata::skip_root_command_when_subcommands = true` imperatively.
 ///
-/// ## `#[clap_mcp(leaves_only)]` (on root struct or enum)
+/// ## `#[clap_mcp(leaves_only)]` / `leaves_only = true|false` (on root struct or enum)
 ///
-/// When present, only leaf commands (no nested subcommands) appear as MCP tools.
+/// When enabled, only leaf commands (no nested subcommands) appear as MCP tools.
 /// Intermediate parents that only hold nested subcommand trees are omitted from
-/// `tools/list`. Equivalent to `ClapMcpSchemaMetadata::leaves_only = true`.
+/// `tools/list`. Bare `leaves_only` means `true`; `leaves_only = false` disables
+/// the flag. Equivalent to `ClapMcpSchemaMetadata::leaves_only = true` when set.
 /// Distinct from `#[clap_mcp(schema_only)]`, which skips executor emit and does not
 /// hide tools from the list.
 ///
@@ -2047,6 +2044,14 @@ fn quote_tool_annotations(ann: &ParsedToolAnnotations) -> proc_macro2::TokenStre
 /// Builds the ClapMcpSchemaMetadataProvider impl from #[clap_mcp(skip)], #[clap_mcp(requires)], and #[clap_mcp(task)].
 fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let name = &input.ident;
+    let skip_root_when_subcommands = match has_clap_mcp_skip_root_when_subcommands(&input.attrs) {
+        Ok(v) => v,
+        Err(e) => return e.to_compile_error(),
+    };
+    let leaves_only = match has_clap_mcp_leaves_only(&input.attrs) {
+        Ok(v) => v,
+        Err(e) => return e.to_compile_error(),
+    };
     let (_, _, _, _, _, task_augmented_tools, _, _, _, _) = parse_clap_mcp_attrs(&input.attrs);
     let task_augmented_tools_expr = task_augmented_tools
         .map(|b| quote! { #b })
@@ -2286,13 +2291,12 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 let sub_ty = inner_type_if_option(&sub_field.ty).unwrap_or(&sub_field.ty);
                 if let syn::Type::Path(tp) = sub_ty {
                     let sub_path = &tp.path;
-                    let skip_root_assign_local =
-                        if has_clap_mcp_skip_root_when_subcommands(&input.attrs) {
-                            quote! { local.skip_root_command_when_subcommands = true; }
-                        } else {
-                            quote! {}
-                        };
-                    let leaves_only_assign_local = if has_clap_mcp_leaves_only(&input.attrs) {
+                    let skip_root_assign_local = if skip_root_when_subcommands {
+                        quote! { local.skip_root_command_when_subcommands = true; }
+                    } else {
+                        quote! {}
+                    };
+                    let leaves_only_assign_local = if leaves_only {
                         quote! { local.leaves_only = true; }
                     } else {
                         quote! {}
@@ -2310,13 +2314,12 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     } else {
                         quote! {}
                     };
-                    let skip_root_assign = if has_clap_mcp_skip_root_when_subcommands(&input.attrs)
-                    {
+                    let skip_root_assign = if skip_root_when_subcommands {
                         quote! { m.skip_root_command_when_subcommands = true; }
                     } else {
                         quote! {}
                     };
-                    let leaves_only_assign = if has_clap_mcp_leaves_only(&input.attrs) {
+                    let leaves_only_assign = if leaves_only {
                         quote! { m.leaves_only = true; }
                     } else {
                         quote! {}
@@ -2678,7 +2681,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         _ => Vec::new(),
     };
 
-    let leaves_only_assign = if has_clap_mcp_leaves_only(&input.attrs) {
+    let leaves_only_assign = if leaves_only {
         quote! { m.leaves_only = true; }
     } else {
         quote! {}
