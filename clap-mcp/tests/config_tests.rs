@@ -2592,6 +2592,250 @@ fn test_struct_root_flatten_args_metadata_forwards_input_types() {
 }
 
 #[test]
+fn test_child_declared_global_string_id_does_not_inherit_root_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_child_global_id"]
+    #[command(name = "test-child-global-id", subcommand_required = true)]
+    struct TestChildGlobalId {
+        #[arg(long)]
+        id: u32,
+        #[command(subcommand)]
+        command: ChildGlobalIdCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum ChildGlobalIdCmd {
+        Show {
+            #[arg(long, global = true, default_value = "")]
+            id: String,
+            #[command(subcommand)]
+            command: ChildGlobalIdLeaf,
+        },
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum ChildGlobalIdLeaf {
+        Nested,
+    }
+
+    fn run_child_global_id(_: TestChildGlobalId) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestChildGlobalId::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&TestChildGlobalId::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    for name in ["show", "nested"] {
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == name)
+            .unwrap_or_else(|| panic!("missing tool {name}"));
+        let props = tool
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("props");
+        assert_eq!(
+            props
+                .get("id")
+                .and_then(|p| p.get("type"))
+                .and_then(|t| t.as_str()),
+            Some("string"),
+            "{name}: child-declared global string --id must not inherit root integer: {props:?}"
+        );
+    }
+}
+
+#[test]
+fn test_unnamed_struct_root_flatten_args_metadata_uses_clap_command_name() {
+    #[derive(Debug, clap::Args, ClapMcp)]
+    #[clap_mcp(args_metadata)]
+    struct UnnamedFlatArgs {
+        #[arg(long)]
+        count: u32,
+        #[arg(long)]
+        #[clap_mcp(input_type = "number")]
+        ratio: String,
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp_output_from = "run_unnamed_flat"]
+    // No #[command(name)] — clap uses the package / binary name at runtime.
+    struct TestUnnamedFlatRoot {
+        #[command(flatten)]
+        #[clap_mcp(args_metadata)]
+        args: UnnamedFlatArgs,
+    }
+
+    fn run_unnamed_flat(_: TestUnnamedFlatRoot) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestUnnamedFlatRoot::clap_mcp_schema_metadata();
+    let live_root = TestUnnamedFlatRoot::command().get_name().to_string();
+    assert_ne!(
+        live_root, "test-unnamed-flat-root",
+        "regression requires clap live name != Rust kebab: {live_root}"
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get(&live_root)
+            .and_then(|m| m.get("count"))
+            .map(String::as_str),
+        Some("integer"),
+        "flatten merge must key by live clap root ({live_root}): {:?}",
+        metadata.arg_value_json_types
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get(&live_root)
+            .and_then(|m| m.get("ratio"))
+            .map(String::as_str),
+        Some("number")
+    );
+
+    let schema = schema_from_command_with_metadata(&TestUnnamedFlatRoot::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    assert_eq!(tools.len(), 1);
+    let props = tools[0]
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("count")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer"),
+        "{props:?}"
+    );
+    assert_eq!(
+        props
+            .get("ratio")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("number"),
+        "{props:?}"
+    );
+}
+
+#[test]
+fn test_relative_path_flatten_args_metadata_forwards_input_types() {
+    mod shared {
+        use clap::Args;
+        use clap_mcp::ClapMcp;
+
+        #[derive(Debug, Args, ClapMcp)]
+        #[clap_mcp(args_metadata)]
+        pub struct Options {
+            #[arg(long)]
+            pub workers: u32,
+            #[arg(long)]
+            #[clap_mcp(input_type = "integer")]
+            pub code: String,
+        }
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp_output_from = "run_rel_flat"]
+    #[command(name = "test-rel-flat")]
+    struct TestRelFlat {
+        #[command(flatten)]
+        #[clap_mcp(args_metadata)]
+        // Relative path (not `crate::…`) must still forward types.
+        opts: shared::Options,
+    }
+
+    fn run_rel_flat(_: TestRelFlat) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestRelFlat::clap_mcp_schema_metadata();
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("test-rel-flat")
+            .and_then(|m| m.get("workers"))
+            .map(String::as_str),
+        Some("integer"),
+        "{:?}",
+        metadata.arg_value_json_types
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("test-rel-flat")
+            .and_then(|m| m.get("code"))
+            .map(String::as_str),
+        Some("integer")
+    );
+
+    let schema = schema_from_command_with_metadata(&TestRelFlat::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let props = tools[0]
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("workers")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+    assert_eq!(
+        props
+            .get("code")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_already_built_command_omits_auto_help_from_mcp_catalog() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(leaves_only)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_built_help"]
+    #[command(name = "test-built-help", subcommand_required = true)]
+    enum TestBuiltHelp {
+        Greet,
+    }
+
+    fn run_built_help(_: TestBuiltHelp) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestBuiltHelp::clap_mcp_schema_metadata();
+    let mut cmd = TestBuiltHelp::command();
+    cmd.build();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        !names.contains(&"help"),
+        "already-built Command must still omit clap auto-help: {names:?}"
+    );
+    assert_eq!(
+        names.iter().filter(|n| **n == "greet").count(),
+        1,
+        "leaf tool must appear once: {names:?}"
+    );
+}
+
+#[test]
 fn test_schema_only_enum_matching_variant_name_compiles_with_numeric_types() {
     #[derive(Debug, Parser, ClapMcp)]
     #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]

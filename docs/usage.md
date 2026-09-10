@@ -458,10 +458,18 @@ must set numeric types with `with_arg_value_json_type`; derive inference does no
 apply to hand-built schemas. Flattened `Args` forward `input_type` / inferred
 types when the `Args` type uses `#[clap_mcp(args_metadata)]` and the flatten
 field repeats that attribute (or the variant already uses `serialize_topic`).
-Global numeric types inherit only along the command ancestor chain after
-`Command::build()`; the same argument id on an unrelated command must not change
-another tool's `inputSchema`. Clap `hide` does not remove MCP tools (use
-`#[clap_mcp(skip)]`). Custom parsers (any explicit clap `value_parser`) stay
+Forwarding does not depend on how you spell the flattened type path
+(`shared::Options` and `crate::shared::Options` both work). On struct `Parser`
+roots without `#[command(name)]`, flatten merges key metadata under clap's live
+root name (same remap as direct fields). Typed argument metadata applies from
+the command that declared the argument; a child-declared global string `--id`
+does not inherit a root non-global integer `--id` after `Command::build()`.
+Root globals still appear on descendant leaf tools. Clap `hide` does not remove
+MCP tools (use `#[clap_mcp(skip)]`). Clap's auto-generated `help` subcommand is
+omitted from the MCP catalog even when you pass an already-`build()`'d
+`Command`; keep an application `help` tool only with
+`disable_help_subcommand = true`. Custom parsers (any explicit clap
+`value_parser`) stay
 `"string"` unless you override. Schema extraction does not execute value parsers
 to guess types. Agents may pass JSON numbers;
 clap-mcp stringifies them when building argv, and integral floats such as

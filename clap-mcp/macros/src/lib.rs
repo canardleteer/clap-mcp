@@ -2278,6 +2278,46 @@ fn quote_arg_value_json_type_entries(
     quote! { #(#entries)* }
 }
 
+/// Emit flatten `merge_arg_value_json_types` calls.
+///
+/// When `remap_live_root` is true and `cmd` equals the compile-time root name,
+/// remaps to clap's live root via [`clap::CommandFactory`] (same as direct field
+/// inserts). Enum / nested variant keys stay string literals.
+fn quote_flatten_arg_value_json_type_stmts<'a>(
+    map_ident: &syn::Ident,
+    flatten_args_json_type_cmds: &'a [(String, syn::Type)],
+    root_ty: &syn::Ident,
+    compile_time_root: &str,
+    remap_live_root: bool,
+) -> impl Iterator<Item = proc_macro2::TokenStream> + 'a {
+    let map_ident = map_ident.clone();
+    let root_ty = root_ty.clone();
+    let compile_time_root = compile_time_root.to_string();
+    flatten_args_json_type_cmds.iter().map(move |(cmd, ty)| {
+        if remap_live_root && cmd == &compile_time_root {
+            quote! {
+                {
+                    let __clap_mcp_root = <#root_ty as ::clap::CommandFactory>::command()
+                        .get_name()
+                        .to_string();
+                    <#ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_arg_value_json_types(
+                        &__clap_mcp_root,
+                        &mut #map_ident.arg_value_json_types,
+                    );
+                }
+            }
+        } else {
+            let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
+            quote! {
+                <#ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_arg_value_json_types(
+                    #cmd_lit,
+                    &mut #map_ident.arg_value_json_types,
+                );
+            }
+        }
+    })
+}
+
 /// Builds the ClapMcpSchemaMetadataProvider impl from #[clap_mcp(skip)], #[clap_mcp(requires)], and #[clap_mcp(task)].
 fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let name = &input.ident;
@@ -2446,17 +2486,18 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     }
                     if field_has_command_flatten(&f.attrs) {
                         let flat_ty = inner_type_if_option(&f.ty).unwrap_or(&f.ty).clone();
-                        if matches!(flattened_type_kind(&flat_ty), Ok(FlattenSkipKindTag::Args)) {
-                            // `ClapMcpFlattenArgsTopics` exists only on Args with
-                            // `#[clap_mcp(args_metadata)]`. Opt in on the flatten field
-                            // (or when the variant already uses serialize_topic).
-                            if has_clap_mcp_args_metadata(&f.attrs) || variant_has_serialized_args {
-                                flatten_args_json_type_cmds
-                                    .push((cmd_name.clone(), flat_ty.clone()));
-                            }
-                            if variant_has_serialized_args {
-                                flatten_serialize_topic_cmds.push((cmd_name.clone(), flat_ty));
-                            }
+                        // `ClapMcpFlattenArgsTopics` exists only on Args with
+                        // `#[clap_mcp(args_metadata)]`. Opt in on the flatten field
+                        // (or when the variant already uses serialize_topic). Do not
+                        // gate on `flattened_type_kind` — relative paths like
+                        // `shared::Options` fail that heuristic and would silently skip.
+                        if has_clap_mcp_args_metadata(&f.attrs) || variant_has_serialized_args {
+                            flatten_args_json_type_cmds.push((cmd_name.clone(), flat_ty.clone()));
+                        }
+                        if variant_has_serialized_args
+                            && matches!(flattened_type_kind(&flat_ty), Ok(FlattenSkipKindTag::Args))
+                        {
+                            flatten_serialize_topic_cmds.push((cmd_name.clone(), flat_ty));
                         }
                     }
                     if has_clap_mcp_serialize_topic(&f.attrs) {
@@ -2543,9 +2584,8 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 }
                 if field_has_command_flatten(&f.attrs) {
                     let flat_ty = inner_type_if_option(&f.ty).unwrap_or(&f.ty).clone();
-                    if matches!(flattened_type_kind(&flat_ty), Ok(FlattenSkipKindTag::Args))
-                        && has_clap_mcp_args_metadata(&f.attrs)
-                    {
+                    // Path-agnostic: trait bound is the gate, not `flattened_type_kind`.
+                    if has_clap_mcp_args_metadata(&f.attrs) {
                         flatten_args_json_type_cmds.push((root_name.clone(), flat_ty));
                     }
                 }
@@ -2752,16 +2792,12 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 }
                             },
                         );
-                        let flatten_json_type_stmts_local = flatten_args_json_type_cmds.iter().map(
-                            |(cmd, ty)| {
-                                let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
-                                quote! {
-                                    <#ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_arg_value_json_types(
-                                        #cmd_lit,
-                                        &mut local.arg_value_json_types,
-                                    );
-                                }
-                            },
+                        let flatten_json_type_stmts_local = quote_flatten_arg_value_json_type_stmts(
+                            &quote::format_ident!("local"),
+                            &flatten_args_json_type_cmds,
+                            name,
+                            &root_name,
+                            true,
                         );
                         let tool_annotations_entries_local =
                             tool_annotations.iter().map(|(k, ann)| {
@@ -2947,15 +2983,13 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
             );
         }
     });
-    let flatten_json_type_stmts = flatten_args_json_type_cmds.iter().map(|(cmd, ty)| {
-        let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
-        quote! {
-            <#ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_arg_value_json_types(
-                #cmd_lit,
-                &mut m.arg_value_json_types,
-            );
-        }
-    });
+    let flatten_json_type_stmts = quote_flatten_arg_value_json_type_stmts(
+        &quote::format_ident!("m"),
+        &flatten_args_json_type_cmds,
+        name,
+        &enum_root_name,
+        remap_live_root,
+    );
     let task_tool_names_lit = task_tool_names.iter().map(|s| {
         let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
         quote! { #lit.to_string() }
