@@ -32,6 +32,12 @@ and an empty `subcommands` list after filtering. Default remains unchanged
 (parents still appear unless you opt in). See
 [execution-safety.md](execution-safety.md).
 
+When the same leaf clap name appears under more than one parent in the
+advertised tool set, tools are named with the path under the root joined by
+`__` (for example `foo__child`). Unique leaf names stay bare. Root
+`#[arg(global)]` arguments still appear on leaf `inputSchema` under
+`leaves_only` and round-trip through `tools/call`.
+
 ### Struct-literal compatibility for new schema fields
 
 Schema extraction and metadata now include fields that older hand-built literals

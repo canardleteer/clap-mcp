@@ -1655,14 +1655,18 @@ pub enum ClapMcpSerializeScope {
     Args(Vec<String>),
 }
 
-pub(crate) fn tool_task_eligible(tool_name: &str, metadata: &ClapMcpSchemaMetadata) -> bool {
+pub(crate) fn tool_task_eligible(
+    tool_name: &str,
+    leaf_name: &str,
+    metadata: &ClapMcpSchemaMetadata,
+) -> bool {
     if !metadata.task_augmented_tools {
         return false;
     }
     if metadata.task_tool_names.is_empty() {
         true
     } else {
-        metadata.task_tool_names.iter().any(|n| n == tool_name)
+        meta_tool_list_contains(&metadata.task_tool_names, tool_name, leaf_name)
     }
 }
 
@@ -2124,6 +2128,11 @@ fn format_arg_groups_description_suffix(groups: &[ClapArgGroup]) -> Option<Strin
     Some(format!("Arg groups (parse-time): {}.", parts.join("; ")))
 }
 
+/// Separator between clap path segments when a leaf name is advertised under more
+/// than one parent (for example `foo__child` and `bar__child`). Unique leaf names
+/// stay bare so common CLIs keep matching clap command names.
+pub const AMBIGUOUS_TOOL_PATH_SEPARATOR: &str = "__";
+
 /// Builds MCP tools from a clap schema with execution config and metadata.
 ///
 /// One tool per command (root + every subcommand). Tools include `meta.clapMcp` with
@@ -2131,36 +2140,42 @@ fn format_arg_groups_description_suffix(groups: &[ClapArgGroup]) -> Option<Strin
 /// serialization hints, and optional `argGroups` when clap ArgGroups are present on
 /// the tool's command node. Tool `description` may include a parse-time ArgGroup suffix
 /// when groups exist.
+///
+/// When two or more advertised tools would share the same clap leaf name, each is
+/// named with the path under the root joined by
+/// [`AMBIGUOUS_TOOL_PATH_SEPARATOR`] (root binary name omitted). Unique names stay
+/// bare.
 pub fn tools_from_schema_with_metadata(
     schema: &ClapSchema,
     config: &ClapMcpConfig,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Vec<Tool> {
-    let mut commands: Vec<&ClapCommand> =
-        if metadata.skip_root_command_when_subcommands && !schema.root.subcommands.is_empty() {
-            schema
-                .root
-                .subcommands
-                .iter()
-                .flat_map(|c| c.all_commands())
-                .collect()
-        } else {
-            schema.root.all_commands()
-        };
+    let mut entries = schema_command_entries(schema);
+    if metadata.skip_root_command_when_subcommands && !schema.root.subcommands.is_empty() {
+        entries.retain(|(path, _)| path.len() > 1);
+    }
     if metadata.leaves_only {
         // A leaf must have had no clap nesting before skip filtering and no
         // remaining children after it. `had_subcommands` alone misses older
         // serialized schemas that default the field to false while still
         // carrying a parent → child `subcommands` tree; `subcommands.is_empty()`
         // alone would advertise parents whose only children were skipped.
-        commands.retain(|c| !c.had_subcommands && c.subcommands.is_empty());
+        entries.retain(|(_, c)| !c.had_subcommands && c.subcommands.is_empty());
     }
-    let tools: Vec<Tool> = commands
+    let mut name_counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for (_, cmd) in &entries {
+        *name_counts.entry(cmd.name.as_str()).or_insert(0) += 1;
+    }
+    let tools: Vec<Tool> = entries
         .into_iter()
-        .map(|cmd| {
+        .map(|(path, cmd)| {
+            let ambiguous = name_counts.get(cmd.name.as_str()).copied().unwrap_or(0) > 1;
+            let tool_name = advertise_tool_name(&path, ambiguous);
             command_to_tool_with_config(
                 schema,
                 cmd,
+                &path,
+                &tool_name,
                 config,
                 metadata,
                 metadata.output_schema.as_ref(),
@@ -2169,6 +2184,57 @@ pub fn tools_from_schema_with_metadata(
         .collect();
     warn_subprocess_output_schema(config, metadata, &tools);
     tools
+}
+
+/// Depth-first `(path, command)` pairs for the full schema tree (path includes root).
+fn schema_command_entries(schema: &ClapSchema) -> Vec<(Vec<String>, &ClapCommand)> {
+    let mut out = Vec::new();
+    fn walk<'a>(
+        cmd: &'a ClapCommand,
+        path: &mut Vec<String>,
+        out: &mut Vec<(Vec<String>, &'a ClapCommand)>,
+    ) {
+        path.push(cmd.name.clone());
+        out.push((path.clone(), cmd));
+        for sub in &cmd.subcommands {
+            walk(sub, path, out);
+        }
+        path.pop();
+    }
+    walk(&schema.root, &mut Vec::new(), &mut out);
+    out
+}
+
+/// MCP tool name for a clap path. Ambiguous leaf names use parent segments joined
+/// by [`AMBIGUOUS_TOOL_PATH_SEPARATOR`] (root omitted). Unique leaves stay bare.
+fn advertise_tool_name(path: &[String], leaf_name_is_ambiguous: bool) -> String {
+    let leaf = path
+        .last()
+        .expect("command path for an advertised tool must be non-empty");
+    if !leaf_name_is_ambiguous || path.len() <= 1 {
+        return leaf.clone();
+    }
+    path[1..].join(AMBIGUOUS_TOOL_PATH_SEPARATOR)
+}
+
+/// Look up a per-tool metadata map by advertised tool name, falling back to the
+/// bare clap leaf name (derive keys use clap names).
+fn meta_tool_get<'a, V>(
+    map: &'a std::collections::HashMap<String, V>,
+    advertised: &str,
+    leaf: &str,
+) -> Option<&'a V> {
+    map.get(advertised).or_else(|| {
+        if leaf != advertised {
+            map.get(leaf)
+        } else {
+            None
+        }
+    })
+}
+
+fn meta_tool_list_contains(list: &[String], advertised: &str, leaf: &str) -> bool {
+    list.iter().any(|n| n == advertised || n == leaf)
 }
 
 /// Tool names that advertise `outputSchema` while running in subprocess mode.
@@ -2205,14 +2271,27 @@ fn warn_subprocess_output_schema(
 }
 
 /// Args exposed for an MCP tool: leaf command args plus ancestor `#[arg(global)]` args.
+///
+/// `tool_name` is the advertised MCP tool name (bare leaf or path-qualified). Skip
+/// maps keyed by either the advertised name or the bare clap leaf name apply.
 pub(crate) fn effective_args_for_tool(
     schema: &ClapSchema,
-    command_name: &str,
+    tool_name: &str,
     metadata: Option<&ClapMcpSchemaMetadata>,
 ) -> Vec<ClapArg> {
-    let Some(path) = command_path(schema, command_name) else {
+    let Some(path) = command_path(schema, tool_name) else {
         return Vec::new();
     };
+    effective_args_for_tool_at_path(schema, &path, tool_name, metadata)
+}
+
+fn effective_args_for_tool_at_path(
+    schema: &ClapSchema,
+    path: &[String],
+    tool_name: &str,
+    metadata: Option<&ClapMcpSchemaMetadata>,
+) -> Vec<ClapArg> {
+    let leaf = path.last().map(String::as_str).unwrap_or(tool_name);
     let mut by_id: BTreeMap<String, ClapArg> = BTreeMap::new();
     for depth in 0..path.len() {
         let subpath = &path[..=depth];
@@ -2233,9 +2312,9 @@ pub(crate) fn effective_args_for_tool(
                 {
                     continue;
                 }
-                if let Some(cmd_skips) = m.skip_args.get(command_name)
-                    && cmd_skips.iter().any(|s| s == &arg.id)
-                {
+                let skipped = meta_tool_get(&m.skip_args, tool_name, leaf)
+                    .is_some_and(|cmd_skips| cmd_skips.iter().any(|s| s == &arg.id));
+                if skipped {
                     continue;
                 }
             }
@@ -2261,11 +2340,15 @@ fn command_at_path<'a>(root: &'a ClapCommand, path: &[String]) -> Option<&'a Cla
 fn command_to_tool_with_config(
     schema: &ClapSchema,
     cmd: &ClapCommand,
+    path: &[String],
+    tool_name: &str,
     config: &ClapMcpConfig,
     metadata: &ClapMcpSchemaMetadata,
     output_schema: Option<&serde_json::Value>,
 ) -> Tool {
-    let effective_args = effective_args_for_tool(schema, &cmd.name, Some(metadata));
+    let leaf = cmd.name.as_str();
+    let effective_args =
+        effective_args_for_tool_at_path(schema, path, tool_name, Some(metadata));
 
     let mut properties: BTreeMap<String, serde_json::Map<String, serde_json::Value>> =
         BTreeMap::new();
@@ -2304,7 +2387,7 @@ fn command_to_tool_with_config(
         }
 
         if let Some(default_val) =
-            advertised_default_for_arg(arg, &cmd.name, metadata, json_type.as_str())
+            advertised_default_for_arg(arg, tool_name, leaf, metadata, json_type.as_str())
         {
             prop.insert("default".to_string(), default_val);
         }
@@ -2533,10 +2616,10 @@ fn command_to_tool_with_config(
             "shareRuntime".into(),
             serde_json::Value::Bool(config.share_runtime),
         );
-        if tool_task_eligible(&cmd.name, metadata) {
+        if tool_task_eligible(tool_name, leaf, metadata) {
             clap_mcp.insert("taskAugmented".into(), serde_json::Value::Bool(true));
         }
-        if let Some(scope) = metadata.serialize_tools.get(&cmd.name) {
+        if let Some(scope) = meta_tool_get(&metadata.serialize_tools, tool_name, leaf) {
             clap_mcp.insert("serialized".into(), serde_json::Value::Bool(true));
             match scope {
                 ClapMcpSerializeScope::Tool => {
@@ -2560,7 +2643,9 @@ fn command_to_tool_with_config(
                                 .collect(),
                         ),
                     );
-                    if let Some(topic_args) = metadata.serialize_topic_args.get(&cmd.name) {
+                    if let Some(topic_args) =
+                        meta_tool_get(&metadata.serialize_topic_args, tool_name, leaf)
+                    {
                         let ids: Vec<_> = topic_args.keys().cloned().collect();
                         if !ids.is_empty() {
                             clap_mcp.insert(
@@ -2585,7 +2670,7 @@ fn command_to_tool_with_config(
     };
 
     let mut tool = Tool::new_with_raw(
-        cmd.name.clone(),
+        tool_name.to_string(),
         description.map(|d| d.into()),
         Arc::new(input_schema),
     );
@@ -2595,24 +2680,21 @@ fn command_to_tool_with_config(
     if let Some(meta) = meta {
         tool = tool.with_meta(meta);
     }
-    let tool_out_schema = if let Some(per_tool) = metadata.tool_output_schemas.get(&cmd.name) {
-        Some(per_tool)
-    } else if metadata
-        .omit_tool_output_schemas
-        .iter()
-        .any(|n| n == &cmd.name)
-    {
-        None
-    } else {
-        output_schema
-    };
+    let tool_out_schema =
+        if let Some(per_tool) = meta_tool_get(&metadata.tool_output_schemas, tool_name, leaf) {
+            Some(per_tool)
+        } else if meta_tool_list_contains(&metadata.omit_tool_output_schemas, tool_name, leaf) {
+            None
+        } else {
+            output_schema
+        };
     if let Some(output_schema) = tool_out_schema
         .cloned()
         .and_then(sanitize_mcp_output_schema)
     {
         tool = tool.with_raw_output_schema(Arc::new(output_schema));
     }
-    if let Some(annotations) = metadata.tool_annotations.get(&cmd.name) {
+    if let Some(annotations) = meta_tool_get(&metadata.tool_annotations, tool_name, leaf) {
         if let Some(ref t) = annotations.title {
             tool = tool.with_title(t.clone());
         }
@@ -2720,24 +2802,29 @@ fn schema_when_arg_active(arg: &ClapArg) -> serde_json::Value {
 
 fn default_ids_for_tool<'a>(
     map: &'a std::collections::HashMap<String, Vec<String>>,
-    tool_name: &str,
-) -> impl Iterator<Item = &'a str> {
+    advertised: &'a str,
+    leaf: &'a str,
+) -> impl Iterator<Item = &'a str> + 'a {
     map.get("*")
         .into_iter()
-        .chain(map.get(tool_name))
+        .chain(map.get(advertised))
+        .chain(if leaf != advertised {
+            map.get(leaf)
+        } else {
+            None
+        })
         .flatten()
         .map(String::as_str)
 }
 
 fn advertised_default_for_arg(
     arg: &ClapArg,
-    tool_name: &str,
+    advertised: &str,
+    leaf: &str,
     metadata: &ClapMcpSchemaMetadata,
     json_type: Option<&str>,
 ) -> Option<serde_json::Value> {
-    if let Some(over) = metadata
-        .override_defaults
-        .get(tool_name)
+    if let Some(over) = meta_tool_get(&metadata.override_defaults, advertised, leaf)
         .and_then(|m| m.get(&arg.id))
         .or_else(|| {
             metadata
@@ -2748,7 +2835,7 @@ fn advertised_default_for_arg(
     {
         return Some(over.clone());
     }
-    if default_ids_for_tool(&metadata.hide_defaults, tool_name).any(|id| id == arg.id) {
+    if default_ids_for_tool(&metadata.hide_defaults, advertised, leaf).any(|id| id == arg.id) {
         return None;
     }
     if arg.default_values.is_empty() {
@@ -4311,27 +4398,52 @@ fn build_argv_for_clap_with_metadata(
     argv
 }
 
-pub(crate) fn command_path(schema: &ClapSchema, command_name: &str) -> Option<Vec<String>> {
-    fn walk(cmd: &ClapCommand, command_name: &str, path: &mut Vec<String>) -> bool {
-        path.push(cmd.name.clone());
-        if cmd.name == command_name {
-            return true;
-        }
-        for subcommand in &cmd.subcommands {
-            if walk(subcommand, command_name, path) {
-                return true;
-            }
-        }
-        path.pop();
-        false
+pub(crate) fn command_path(schema: &ClapSchema, tool_name: &str) -> Option<Vec<String>> {
+    if let Some(path) = resolve_qualified_tool_path(schema, tool_name) {
+        return Some(path);
     }
 
-    let mut path = Vec::new();
-    if walk(&schema.root, command_name, &mut path) {
-        Some(path)
-    } else {
-        None
+    let matches = command_paths_named(schema, tool_name);
+    match matches.len() {
+        1 => Some(matches.into_iter().next().expect("len checked")),
+        // Zero matches, or bare name is ambiguous across parents: callers must use
+        // the path-qualified tool name from tools/list.
+        _ => None,
     }
+}
+
+/// Resolve `parent__leaf` style tool names to a full clap path (root + segments).
+fn resolve_qualified_tool_path(schema: &ClapSchema, tool_name: &str) -> Option<Vec<String>> {
+    if !tool_name.contains(AMBIGUOUS_TOOL_PATH_SEPARATOR) {
+        return None;
+    }
+    let segments: Vec<String> = tool_name
+        .split(AMBIGUOUS_TOOL_PATH_SEPARATOR)
+        .map(str::to_string)
+        .collect();
+    if segments.is_empty() || segments.iter().any(|s| s.is_empty()) {
+        return None;
+    }
+    let mut path = vec![schema.root.name.clone()];
+    path.extend(segments);
+    command_at_path(&schema.root, &path).map(|_| path)
+}
+
+/// Every path from the root to a command whose clap name equals `name`.
+fn command_paths_named(schema: &ClapSchema, name: &str) -> Vec<Vec<String>> {
+    let mut matches = Vec::new();
+    fn walk(cmd: &ClapCommand, name: &str, path: &mut Vec<String>, matches: &mut Vec<Vec<String>>) {
+        path.push(cmd.name.clone());
+        if cmd.name == name {
+            matches.push(path.clone());
+        }
+        for subcommand in &cmd.subcommands {
+            walk(subcommand, name, path, matches);
+        }
+        path.pop();
+    }
+    walk(&schema.root, name, &mut Vec::new(), &mut matches);
+    matches
 }
 
 /// Builds argv for the executable from the schema and tool arguments.
@@ -5486,6 +5598,8 @@ mod tests {
         let tool = command_to_tool_with_config(
             &schema,
             &schema.root,
+            &["sample".to_string()],
+            "sample",
             &ClapMcpConfig {
                 reinvocation_safe: true,
                 parallel_safe: false,
@@ -5820,6 +5934,8 @@ mod tests {
         let tool = command_to_tool_with_config(
             &schema,
             &schema.root,
+            std::slice::from_ref(&schema.root.name),
+            schema.root.name.as_str(),
             &ClapMcpConfig::default(),
             &ClapMcpSchemaMetadata::default(),
             None,
@@ -7064,6 +7180,154 @@ mod tests {
     }
 
     #[test]
+    fn test_ambiguous_leaf_names_path_qualify_and_route() {
+        let cmd = Command::new("app")
+            .subcommand(
+                Command::new("foo").subcommand(
+                    Command::new("child").arg(Arg::new("from_foo").long("from-foo")),
+                ),
+            )
+            .subcommand(
+                Command::new("bar").subcommand(
+                    Command::new("child").arg(Arg::new("from_bar").long("from-bar")),
+                ),
+            );
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            leaves_only: true,
+            ..Default::default()
+        };
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let names: Vec<_> = tools.iter().map(|t| t.name.to_string()).collect();
+        assert!(
+            !names.iter().any(|n| n == "child"),
+            "ambiguous bare leaf must not be advertised twice: {names:?}"
+        );
+        assert!(
+            names.contains(&"foo__child".to_string()),
+            "foo child must be path-qualified: {names:?}"
+        );
+        assert!(
+            names.contains(&"bar__child".to_string()),
+            "bar child must be path-qualified: {names:?}"
+        );
+
+        let foo = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "foo__child")
+            .expect("foo__child");
+        let bar = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "bar__child")
+            .expect("bar__child");
+        let foo_props = foo
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("foo props");
+        let bar_props = bar
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("bar props");
+        assert!(
+            foo_props.contains_key("from_foo") && !foo_props.contains_key("from_bar"),
+            "foo__child schema must use foo locals: {foo_props:?}"
+        );
+        assert!(
+            bar_props.contains_key("from_bar") && !bar_props.contains_key("from_foo"),
+            "bar__child schema must use bar locals: {bar_props:?}"
+        );
+
+        assert_eq!(
+            command_path(&schema, "child"),
+            None,
+            "bare ambiguous leaf must not resolve"
+        );
+        assert_eq!(
+            command_path(&schema, "foo__child"),
+            Some(vec!["app".into(), "foo".into(), "child".into()])
+        );
+        assert_eq!(
+            command_path(&schema, "bar__child"),
+            Some(vec!["app".into(), "bar".into(), "child".into()])
+        );
+
+        let foo_argv = build_argv_for_clap_with_metadata(
+            &schema,
+            "foo__child",
+            serde_json::Map::from_iter([("from_foo".into(), json!("a"))]),
+            Some(&metadata),
+        );
+        assert_eq!(
+            foo_argv,
+            vec!["cli", "foo", "child", "--from-foo", "a"]
+        );
+        let bar_argv = build_argv_for_clap_with_metadata(
+            &schema,
+            "bar__child",
+            serde_json::Map::from_iter([("from_bar".into(), json!("b"))]),
+            Some(&metadata),
+        );
+        assert_eq!(
+            bar_argv,
+            vec!["cli", "bar", "child", "--from-bar", "b"]
+        );
+    }
+
+    #[test]
+    fn test_leaves_only_unique_leaf_inherits_root_global() {
+        let cmd = Command::new("app")
+            .arg(Arg::new("verbose").long("verbose").global(true).action(ArgAction::SetTrue))
+            .subcommand(
+                Command::new("parent")
+                    .subcommand_required(true)
+                    .subcommand(
+                        Command::new("greet").arg(Arg::new("name").long("name")),
+                    ),
+            );
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            leaves_only: true,
+            ..Default::default()
+        };
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+        assert_eq!(names, vec!["greet"], "unique leaf stays bare under leaves_only: {names:?}");
+        assert!(!names.contains(&"parent"));
+
+        let greet = tools.iter().find(|t| t.name.as_ref() == "greet").expect("greet");
+        let props = greet
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("props");
+        assert!(
+            props.contains_key("verbose"),
+            "root global must appear on leaves_only leaf schema: {props:?}"
+        );
+        assert!(props.contains_key("name"));
+
+        let argv = build_argv_for_clap_with_metadata(
+            &schema,
+            "greet",
+            serde_json::Map::from_iter([
+                ("name".into(), json!("Ada")),
+                ("verbose".into(), json!(true)),
+            ]),
+            Some(&metadata),
+        );
+        assert_eq!(
+            argv,
+            vec!["cli", "parent", "greet", "--name", "Ada", "--verbose"]
+        );
+        let matches = cmd.try_get_matches_from(argv).expect("clap parse");
+        assert!(matches.get_flag("verbose"));
+    }
+
+    #[test]
     fn test_tools_attach_sanitized_output_schema() {
         use serde_json::json;
         let schema =
@@ -7608,6 +7872,8 @@ mod tests {
         let tool = command_to_tool_with_config(
             &schema,
             &schema.root,
+            &["sample".to_string()],
+            "sample",
             &ClapMcpConfig::default(),
             &ClapMcpSchemaMetadata::default(),
             None,

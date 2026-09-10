@@ -68,7 +68,18 @@ impl ServeHandlerInner {
         }
         match &self.task_tool_filter {
             None => true,
-            Some(set) => set.contains(name),
+            Some(set) => {
+                if set.contains(name) {
+                    return true;
+                }
+                // Derive metadata keys bare clap leaf names; path-qualified
+                // ambiguous tools still match on the leaf segment.
+                let leaf = name
+                    .rsplit(crate::AMBIGUOUS_TOOL_PATH_SEPARATOR)
+                    .next()
+                    .unwrap_or(name);
+                leaf != name && set.contains(leaf)
+            }
         }
     }
 
