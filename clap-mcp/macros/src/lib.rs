@@ -784,39 +784,41 @@ fn build_args_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
 /// Parses #[clap_mcp(skip_root_when_subcommands)] from root struct attributes.
 /// When present on a struct root with a subcommand, the root is excluded from the MCP tool list.
 fn has_clap_mcp_skip_root_when_subcommands(attrs: &[syn::Attribute]) -> bool {
-    for attr in attrs {
-        if !attr.path().is_ident("clap_mcp") {
-            continue;
-        }
-        let mut found = false;
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("skip_root_when_subcommands") {
-                found = true;
-            }
-            Ok(())
-        });
-        if found {
-            return true;
-        }
-    }
-    false
+    clap_mcp_attr_has_flag(attrs, "skip_root_when_subcommands")
 }
 
 /// Parses #[clap_mcp(leaves_only)] — omit intermediate (non-leaf) commands from tools/list.
 fn has_clap_mcp_leaves_only(attrs: &[syn::Attribute]) -> bool {
+    clap_mcp_attr_has_flag(attrs, "leaves_only")
+}
+
+/// True when any `#[clap_mcp(...)]` list contains the bare (or valued) flag `name`.
+///
+/// Consumes `= value` on every nested meta so later flags remain visible (for example
+/// `#[clap_mcp(parallel_safe = false, leaves_only)]`). Does not discard parse errors
+/// before checking whether the flag was seen.
+fn clap_mcp_attr_has_flag(attrs: &[syn::Attribute], name: &str) -> bool {
     for attr in attrs {
         if !attr.path().is_ident("clap_mcp") {
             continue;
         }
         let mut found = false;
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("leaves_only") {
+        let parse_result = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident(name) {
+                if meta.input.peek(syn::token::Eq) {
+                    let _: Expr = meta.value()?.parse()?;
+                }
                 found = true;
+            } else if meta.input.peek(syn::token::Eq) {
+                let _: Expr = meta.value()?.parse()?;
             }
             Ok(())
         });
-        if found {
-            return true;
+        match parse_result {
+            Ok(()) if found => return true,
+            Ok(()) => {}
+            Err(_) if found => return true,
+            Err(_) => {}
         }
     }
     false

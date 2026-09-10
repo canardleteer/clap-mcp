@@ -4,7 +4,8 @@ use clap::{Parser, Subcommand};
 use clap_mcp::{ClapMcp, ClapMcpSchemaMetadataProvider};
 
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(skip_root_when_subcommands, leaves_only)]
+#[clap_mcp(reinvocation_safe = false, parallel_safe = false, leaves_only)]
+#[clap_mcp(skip_root_when_subcommands)]
 #[clap_mcp_output_from = "run"]
 #[command(name = "leaves-only-pass", subcommand_required = true)]
 struct Cli {

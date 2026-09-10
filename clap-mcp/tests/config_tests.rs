@@ -236,8 +236,12 @@ struct TestRootSkipWhenSubcommands {
 
 // Nested parents omitted from tools/list via #[clap_mcp(leaves_only)]
 #[derive(Debug, Parser, ClapMcp)]
-#[clap_mcp(reinvocation_safe, parallel_safe = false)]
-#[clap_mcp(skip_root_when_subcommands, leaves_only)]
+#[clap_mcp(
+    reinvocation_safe,
+    parallel_safe = false,
+    skip_root_when_subcommands,
+    leaves_only
+)]
 #[clap_mcp_output_from = "run_leaves_only"]
 #[command(name = "test-leaves-only", subcommand_required = true)]
 struct TestLeavesOnly {

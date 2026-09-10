@@ -12,9 +12,10 @@ object-shaped schemas without a type (common for schemars open types) are
 coerced to `"type": "object"` and may gain `"additionalProperties": true`.
 `oneOf` / `anyOf` / `allOf` without an object type are kept only when every
 branch is object-compatible after resolving local `$ref` targets in `$defs` /
-`definitions` (cycles and non-object targets omit the schema). Prefer a
-concrete `JsonSchema` response type over open JSON values. See
-[tool-output.md](tool-output.md).
+`definitions` (JSON Pointer escapes, cycles, and non-object targets omit the
+schema). Type unions such as `["object","null"]` are omitted rather than
+narrowed to `"object"`. Prefer a concrete `JsonSchema` response type over open
+JSON values. See [tool-output.md](tool-output.md).
 
 ## After 0.1.0 — `leaves_only`
 
@@ -35,7 +36,7 @@ struct update syntax:
 ```rust
 root: ClapCommand {
     subcommands: leaves,
-    ..native.root
+    ..existing.root
 },
 ```
 

@@ -1610,11 +1610,12 @@ pub(crate) fn tool_task_eligible(tool_name: &str, metadata: &ClapMcpSchemaMetada
 ///
 /// Policy:
 /// * Keep schemas whose `"type"` is already `"object"`.
-/// * Omit schemas whose `"type"` is present and not `"object"` (for example string
-///   or array schemas).
+/// * Omit schemas whose `"type"` is present and not solely `"object"` (for example
+///   `"string"`, or type unions such as `["object","null"]` from `Option<Map<…>>`).
 /// * When `"type"` is absent and the schema uses `oneOf` / `anyOf` / `allOf`, keep
 ///   only if every branch is itself object-compatible (local `$ref` targets are
-///   resolved via `$defs` / `definitions` with cycle detection); otherwise omit.
+///   resolved via `$defs` / `definitions` with JSON Pointer decoding and cycle
+///   detection); otherwise omit.
 /// * Bare `$ref` roots are kept only when the resolved target is object-compatible.
 /// * When `"type"` is absent otherwise, set `"type": "object"`. Open schemas without
 ///   `properties` / `oneOf` / `anyOf` / `allOf` / `$ref` also get
@@ -1633,7 +1634,10 @@ pub fn sanitize_mcp_output_schema(
     match obj.get("type") {
         Some(serde_json::Value::String(t)) if t == "object" => Some(obj),
         Some(serde_json::Value::Array(types)) => {
-            if types.iter().any(|v| v.as_str() == Some("object")) {
+            // Require every type token to be "object". Unions like
+            // ["object","null"] (Option<Map<…>>) must not be narrowed to object —
+            // AsStructured(None) still emits null.
+            if !types.is_empty() && types.iter().all(|v| v.as_str() == Some("object")) {
                 obj.insert("type".into(), serde_json::json!("object"));
                 Some(obj)
             } else {
@@ -1705,7 +1709,9 @@ fn schema_is_object_compatible(
     }
     match obj.get("type") {
         Some(serde_json::Value::String(t)) => t == "object",
-        Some(serde_json::Value::Array(types)) => types.iter().any(|v| v.as_str() == Some("object")),
+        Some(serde_json::Value::Array(types)) => {
+            !types.is_empty() && types.iter().all(|v| v.as_str() == Some("object"))
+        }
         Some(_) => false,
         None => {
             for key in ["oneOf", "anyOf", "allOf"] {
@@ -1724,6 +1730,7 @@ fn schema_is_object_compatible(
 }
 
 /// Resolve `#/$defs/Name` or `#/definitions/Name` against the root schema object.
+/// Segment names use JSON Pointer escaping (`~1` → `/`, `~0` → `~`).
 fn resolve_local_schema_ref<'a>(
     reference: &str,
     root: &'a serde_json::Map<String, serde_json::Value>,
@@ -1732,7 +1739,8 @@ fn resolve_local_schema_ref<'a>(
     let mut cur = root;
     let mut last: Option<&serde_json::Value> = None;
     for segment in path.split('/') {
-        let next = cur.get(segment)?;
+        let decoded = decode_json_pointer_segment(segment);
+        let next = cur.get(&decoded)?;
         last = Some(next);
         match next.as_object() {
             Some(map) => cur = map,
@@ -1743,6 +1751,12 @@ fn resolve_local_schema_ref<'a>(
         }
     }
     last
+}
+
+/// Decode one JSON Pointer path segment (RFC 6901).
+fn decode_json_pointer_segment(segment: &str) -> String {
+    // Order matters: unescape `/` (`~1`) before `~` (`~0`).
+    segment.replace("~1", "/").replace("~0", "~")
 }
 
 /// Builds a JSON schema for a single type. Used by the derive macro when `#[clap_mcp_output_type = "T"]` is set.
@@ -6176,6 +6190,14 @@ mod tests {
         assert!(sanitize_mcp_output_schema(json!({ "type": "string" })).is_none());
         assert!(sanitize_mcp_output_schema(json!({ "type": "array" })).is_none());
         assert!(sanitize_mcp_output_schema(json!("not-an-object")).is_none());
+        // Option<BTreeMap<…>> / nullable object — do not narrow to type:object.
+        assert!(
+            sanitize_mcp_output_schema(json!({
+                "type": ["object", "null"],
+                "additionalProperties": { "type": "string" }
+            }))
+            .is_none()
+        );
     }
 
     #[test]
@@ -6261,6 +6283,26 @@ mod tests {
             object_refs.get("type").and_then(|v| v.as_str()),
             Some("object")
         );
+
+        // Schemars names with `/` or `~` use JSON Pointer escapes in $ref.
+        let escaped = sanitize_mcp_output_schema(json!({
+            "oneOf": [
+                { "$ref": "#/$defs/With~1Slash" },
+                { "$ref": "#/$defs/With~0Tilde" }
+            ],
+            "$defs": {
+                "With/Slash": {
+                    "type": "object",
+                    "properties": { "x": { "type": "string" } }
+                },
+                "With~Tilde": {
+                    "type": "object",
+                    "properties": { "y": { "type": "integer" } }
+                }
+            }
+        }))
+        .expect("escaped $defs names");
+        assert_eq!(escaped.get("type").and_then(|v| v.as_str()), Some("object"));
     }
 
     #[test]

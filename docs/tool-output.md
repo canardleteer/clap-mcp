@@ -159,10 +159,10 @@ schemas without a type get `"type": "object"` (and
 `"additionalProperties": true` when they have no `properties` / `$ref`);
 `oneOf` / `anyOf` / `allOf` roots are kept only when every branch is
 object-compatible after resolving local `$defs` / `definitions` references
-(otherwise omitted, so string/array unions and non-object `$ref` targets are
-not advertised as impossible `type: object` schemas); schemas with a
-non-object `"type"` are omitted from `tools/list` instead of breaking clients
-that reject the whole tool list.
+(JSON Pointer `~0` / `~1` escapes included). Type unions that mix `object`
+with other tokens (for example `["object","null"]` from `Option<Map<…>>`) are
+omitted rather than narrowed. Non-object `"type"` values are omitted from
+`tools/list` instead of breaking clients that reject the whole tool list.
 
 Excerpt (requires `features = ["output-schema"]` and `JsonSchema` on the type):
 
