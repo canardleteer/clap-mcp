@@ -464,7 +464,13 @@ roots without `#[command(name)]`, flatten merges key metadata under clap's live
 root name (same remap as direct fields). Typed argument metadata applies from
 the command that declared the argument; a child-declared global string `--id`
 does not inherit a root non-global integer `--id` after `Command::build()`.
-Root globals still appear on descendant leaf tools. Clap `hide` does not remove
+A child-local same-id arg (including an explicit custom `value_parser` such as
+lexical `8MiB`) does not inherit a parent global's typed metadata even when clap
+keeps the child's definition instead of propagating the global. Root globals
+still appear on descendant leaf tools that only inherit the copied global.
+Flatten numeric forward requires `#[clap_mcp(args_metadata)]` on the flatten
+field; ordinary flattened `Args` stay fine next to `serialized = "..."` on a
+local arg. Clap `hide` does not remove
 MCP tools (use `#[clap_mcp(skip)]`). Clap's auto-generated `help` subcommand is
 omitted from the MCP catalog even when you pass an already-`build()`'d
 `Command`; keep an application `help` tool only with

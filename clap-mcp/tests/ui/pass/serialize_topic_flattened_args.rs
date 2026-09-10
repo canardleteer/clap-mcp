@@ -19,6 +19,7 @@ enum Cli {
     #[clap_mcp(serialized = "output")]
     Flush {
         #[command(flatten)]
+        #[clap_mcp(args_metadata)]
         args: TopicArgs,
     },
 }

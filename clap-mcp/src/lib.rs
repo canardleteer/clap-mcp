@@ -3470,15 +3470,22 @@ fn command_to_schema_with_metadata(
 /// Command that introduced `arg_id` along `path` (root → … → self).
 ///
 /// After `Command::build()`, globals are copied onto descendants. Walk from self
-/// toward root and stop at the nearest command that has the arg where the parent
-/// either lacks it or only has a non-global same-id arg (not a propagation source).
+/// toward root. A non-global arg on the current command is always an ownership
+/// boundary: clap skips propagating a parent global when the child already
+/// defines the same id, so the child's definition (including custom
+/// `value_parser`s) must not inherit the parent's typed metadata.
 fn defining_arg_owner<'a>(path: &[&'a Command], arg_id: &str) -> Option<&'a Command> {
     for i in (0..path.len()).rev() {
         let cmd = path[i];
-        if !cmd.get_arguments().any(|a| a.get_id() == arg_id) {
+        let Some(local) = cmd.get_arguments().find(|a| a.get_id() == arg_id) else {
             continue;
-        }
+        };
         if i == 0 {
+            return Some(cmd);
+        }
+        // Propagated copies keep `is_global_set()`; a child-local override usually
+        // does not. Stop here so lexical parsers stay `"string"` in the catalog.
+        if !local.is_global_set() {
             return Some(cmd);
         }
         let parent = path[i - 1];

@@ -1332,6 +1332,7 @@ enum TestNestedFlattenSerializeTopic {
     #[clap_mcp(serialized = "output")]
     Flush {
         #[command(flatten)]
+        #[clap_mcp(args_metadata)]
         args: FlushTopicArgs,
     },
 }
@@ -1354,6 +1355,7 @@ struct InnerTopicArgs {
 #[clap_mcp(args_metadata)]
 struct OuterTopicArgs {
     #[command(flatten)]
+    #[clap_mcp(args_metadata)]
     inner: InnerTopicArgs,
 }
 
@@ -1365,6 +1367,7 @@ enum TestTwoLevelFlattenSerializeTopic {
     #[clap_mcp(serialized = "topic")]
     Run {
         #[command(flatten)]
+        #[clap_mcp(args_metadata)]
         args: OuterTopicArgs,
     },
 }
@@ -1393,11 +1396,13 @@ enum TestSharedArgsSerializeTopic {
     #[clap_mcp(serialized = "key")]
     Alpha {
         #[command(flatten)]
+        #[clap_mcp(args_metadata)]
         shared: SharedTopicArgs,
     },
     #[clap_mcp(serialized = "key")]
     Beta {
         #[command(flatten)]
+        #[clap_mcp(args_metadata)]
         shared: SharedTopicArgs,
     },
 }
@@ -2648,6 +2653,139 @@ fn test_child_declared_global_string_id_does_not_inherit_root_integer() {
             "{name}: child-declared global string --id must not inherit root integer: {props:?}"
         );
     }
+}
+
+#[test]
+fn test_child_local_size_override_does_not_inherit_root_global_integer() {
+    fn parse_mib(s: &str) -> Result<u64, String> {
+        s.strip_suffix("MiB")
+            .unwrap_or(s)
+            .parse()
+            .map_err(|e: std::num::ParseIntError| e.to_string())
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_size_override"]
+    #[command(name = "test-size-override", subcommand_required = true)]
+    struct TestSizeOverride {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: SizeOverrideCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum SizeOverrideCmd {
+        Measure {
+            /// Lexical parser (`8MiB`); must stay string despite root global u64.
+            #[arg(long, value_parser = parse_mib)]
+            size: u64,
+        },
+    }
+
+    fn run_size_override(_: TestSizeOverride) -> String {
+        "ok".into()
+    }
+
+    assert!(
+        TestSizeOverride::command()
+            .try_get_matches_from(["test-size-override", "measure", "--size", "8MiB"])
+            .is_ok(),
+        "native clap must accept lexical --size on the child override"
+    );
+
+    let metadata = TestSizeOverride::clap_mcp_schema_metadata();
+    for built in [false, true] {
+        let mut cmd = TestSizeOverride::command();
+        if built {
+            cmd.build();
+        }
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let measure = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "measure")
+            .expect("measure");
+        let props = measure
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("props");
+        assert_eq!(
+            props
+                .get("size")
+                .and_then(|p| p.get("type"))
+                .and_then(|t| t.as_str()),
+            Some("string"),
+            "built={built}: child lexical --size must not inherit root global integer: {props:?}"
+        );
+    }
+}
+
+#[test]
+fn test_serialized_local_arg_with_plain_flatten_options_compiles() {
+    mod shared {
+        use clap::Args;
+
+        #[derive(Debug, Args)]
+        pub struct Options {
+            #[arg(long)]
+            pub verbose: bool,
+        }
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = true, parallel_safe = true)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_serialized_plain_flat"]
+    #[command(name = "test-serialized-plain-flat", subcommand_required = true)]
+    enum TestSerializedPlainFlat {
+        #[clap_mcp(serialized = "id")]
+        Flush {
+            #[arg(long)]
+            id: String,
+            #[command(flatten)]
+            options: shared::Options,
+        },
+    }
+
+    fn run_serialized_plain_flat(_: TestSerializedPlainFlat) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestSerializedPlainFlat::clap_mcp_schema_metadata();
+    assert!(
+        matches!(
+            metadata.serialize_tools.get("flush"),
+            Some(ClapMcpSerializeScope::Args(ids)) if ids.iter().any(|s| s == "id")
+        ),
+        "serialized = \"id\" must remain on flush: {:?}",
+        metadata.serialize_tools
+    );
+    let schema = schema_from_command_with_metadata(&TestSerializedPlainFlat::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(
+        &schema,
+        &ClapMcpConfig {
+            reinvocation_safe: true,
+            parallel_safe: true,
+            ..Default::default()
+        },
+        &metadata,
+    );
+    let flush = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "flush")
+        .expect("flush");
+    let props = flush
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert!(props.contains_key("id"), "{props:?}");
+    assert!(props.contains_key("verbose"), "{props:?}");
 }
 
 #[test]

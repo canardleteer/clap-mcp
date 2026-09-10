@@ -2449,10 +2449,6 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         }
                     }
                 }
-                let variant_has_serialized_args = matches!(
-                    get_clap_mcp_serialized(&v.attrs),
-                    Some(ClapMcpSerialized::Args(_))
-                );
                 if let Some(serialized) = get_clap_mcp_serialized(&v.attrs) {
                     serialize_tools.insert(cmd_name.clone(), serialized);
                 }
@@ -2488,15 +2484,12 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         let flat_ty = inner_type_if_option(&f.ty).unwrap_or(&f.ty).clone();
                         // `ClapMcpFlattenArgsTopics` exists only on Args with
                         // `#[clap_mcp(args_metadata)]`. Opt in on the flatten field
-                        // (or when the variant already uses serialize_topic). Do not
-                        // gate on `flattened_type_kind` — relative paths like
-                        // `shared::Options` fail that heuristic and would silently skip.
-                        if has_clap_mcp_args_metadata(&f.attrs) || variant_has_serialized_args {
+                        // only — do not require the trait because the variant uses
+                        // `serialized = "..."` on an unrelated local arg. Do not gate
+                        // on `flattened_type_kind` (relative paths like
+                        // `shared::Options` would silently skip).
+                        if has_clap_mcp_args_metadata(&f.attrs) {
                             flatten_args_json_type_cmds.push((cmd_name.clone(), flat_ty.clone()));
-                        }
-                        if variant_has_serialized_args
-                            && matches!(flattened_type_kind(&flat_ty), Ok(FlattenSkipKindTag::Args))
-                        {
                             flatten_serialize_topic_cmds.push((cmd_name.clone(), flat_ty));
                         }
                     }
