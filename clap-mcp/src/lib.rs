@@ -1250,10 +1250,12 @@ pub struct ClapMcpSchemaMetadata {
     /// Tool names whose per-tool `output_type` cannot be advertised after
     /// sanitization. These must not inherit [`Self::output_schema`].
     pub omit_tool_output_schemas: Vec<String>,
-    /// Per-command clap arg ids declared on that command by derive (direct fields
-    /// and flattened `Args`, not inherited globals). Used so a child-local
-    /// same-id field, including a custom `value_parser`, does not inherit a
-    /// parent global's JSON type.
+    /// Per-command clap arg ids declared on that command (direct fields and
+    /// flattened `Args`, not inherited globals or `from_global`). Used so a
+    /// child-local same-id field, including a custom `value_parser`, does not
+    /// inherit a parent global's JSON type. Derive remaps struct-root keys to
+    /// clap's live command name. Imperative same-id **global** overrides use
+    /// [`Self::with_declared_arg_id`].
     pub declared_arg_ids: std::collections::HashMap<String, Vec<String>>,
     /// Per-command argument JSON Schema scalar types for MCP `inputSchema`
     /// (`"integer"`, `"number"`, or `"string"`). Keyed by command name
@@ -1386,6 +1388,24 @@ impl ClapMcpSchemaMetadata {
             .entry(command_name.into())
             .or_default()
             .insert(arg_id.into(), json_type.into());
+        self
+    }
+
+    /// Record that `command_name` declares `arg_id` (not an inherited global).
+    ///
+    /// Use this when a hand-built child **redeclares** a parent id, especially
+    /// a global with a different `value_parser`. A child-local (non-global)
+    /// same id is already a boundary. Key `command_name` with clap's live
+    /// command name.
+    pub fn with_declared_arg_id(
+        mut self,
+        command_name: impl Into<String>,
+        arg_id: impl Into<String>,
+    ) -> Self {
+        self.declared_arg_ids
+            .entry(command_name.into())
+            .or_default()
+            .push(arg_id.into());
         self
     }
 
@@ -3562,12 +3582,50 @@ pub fn schema_from_command_with_metadata(
     cmd: &Command,
     metadata: &ClapMcpSchemaMetadata,
 ) -> ClapSchema {
+    let mut working = metadata.clone();
+    if working.declared_arg_ids.is_empty() && !command_tree_already_built(cmd) {
+        merge_unbuilt_declared_arg_ids(cmd, &mut working.declared_arg_ids);
+    }
     let mut built = cmd.clone();
     built.build();
     let skip_commands: std::collections::HashSet<_> =
-        metadata.skip_commands.iter().cloned().collect();
+        working.skip_commands.iter().cloned().collect();
     ClapSchema {
-        root: command_to_schema_with_metadata(&built, metadata, &skip_commands, &[]),
+        root: command_to_schema_with_metadata(&built, &working, &skip_commands, &[]),
+    }
+}
+
+fn command_tree_already_built(cmd: &Command) -> bool {
+    let parent_globals: Vec<String> = cmd
+        .get_arguments()
+        .filter(|a| a.is_global_set())
+        .map(|a| a.get_id().as_str().to_string())
+        .collect();
+    let child_has_parent_global = cmd.get_subcommands().any(|sub| {
+        parent_globals.iter().any(|id| {
+            sub.get_arguments()
+                .any(|a| a.get_id() == id.as_str() && a.is_global_set())
+        })
+    });
+    child_has_parent_global || cmd.get_subcommands().any(command_tree_already_built)
+}
+
+fn merge_unbuilt_declared_arg_ids(
+    cmd: &Command,
+    declared: &mut std::collections::HashMap<String, Vec<String>>,
+) {
+    let ids: Vec<String> = cmd
+        .get_arguments()
+        .map(|a| a.get_id().as_str().to_string())
+        .collect();
+    if !ids.is_empty() {
+        declared
+            .entry(cmd.get_name().to_string())
+            .or_default()
+            .extend(ids);
+    }
+    for sub in cmd.get_subcommands() {
+        merge_unbuilt_declared_arg_ids(sub, declared);
     }
 }
 
@@ -3652,6 +3710,10 @@ fn clap_arg_is_global(cmd: &Command, arg_id: &str) -> bool {
         .is_some_and(|a| a.is_global_set())
 }
 
+fn clap_arg_is_inherited_copy(cmd: &Command, arg_id: &str) -> bool {
+    clap_arg_is_global(cmd, arg_id)
+}
+
 fn ancestor_arg_value_json_type<'a>(
     metadata: &'a ClapMcpSchemaMetadata,
     ancestor_name: &str,
@@ -3686,41 +3748,37 @@ fn lookup_arg_value_json_type<'a>(
         return Some(ty);
     }
 
-    // A local declaration (direct or flattened) owns this id. Same-id ancestors
-    // are not owners. Do not use clap Debug to guess ownership.
+    // A local declaration (direct, flattened, or imperative) owns this id.
+    // Same-id ancestors are not owners. Do not use clap Debug.
     if command_declares_arg(metadata, command_name, arg_id) {
         return None;
     }
 
-    let any_declared = !metadata.declared_arg_ids.is_empty();
-    if any_declared {
-        // Inherit only when this command's arg is a propagated global copy of
-        // an ancestor that declared a global with the same id. A non-global
-        // ancestor declaration does not own a descendant's --size.
-        let self_cmd = *path.last()?;
-        if !clap_arg_is_global(self_cmd, arg_id) {
-            return None;
-        }
-        for ancestor in path.iter().rev().skip(1) {
-            let ancestor_name = ancestor.get_name();
-            if !command_declares_arg(metadata, ancestor_name, arg_id) {
-                continue;
-            }
-            if !clap_arg_is_global(ancestor, arg_id) {
-                continue;
-            }
-            return ancestor_arg_value_json_type(metadata, ancestor_name, arg_id);
-        }
+    let self_cmd = *path.last()?;
+    // Child-local (non-global) same id is a boundary even when the
+    // declaration map is empty. `from_global` is not a declaration in derive
+    // metadata; inherit when clap marks the arg global.
+    if !clap_arg_is_inherited_copy(self_cmd, arg_id) {
         return None;
     }
 
-    // Imperative trees have no derive declaration map. Inherit only from a
-    // parent that actually set the arg global (307bc03 `is_global_set` shape).
     for ancestor in path.iter().rev().skip(1) {
+        let ancestor_name = ancestor.get_name();
+        if !command_declares_arg(metadata, ancestor_name, arg_id) {
+            continue;
+        }
         if !clap_arg_is_global(ancestor, arg_id) {
             continue;
         }
-        return ancestor_arg_value_json_type(metadata, ancestor.get_name(), arg_id);
+        return ancestor_arg_value_json_type(metadata, ancestor_name, arg_id);
+    }
+
+    // Hand-built trees: skip intermediate copies with no typed metadata and
+    // trace to the ancestor that actually recorded the type.
+    for ancestor in path.iter().rev().skip(1) {
+        if let Some(ty) = ancestor_arg_value_json_type(metadata, ancestor.get_name(), arg_id) {
+            return Some(ty);
+        }
     }
     None
 }

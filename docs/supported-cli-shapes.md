@@ -32,6 +32,7 @@ and shapes that are intentionally out of scope. Runnable binaries are listed in
 | Interactive / TTY / exec | `skip` | [Execution safety — Interactive](execution-safety.md#interactive-and-session-commands) | Not an MCP tool |
 | Cross-tool locking | `Mutex` / stateful / `parallel_safe = false` | [Execution safety — Cross-tool](execution-safety.md#cross-tool-serialization) | No lock-group attribute |
 | ArgGroup hints (not schema `oneOf`) | clap `#[group]` / `.group()`; `meta.clapMcp.argGroups` + description suffix | `arg_group_hints` | Advisory; parse-time enforcement only |
+| `#[arg(from_global)]` | Inherit the owning global's advertised type | `test_from_global_does_not_infer_integer_over_lexical_root` | Not a new declaration or numeric inference; custom root parsers stay `"string"` |
 
 ## Flat struct tradeoff
 

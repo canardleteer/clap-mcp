@@ -462,16 +462,23 @@ attribute. Ordinary flattened `Args` (no MCP metadata) stay fine next to
 `serialized = "..."` on a local arg. Forwarding does not depend on how you
 spell the flattened type path (`shared::Options` and `crate::shared::Options`
 both work). On struct `Parser` roots without `#[command(name)]`, flatten merges
-key metadata under clap's live root name (same remap as direct fields). Typed
+and direct `declared_arg_ids` use clap's live root name (same remap as typed
+fields). Typed
 argument metadata applies from the command that owns the argument. Direct
 fields and flattened `Args` (ordinary helpers and `args_metadata`) count as
-declarations. A child-local same-id arg, global or not, including an explicit
-custom `value_parser` such as lexical `8MiB`, does not inherit a parent
+declarations. `#[arg(from_global)]` is inheritance, not a new declaration or
+parser. A child-local same-id arg, including an explicit custom
+`value_parser` such as lexical `8MiB`, does not inherit a parent
 global's typed metadata. A non-global ancestor with the same id is not an
 owner. Descendants that inherit that child's global keep the child's type.
-Ownership is the declaration map plus whether clap copied a parent global,
-not clap Debug. Root globals still appear on descendant leaf tools that only
-inherit the copied root global. Clap `hide` does not remove
+Ownership is the declaration map plus whether clap copied a parent global
+or `from_global`, not clap Debug. Intermediate global copies without
+metadata are not owners. Imperative builders set types with
+`with_arg_value_json_type` on the owning command and
+`with_declared_arg_id` when a child redeclares a **global** id. A
+child-local (non-global) same id is already a boundary. Root globals still
+appear on descendant leaf tools that only inherit the copied root global.
+Clap `hide` does not remove
 MCP tools (use `#[clap_mcp(skip)]`). Clap's auto-generated `help` subcommand is
 omitted from the MCP catalog even when you pass an already-`build()`'d
 `Command`; keep an application `help` tool only with

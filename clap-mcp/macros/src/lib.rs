@@ -849,6 +849,26 @@ fn drain_clap_mcp_nested_meta(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Res
     Ok(())
 }
 
+fn field_has_arg_from_global(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("arg") {
+            continue;
+        }
+        let mut found = false;
+        if let Ok(()) = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("from_global") {
+                found = true;
+            }
+            drain_clap_mcp_nested_meta(&meta)?;
+            Ok(())
+        }) && found
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn field_has_explicit_value_parser(attrs: &[syn::Attribute]) -> bool {
     for attr in attrs {
         if !attr.path().is_ident("arg") {
@@ -1227,6 +1247,11 @@ fn record_field_arg_value_json_type(
     field_ty: &Type,
 ) -> syn::Result<()> {
     if field_has_command_subcommand(field_attrs) || field_has_command_flatten(field_attrs) {
+        return Ok(());
+    }
+    // `from_global` is inheritance, not a new parser. Infer only when the
+    // author sets an explicit input_type on this field.
+    if field_has_arg_from_global(field_attrs) && get_clap_mcp_input_type(field_attrs)?.is_none() {
         return Ok(());
     }
     if let Some(explicit) = get_clap_mcp_input_type(field_attrs)? {
@@ -2275,19 +2300,37 @@ fn quote_arg_value_json_type_entries(
 fn quote_declared_arg_id_entries(
     map_ident: &syn::Ident,
     declared_arg_ids: &std::collections::HashMap<String, Vec<String>>,
+    root_ty: &syn::Ident,
+    compile_time_root: &str,
+    remap_live_root: bool,
 ) -> proc_macro2::TokenStream {
     let entries = declared_arg_ids.iter().map(|(k, ids)| {
-        let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
         let id_lits = ids.iter().map(|s| {
             let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
             quote! { #lit.to_string() }
         });
-        quote! {
-            #map_ident
-                .declared_arg_ids
-                .entry(#k_lit.to_string())
-                .or_default()
-                .extend([#(#id_lits),*]);
+        if remap_live_root && k == compile_time_root {
+            quote! {
+                {
+                    let __clap_mcp_root = <#root_ty as ::clap::CommandFactory>::command()
+                        .get_name()
+                        .to_string();
+                    #map_ident
+                        .declared_arg_ids
+                        .entry(__clap_mcp_root)
+                        .or_default()
+                        .extend([#(#id_lits),*]);
+                }
+            }
+        } else {
+            let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+            quote! {
+                #map_ident
+                    .declared_arg_ids
+                    .entry(#k_lit.to_string())
+                    .or_default()
+                    .extend([#(#id_lits),*]);
+            }
         }
     });
     quote! { #(#entries)* }
@@ -2566,6 +2609,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     }
                     if !field_has_command_flatten(&f.attrs)
                         && !field_has_command_subcommand(&f.attrs)
+                        && !field_has_arg_from_global(&f.attrs)
                     {
                         declared_arg_ids
                             .entry(cmd_name.clone())
@@ -2652,7 +2696,10 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         .or_default()
                         .push(req_id);
                 }
-                if !field_has_command_flatten(&f.attrs) && !field_has_command_subcommand(&f.attrs) {
+                if !field_has_command_flatten(&f.attrs)
+                    && !field_has_command_subcommand(&f.attrs)
+                    && !field_has_arg_from_global(&f.attrs)
+                {
                     declared_arg_ids
                         .entry(root_name.clone())
                         .or_default()
@@ -2809,6 +2856,9 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         let declared_arg_id_entries = quote_declared_arg_id_entries(
                             &quote::format_ident!("local"),
                             &declared_arg_ids,
+                            name,
+                            &root_name,
+                            true,
                         );
                         let arg_value_json_type_entries = quote_arg_value_json_type_entries(
                             &quote::format_ident!("local"),
@@ -3016,8 +3066,13 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     });
     let enum_root_name = get_command_name(&input.attrs, name);
     let remap_live_root = matches!(&input.data, syn::Data::Struct(_));
-    let declared_arg_id_entries =
-        quote_declared_arg_id_entries(&quote::format_ident!("m"), &declared_arg_ids);
+    let declared_arg_id_entries = quote_declared_arg_id_entries(
+        &quote::format_ident!("m"),
+        &declared_arg_ids,
+        name,
+        &enum_root_name,
+        remap_live_root,
+    );
     let arg_value_json_type_entries = quote_arg_value_json_type_entries(
         &quote::format_ident!("m"),
         &arg_value_json_types,

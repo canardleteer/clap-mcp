@@ -3947,14 +3947,9 @@ fn test_imperative_declared_arg_id_blocks_parent_integer() {
             Command::new("measure")
                 .arg(Arg::new("size").long("size").value_parser(parse_mib_token)),
         );
-    let mut metadata = ClapMcpSchemaMetadata::default().with_arg_value_json_type(
-        "test-imp-decl-size",
-        "size",
-        "integer",
-    );
-    metadata
-        .declared_arg_ids
-        .insert("measure".into(), vec!["size".into()]);
+    let metadata = ClapMcpSchemaMetadata::default()
+        .with_arg_value_json_type("test-imp-decl-size", "size", "integer")
+        .with_declared_arg_id("measure", "size");
 
     assert_clap_accepts(
         cmd.clone(),
@@ -3981,4 +3976,208 @@ fn test_imperative_empty_declaration_map_inherits_parent_global_integer() {
         "integer",
     );
     assert_tool_arg_type_fresh_and_built(|| cmd.clone(), &metadata, "run", "workers", "integer");
+}
+
+#[test]
+fn test_unnamed_struct_root_global_workers_integer_on_descendants() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_unnamed_workers"]
+    #[command(subcommand_required = true)]
+    struct TestUnnamedWorkersRoot {
+        #[arg(long, global = true)]
+        workers: Option<u32>,
+        #[command(subcommand)]
+        command: UnnamedWorkersTop,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum UnnamedWorkersTop {
+        Parent {
+            #[command(subcommand)]
+            command: UnnamedWorkersLeaf,
+        },
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum UnnamedWorkersLeaf {
+        Run,
+    }
+
+    fn run_unnamed_workers(_: TestUnnamedWorkersRoot) -> String {
+        "ok".into()
+    }
+
+    let live_root = TestUnnamedWorkersRoot::command().get_name().to_string();
+    assert_ne!(
+        live_root, "test-unnamed-workers-root",
+        "regression requires clap live name != Rust kebab: {live_root}"
+    );
+    let metadata = TestUnnamedWorkersRoot::clap_mcp_schema_metadata();
+    assert!(
+        metadata
+            .declared_arg_ids
+            .get(&live_root)
+            .is_some_and(|ids| ids.iter().any(|id| id == "workers")),
+        "direct declarations must key by live clap root ({live_root}): {:?}",
+        metadata.declared_arg_ids
+    );
+    assert_clap_accepts(
+        TestUnnamedWorkersRoot::command(),
+        &[&live_root, "parent", "run", "--workers", "4"],
+        "native clap must accept numeric --workers on the grandchild",
+    );
+    for tool in ["parent", "run"] {
+        assert_tool_arg_type_fresh_and_built(
+            TestUnnamedWorkersRoot::command,
+            &metadata,
+            tool,
+            "workers",
+            "integer",
+        );
+    }
+}
+
+#[test]
+fn test_imperative_root_global_integer_survives_two_subcommand_levels() {
+    let cmd = Command::new("test-imp-two-level-workers")
+        .disable_help_subcommand(true)
+        .arg(
+            Arg::new("workers")
+                .long("workers")
+                .global(true)
+                .value_parser(clap::value_parser!(u32)),
+        )
+        .subcommand(Command::new("parent").subcommand(Command::new("leaf")));
+    let metadata = ClapMcpSchemaMetadata::default().with_arg_value_json_type(
+        "test-imp-two-level-workers",
+        "workers",
+        "integer",
+    );
+    assert_clap_accepts(
+        cmd.clone(),
+        &[
+            "test-imp-two-level-workers",
+            "parent",
+            "leaf",
+            "--workers",
+            "4",
+        ],
+        "native clap must accept numeric --workers two levels down",
+    );
+    for tool in ["parent", "leaf"] {
+        assert_tool_arg_type_fresh_and_built(|| cmd.clone(), &metadata, tool, "workers", "integer");
+    }
+}
+
+#[test]
+fn test_imperative_child_local_size_does_not_inherit_root_integer() {
+    let cmd = Command::new("test-imp-local-size")
+        .disable_help_subcommand(true)
+        .arg(
+            Arg::new("size")
+                .long("size")
+                .global(true)
+                .value_parser(clap::value_parser!(u64)),
+        )
+        .subcommand(
+            Command::new("measure")
+                .arg(Arg::new("size").long("size").value_parser(parse_mib_token)),
+        );
+    let metadata = ClapMcpSchemaMetadata::default().with_arg_value_json_type(
+        "test-imp-local-size",
+        "size",
+        "integer",
+    );
+    assert_clap_accepts(
+        cmd.clone(),
+        &["test-imp-local-size", "measure", "--size", "8MiB"],
+        "child-local lexical --size must accept 8MiB without declared_arg_ids",
+    );
+    assert_tool_arg_type_fresh_and_built(|| cmd.clone(), &metadata, "measure", "size", "string");
+}
+
+#[test]
+fn test_imperative_child_global_lexical_override_uses_declared_arg_id() {
+    let cmd = Command::new("test-imp-global-size")
+        .disable_help_subcommand(true)
+        .arg(
+            Arg::new("size")
+                .long("size")
+                .global(true)
+                .value_parser(clap::value_parser!(u64)),
+        )
+        .subcommand(
+            Command::new("measure").arg(
+                Arg::new("size")
+                    .long("size")
+                    .global(true)
+                    .value_parser(parse_mib_token),
+            ),
+        );
+    let metadata = ClapMcpSchemaMetadata::default()
+        .with_arg_value_json_type("test-imp-global-size", "size", "integer")
+        .with_declared_arg_id("measure", "size");
+    assert_clap_accepts(
+        cmd.clone(),
+        &["test-imp-global-size", "measure", "--size", "8MiB"],
+        "child-global lexical --size must accept 8MiB",
+    );
+    assert_tool_arg_type_fresh_and_built(|| cmd.clone(), &metadata, "measure", "size", "string");
+}
+
+#[test]
+fn test_from_global_does_not_infer_integer_over_lexical_root() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_from_global_size"]
+    #[command(name = "test-from-global-size", subcommand_required = true)]
+    struct TestFromGlobalSize {
+        #[arg(long, global = true, value_parser = parse_mib_token)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FromGlobalSizeCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FromGlobalSizeCmd {
+        Measure {
+            #[arg(from_global)]
+            size: Option<u64>,
+        },
+        Inspect,
+    }
+
+    fn run_from_global_size(_: TestFromGlobalSize) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFromGlobalSize::command(),
+        &["test-from-global-size", "measure", "--size", "8MiB"],
+        "from_global must keep the root lexical parser that accepts 8MiB",
+    );
+    let metadata = TestFromGlobalSize::clap_mcp_schema_metadata();
+    assert!(
+        !metadata
+            .declared_arg_ids
+            .get("measure")
+            .is_some_and(|ids| ids.iter().any(|id| id == "size")),
+        "from_global must not count as a declaration: {:?}",
+        metadata.declared_arg_ids
+    );
+    for tool in ["measure", "inspect"] {
+        assert_tool_arg_type_fresh_and_built(
+            TestFromGlobalSize::command,
+            &metadata,
+            tool,
+            "size",
+            "string",
+        );
+    }
 }
