@@ -297,6 +297,8 @@ fn main() -> Result<(), clap_mcp::ClapMcpError> {
 When logging is also configured with `with_log_rx`, application instructions
 appear verbatim first, followed by clap-mcp's logging guidance.
 
+Runnable demo: **server_metadata** in [examples/README.md](../examples/README.md).
+
 ### Tool annotations
 
 Annotate tools declaratively on derive variants or imperatively by tool name:
@@ -448,7 +450,53 @@ advertised default changes.
 
 Tool `inputSchema` properties mirror clap actions (`boolean` for `SetTrue` /
 `SetFalse`, enums for `value_parser` lists, defaults, cardinality, and closed
-objects). Boolean flags do **not** advertise string `enum` values. Conflicts,
+objects). Integer and floating clap value parsers advertise JSON Schema
+`"integer"` or `"number"` when derive infers them from a plain numeric field
+type, or when you set `#[clap_mcp(input_type = "...")]` /
+`ClapMcpSchemaMetadata::with_arg_value_json_type`. Imperative `Command` builders
+must set numeric types with `with_arg_value_json_type`; derive inference does not
+apply to hand-built schemas. Flattened `Args` forward `input_type` / inferred
+types and `serialize_topic` bindings when the helper type uses
+`#[clap_mcp(args_metadata)]`. The flatten field does not need to repeat that
+attribute. Ordinary flattened `Args` (no MCP metadata) stay fine next to
+`serialized = "..."` on a local arg. Forwarding does not depend on how you
+spell the flattened type path (`shared::Options` and `crate::shared::Options`
+both work). On struct `Parser` roots without `#[command(name)]`, flatten merges
+and direct `declared_arg_ids` use clap's live root name (same remap as typed
+fields). Typed
+argument metadata applies from the command that owns the argument. Direct
+fields and flattened `Args` (ordinary helpers and `args_metadata`) count as
+declarations. `#[arg(from_global)]` is inheritance, not a new declaration or
+parser. A child-local same-id arg, including an explicit custom
+`value_parser` such as lexical `8MiB`, does not inherit a parent
+global's typed metadata. A non-global ancestor with the same id is not an
+owner. Descendants that inherit that child's global keep the child's type.
+Ownership is the declaration map plus whether clap copied a parent global
+or `from_global`, not clap Debug. Intermediate global copies without
+metadata are not owners. Imperative builders set types with
+`with_arg_value_json_type` on the owning command and
+`with_declared_arg_id` when a child redeclares a **global** id. A
+child-local (non-global) same id is already a boundary. Root globals still
+appear on descendant leaf tools that only inherit the copied root global.
+Clap `hide` does not remove
+MCP tools (use `#[clap_mcp(skip)]`). Clap's auto-generated `help` subcommand is
+omitted from the MCP catalog even when you pass an already-`build()`'d
+`Command`; keep an application `help` tool only with
+`disable_help_subcommand = true`. Custom parsers (any explicit clap
+`value_parser`) stay
+`"string"` unless you override. Schema extraction does not execute value parsers
+to guess types. Agents may pass JSON numbers;
+clap-mcp stringifies them when building argv, and integral floats such as
+`8080.0` become `"8080"` without saturating casts. Advertised defaults are
+coerced to the same JSON types (including `u64::MAX` and array item defaults).
+Values that cannot be represented as JSON numbers (for example `u128::MAX` or
+`inf`) omit `default` instead of advertising a string. Args whose value parser
+exposes possible values keep `"type": "string"` (and `enum` when those choices
+are not hidden), even when the parser maps those tokens onto an integer Rust
+type or `hide_possible_values` is set. Boolean flags
+do **not** advertise string `enum` values. Property descriptions append short
+action hints (for example `Set true to enable.`) rather than long flag
+tutorials. Conflicts,
 `requires`, `required_unless`, and required `ArgGroup`s use JSON Schema
 `if` / `then` / `anyOf` with `const: true` (or `const: false` for `SetFalse`)
 so `false` does not count as an active flag.
@@ -567,13 +615,20 @@ When `run` must see **global root flags** or other root fields, put
 `#[clap_mcp_output_from = "run"]` on the subcommand enum and delegate from the
 struct (default).
 
+For nested trees, `#[clap_mcp(schema_only)]` does not hide intermediate parents
+from `tools/list`. Use `#[clap_mcp(leaves_only)]` (often with
+`skip_root_when_subcommands`) so agents only see leaf tools. See
+[Execution safety — MCP tool list](execution-safety.md) and
+**nested_subcommands** in [examples/README.md](../examples/README.md).
+
 Full pattern and compilable example:
 [Execution safety — Dual derive](execution-safety.md#dual-derive--root-and-subcommand).
 Runnable binaries: **struct_subcommand_required** (subcommand `run`),
 **struct_subcommand_globals** (struct `run` with globals), **flat_struct_root**
 (single wide tool, no subcommand), **flatten_skip** (skip flatten + serialize_topic),
 **flatten_subcommand_skip_flat** / **flatten_subcommand_skip_nested** (skip flattened
-`Subcommand`) in [examples/README.md](../examples/README.md).
+`Subcommand`), **nested_subcommands** (`leaves_only`) in
+[examples/README.md](../examples/README.md).
 
 ## Related guides
 

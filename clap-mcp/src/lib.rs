@@ -1207,6 +1207,17 @@ pub struct ClapMcpSchemaMetadata {
     /// MCP tool list (only subcommands become tools). Use when the meaningful tools are
     /// the leaf subcommands (e.g. explain, compare, sort) and the root is rarely invoked.
     pub skip_root_command_when_subcommands: bool,
+    /// When `true`, only leaf commands become MCP tools. A leaf is a command that
+    /// had no nested subcommands in clap **before** `skip_commands` filtering
+    /// (`ClapCommand::had_subcommands` is false) **and** has no remaining children
+    /// after filtering (`subcommands` is empty). Intermediate parents whose only
+    /// children were skipped therefore stay hidden, and older serialized schemas
+    /// that omit `had_subcommands` still hide visibly nested parents. Does not
+    /// remove parents from the clap schema used for argv construction. Combine with
+    /// [`Self::skip_root_command_when_subcommands`] when the clap root should also
+    /// be excluded. Distinct from `#[clap_mcp(schema_only)]`, which skips executor
+    /// emit and does not hide tools.
+    pub leaves_only: bool,
     /// Subcommand tool names that may be invoked with MCP task-augmented `tools/call` when
     /// [`ClapMcpSchemaMetadata::task_augmented_tools`] is enabled. Populated by `#[clap_mcp(task)]` on
     /// enum variants. When **empty**, every tool is eligible for task augmentation (when enabled
@@ -1236,6 +1247,24 @@ pub struct ClapMcpSchemaMetadata {
     pub tool_annotations: std::collections::HashMap<String, rmcp::model::ToolAnnotations>,
     /// Per-tool output schema overrides keyed by tool name.
     pub tool_output_schemas: std::collections::HashMap<String, serde_json::Value>,
+    /// Tool names whose per-tool `output_type` cannot be advertised after
+    /// sanitization. These must not inherit [`Self::output_schema`].
+    pub omit_tool_output_schemas: Vec<String>,
+    /// Per-command clap arg ids declared on that command (direct fields and
+    /// flattened `Args`, not inherited globals or `from_global`). Used so a
+    /// child-local same-id field, including a custom `value_parser`, does not
+    /// inherit a parent global's JSON type. Derive remaps struct-root keys to
+    /// clap's live command name. Imperative same-id **global** overrides use
+    /// [`Self::with_declared_arg_id`].
+    pub declared_arg_ids: std::collections::HashMap<String, Vec<String>>,
+    /// Per-command argument JSON Schema scalar types for MCP `inputSchema`
+    /// (`"integer"`, `"number"`, or `"string"`). Keyed by command name
+    /// (`"*"` = every tool) then arg id. Derive fills this for plain numeric
+    /// fields; `#[clap_mcp(input_type = "...")]` and
+    /// [`Self::with_arg_value_json_type`] set it explicitly. Schema extraction
+    /// does not execute clap value parsers to infer these types.
+    pub arg_value_json_types:
+        std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     /// Global CLI argument ids to omit from all MCP tool schemas.
     pub skip_global_args: Vec<String>,
     /// Per-command argument ids whose clap defaults must not be advertised in
@@ -1252,7 +1281,8 @@ pub struct ClapMcpSchemaMetadata {
 impl ClapMcpSchemaMetadata {
     /// Deep-merges `other` into `self`. Lists and per-command maps are extended; map
     /// entries from `other` overwrite same keys in `serialize_tools`,
-    /// `serialize_topic_args`, and `tool_annotations`. Use when folding nested subcommand
+    /// `serialize_topic_args`, and `tool_annotations`. `declared_arg_ids` lists
+    /// are extended. Use when folding nested subcommand
     /// metadata into a parent or when combining derive output with imperative overrides.
     pub fn merge_from(&mut self, other: Self) {
         self.skip_commands.extend(other.skip_commands);
@@ -1265,6 +1295,7 @@ impl ClapMcpSchemaMetadata {
         self.task_tool_names.extend(other.task_tool_names);
         self.task_augmented_tools = self.task_augmented_tools || other.task_augmented_tools;
         self.skip_root_command_when_subcommands |= other.skip_root_command_when_subcommands;
+        self.leaves_only |= other.leaves_only;
         for (k, v) in other.serialize_tools {
             self.serialize_tools.insert(k, v);
         }
@@ -1278,7 +1309,25 @@ impl ClapMcpSchemaMetadata {
             self.tool_annotations.insert(k, v);
         }
         for (k, v) in other.tool_output_schemas {
+            self.omit_tool_output_schemas.retain(|n| n != &k);
             self.tool_output_schemas.insert(k, v);
+        }
+        for name in other.omit_tool_output_schemas {
+            if self.tool_output_schemas.contains_key(&name) {
+                continue;
+            }
+            if !self.omit_tool_output_schemas.contains(&name) {
+                self.omit_tool_output_schemas.push(name);
+            }
+        }
+        for (tool, ids) in other.declared_arg_ids {
+            self.declared_arg_ids.entry(tool).or_default().extend(ids);
+        }
+        for (tool, args) in other.arg_value_json_types {
+            let entry = self.arg_value_json_types.entry(tool).or_default();
+            for (arg, ty) in args {
+                entry.insert(arg, ty);
+            }
         }
         for g in other.skip_global_args {
             if !self.skip_global_args.contains(&g) {
@@ -1305,7 +1354,58 @@ impl ClapMcpSchemaMetadata {
         tool_name: impl Into<String>,
         schema: serde_json::Value,
     ) -> Self {
-        self.tool_output_schemas.insert(tool_name.into(), schema);
+        let name = tool_name.into();
+        self.omit_tool_output_schemas.retain(|n| n != &name);
+        self.tool_output_schemas.insert(name, schema);
+        self
+    }
+
+    /// Suppress `outputSchema` for a tool even when a global schema is set.
+    ///
+    /// Use when a per-tool output type cannot be advertised as an MCP object
+    /// schema and must not inherit [`Self::output_schema`].
+    pub fn with_omit_tool_output_schema(mut self, tool_name: impl Into<String>) -> Self {
+        let name = tool_name.into();
+        self.tool_output_schemas.remove(&name);
+        if !self.omit_tool_output_schemas.contains(&name) {
+            self.omit_tool_output_schemas.push(name);
+        }
+        self
+    }
+
+    /// Set the MCP `inputSchema` scalar type for one argument (`"*"` = every tool).
+    ///
+    /// Use `"integer"`, `"number"`, or `"string"`. Prefer this (or derive
+    /// `#[clap_mcp(input_type = "...")]`) over relying on clap value-parser
+    /// TypeIds; schema extraction does not execute parsers to infer types.
+    pub fn with_arg_value_json_type(
+        mut self,
+        command_name: impl Into<String>,
+        arg_id: impl Into<String>,
+        json_type: impl Into<String>,
+    ) -> Self {
+        self.arg_value_json_types
+            .entry(command_name.into())
+            .or_default()
+            .insert(arg_id.into(), json_type.into());
+        self
+    }
+
+    /// Record that `command_name` declares `arg_id` (not an inherited global).
+    ///
+    /// Use this when a hand-built child **redeclares** a parent id, especially
+    /// a global with a different `value_parser`. A child-local (non-global)
+    /// same id is already a boundary. Key `command_name` with clap's live
+    /// command name.
+    pub fn with_declared_arg_id(
+        mut self,
+        command_name: impl Into<String>,
+        arg_id: impl Into<String>,
+    ) -> Self {
+        self.declared_arg_ids
+            .entry(command_name.into())
+            .or_default()
+            .push(arg_id.into());
         self
     }
 
@@ -1452,6 +1552,174 @@ pub trait ClapMcpFlattenArgsTopics {
             std::collections::HashMap<String, SerializeTopicSegmentFn>,
         >,
     );
+
+    /// Merges `input_type` / inferred numeric JSON types for flattened fields into
+    /// the parent tool's [`ClapMcpSchemaMetadata::arg_value_json_types`] map.
+    fn merge_arg_value_json_types(
+        tool_name: &str,
+        target: &mut std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    ) {
+        let _ = (tool_name, target);
+    }
+}
+
+/// Wrapper for optional flatten-topic merges (autoref specialization).
+///
+/// Must be invoked with a **concrete** type (see the `merge_flatten_*` macros).
+#[doc(hidden)]
+pub struct FlattenTopicsWrap<T>(pub core::marker::PhantomData<T>);
+
+/// No-op when `T` does not implement [`ClapMcpFlattenArgsTopics`].
+#[doc(hidden)]
+pub trait FlattenTopicsNoop {
+    fn merge_serialize_topics(
+        &self,
+        tool_name: &str,
+        target: &mut std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, SerializeTopicSegmentFn>,
+        >,
+    ) {
+        let _ = (tool_name, target);
+    }
+
+    fn merge_arg_value_json_types(
+        &self,
+        tool_name: &str,
+        target: &mut std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    ) {
+        let _ = (tool_name, target);
+    }
+}
+
+impl<T> FlattenTopicsNoop for FlattenTopicsWrap<T> {}
+
+/// Forwards when `T: ClapMcpFlattenArgsTopics`.
+#[doc(hidden)]
+pub trait FlattenTopicsYes {
+    fn merge_serialize_topics(
+        &self,
+        tool_name: &str,
+        target: &mut std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, SerializeTopicSegmentFn>,
+        >,
+    );
+
+    fn merge_arg_value_json_types(
+        &self,
+        tool_name: &str,
+        target: &mut std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    );
+}
+
+impl<T: ClapMcpFlattenArgsTopics> FlattenTopicsYes for &FlattenTopicsWrap<T> {
+    fn merge_serialize_topics(
+        &self,
+        tool_name: &str,
+        target: &mut std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, SerializeTopicSegmentFn>,
+        >,
+    ) {
+        T::merge_serialize_topics(tool_name, target);
+    }
+
+    fn merge_arg_value_json_types(
+        &self,
+        tool_name: &str,
+        target: &mut std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    ) {
+        T::merge_arg_value_json_types(tool_name, target);
+    }
+}
+
+/// Merges flatten serialize-topic bindings when `$ty` opted into `args_metadata`.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! merge_flatten_serialize_topics {
+    ($ty:ty, $tool_name:expr, $target:expr) => {{
+        use $crate::FlattenTopicsNoop as _;
+        use $crate::FlattenTopicsYes as _;
+        (&&$crate::FlattenTopicsWrap::<$ty>(::core::marker::PhantomData))
+            .merge_serialize_topics($tool_name, $target);
+    }};
+}
+
+/// Merges flatten numeric / `input_type` metadata when `$ty` opted into `args_metadata`.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! merge_flatten_arg_value_json_types {
+    ($ty:ty, $tool_name:expr, $target:expr) => {{
+        use $crate::FlattenTopicsNoop as _;
+        use $crate::FlattenTopicsYes as _;
+        (&&$crate::FlattenTopicsWrap::<$ty>(::core::marker::PhantomData))
+            .merge_arg_value_json_types($tool_name, $target);
+    }};
+}
+
+/// Wrapper for optional flatten declaration-id merges (autoref specialization).
+///
+/// Must be invoked with a **concrete** type (see [`merge_flatten_declared_arg_ids`]).
+#[doc(hidden)]
+pub struct FlattenDeclaredIdsWrap<T>(pub core::marker::PhantomData<T>);
+
+/// No-op when `T` does not implement [`clap::Args`] (for example a flattened
+/// [`clap::Subcommand`]).
+#[doc(hidden)]
+pub trait FlattenDeclaredIdsNoop {
+    fn merge_declared_arg_ids(
+        &self,
+        tool_name: &str,
+        target: &mut std::collections::HashMap<String, Vec<String>>,
+    ) {
+        let _ = (tool_name, target);
+    }
+}
+
+impl<T> FlattenDeclaredIdsNoop for FlattenDeclaredIdsWrap<T> {}
+
+/// Forwards when `T: clap::Args`.
+#[doc(hidden)]
+pub trait FlattenDeclaredIdsYes {
+    fn merge_declared_arg_ids(
+        &self,
+        tool_name: &str,
+        target: &mut std::collections::HashMap<String, Vec<String>>,
+    );
+}
+
+impl<T: clap::Args> FlattenDeclaredIdsYes for &FlattenDeclaredIdsWrap<T> {
+    fn merge_declared_arg_ids(
+        &self,
+        tool_name: &str,
+        target: &mut std::collections::HashMap<String, Vec<String>>,
+    ) {
+        let probe = T::augment_args(clap::Command::new("_clap_mcp_declared_probe"));
+        let collected: Vec<String> = probe
+            .get_arguments()
+            .map(|a| a.get_id().as_str().to_string())
+            .collect();
+        target
+            .entry(tool_name.to_string())
+            .or_default()
+            .extend(collected);
+    }
+}
+
+/// Records flattened `clap::Args` ids as local declarations for `$tool_name`.
+///
+/// Ordinary `Args` and `args_metadata` helpers both implement [`clap::Args`].
+/// Flattened [`clap::Subcommand`] types no-op.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! merge_flatten_declared_arg_ids {
+    ($ty:ty, $tool_name:expr, $target:expr) => {{
+        use $crate::FlattenDeclaredIdsNoop as _;
+        use $crate::FlattenDeclaredIdsYes as _;
+        (&&$crate::FlattenDeclaredIdsWrap::<$ty>(::core::marker::PhantomData))
+            .merge_declared_arg_ids($tool_name, $target);
+    }};
 }
 
 const fn str_eq_const(a: &str, b: &str) -> bool {
@@ -1595,11 +1863,178 @@ pub(crate) fn tool_task_eligible(tool_name: &str, metadata: &ClapMcpSchemaMetada
     }
 }
 
+/// Ensures an MCP `outputSchema` is acceptable to clients that require JSON Schema
+/// `"type": "object"`.
+///
+/// Policy:
+/// * Keep schemas whose `"type"` is already `"object"`.
+/// * Omit schemas whose `"type"` is present and not solely `"object"` (for example
+///   `"string"`, or type unions such as `["object","null"]` from `Option<Map<…>>`).
+/// * When `"type"` is absent and the schema uses `oneOf` / `anyOf` / `allOf`, keep
+///   only if every branch is itself object-compatible (local `$ref` targets are
+///   resolved via `$defs` / `definitions` with JSON Pointer decoding and cycle
+///   detection); otherwise omit.
+/// * Bare `$ref` roots are kept only when the resolved target is object-compatible.
+/// * When `"type"` is absent and the schema has `properties`, or a non-boolean
+///   `additionalProperties` schema (map-shaped objects), set `"type": "object"`.
+/// * Omit unrestricted / free-form schemas (empty objects, title-only schemars
+///   `AnyValue`, or bare `"additionalProperties": true`) so tools that can return
+///   arrays or scalars do not advertise a false object contract.
+///
+/// Returns `None` when the value is not a JSON object or cannot be advertised
+/// safely. Call sites that attach `outputSchema` to tools should use this helper
+/// (or [`output_schema_for_type`], which already sanitizes).
+pub fn sanitize_mcp_output_schema(
+    schema: serde_json::Value,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let mut obj = match schema {
+        serde_json::Value::Object(o) => o,
+        _ => return None,
+    };
+    match obj.get("type") {
+        Some(serde_json::Value::String(t)) if t == "object" => Some(obj),
+        Some(serde_json::Value::Array(types)) => {
+            // Require every type token to be "object". Unions like
+            // ["object","null"] (Option<Map<…>>) must not be narrowed to object —
+            // AsStructured(None) still emits null.
+            if !types.is_empty() && types.iter().all(|v| v.as_str() == Some("object")) {
+                obj.insert("type".into(), serde_json::json!("object"));
+                Some(obj)
+            } else {
+                None
+            }
+        }
+        Some(_) => None,
+        None => {
+            for key in ["oneOf", "anyOf", "allOf"] {
+                if let Some(branches) = obj.get(key).and_then(|v| v.as_array()) {
+                    if branches.is_empty()
+                        || !branches.iter().all(|b| {
+                            schema_is_object_compatible(
+                                b,
+                                &obj,
+                                &mut std::collections::HashSet::new(),
+                            )
+                        })
+                    {
+                        return None;
+                    }
+                    obj.insert("type".into(), serde_json::json!("object"));
+                    return Some(obj);
+                }
+            }
+            if obj.contains_key("$ref") {
+                let mut visiting = std::collections::HashSet::new();
+                if !schema_is_object_compatible(
+                    &serde_json::Value::Object(obj.clone()),
+                    &obj,
+                    &mut visiting,
+                ) {
+                    return None;
+                }
+                obj.insert("type".into(), serde_json::json!("object"));
+                return Some(obj);
+            }
+            if obj.contains_key("properties") {
+                obj.insert("type".into(), serde_json::json!("object"));
+                return Some(obj);
+            }
+            // Map-shaped schemas with a property schema (not bare true/false).
+            if let Some(ap) = obj.get("additionalProperties")
+                && ap.is_object()
+            {
+                obj.insert("type".into(), serde_json::json!("object"));
+                return Some(obj);
+            }
+            None
+        }
+    }
+}
+
+/// Whether a JSON Schema fragment can be advertised under MCP `outputSchema` with
+/// top-level `"type": "object"`. Resolves local `#/$defs/…` and `#/definitions/…`
+/// references against `root`; cycles or unresolvable refs are not object-compatible.
+fn schema_is_object_compatible(
+    schema: &serde_json::Value,
+    root: &serde_json::Map<String, serde_json::Value>,
+    visiting: &mut std::collections::HashSet<String>,
+) -> bool {
+    let Some(obj) = schema.as_object() else {
+        return false;
+    };
+    if let Some(ref_str) = obj.get("$ref").and_then(|v| v.as_str()) {
+        if !visiting.insert(ref_str.to_string()) {
+            return false;
+        }
+        let resolved = resolve_local_schema_ref(ref_str, root);
+        let ok = resolved
+            .map(|target| schema_is_object_compatible(target, root, visiting))
+            .unwrap_or(false);
+        visiting.remove(ref_str);
+        return ok;
+    }
+    match obj.get("type") {
+        Some(serde_json::Value::String(t)) => t == "object",
+        Some(serde_json::Value::Array(types)) => {
+            !types.is_empty() && types.iter().all(|v| v.as_str() == Some("object"))
+        }
+        Some(_) => false,
+        None => {
+            for key in ["oneOf", "anyOf", "allOf"] {
+                if let Some(branches) = obj.get(key).and_then(|v| v.as_array()) {
+                    return !branches.is_empty()
+                        && branches
+                            .iter()
+                            .all(|b| schema_is_object_compatible(b, root, visiting));
+                }
+            }
+            if obj.contains_key("properties") {
+                return true;
+            }
+            // Bare `additionalProperties: true` / empty / title-only are not
+            // object-compatible contracts for MCP advertisement.
+            matches!(obj.get("additionalProperties"), Some(ap) if ap.is_object())
+        }
+    }
+}
+
+/// Resolve `#/$defs/Name` or `#/definitions/Name` against the root schema object.
+/// Segment names use JSON Pointer escaping (`~1` → `/`, `~0` → `~`).
+fn resolve_local_schema_ref<'a>(
+    reference: &str,
+    root: &'a serde_json::Map<String, serde_json::Value>,
+) -> Option<&'a serde_json::Value> {
+    let path = reference.strip_prefix("#/")?;
+    let mut cur = root;
+    let mut last: Option<&serde_json::Value> = None;
+    for segment in path.split('/') {
+        let decoded = decode_json_pointer_segment(segment);
+        let next = cur.get(&decoded)?;
+        last = Some(next);
+        match next.as_object() {
+            Some(map) => cur = map,
+            None => {
+                // Final segment may be a non-object schema (string/array); still return it.
+                return Some(next);
+            }
+        }
+    }
+    last
+}
+
+/// Decode one JSON Pointer path segment (RFC 6901).
+fn decode_json_pointer_segment(segment: &str) -> String {
+    // Order matters: unescape `/` (`~1`) before `~` (`~0`).
+    segment.replace("~1", "/").replace("~0", "~")
+}
+
 /// Builds a JSON schema for a single type. Used by the derive macro when `#[clap_mcp_output_type = "T"]` is set.
-/// When the `output-schema` feature is enabled and `T: schemars::JsonSchema`, returns the schema; otherwise returns `None`.
+/// When the `output-schema` feature is enabled and `T: schemars::JsonSchema`, returns a
+/// [client-sanitized](sanitize_mcp_output_schema) schema; otherwise returns `None`.
 #[cfg(feature = "output-schema")]
 pub fn output_schema_for_type<T: schemars::JsonSchema>() -> Option<serde_json::Value> {
-    serde_json::to_value(schemars::schema_for!(T)).ok()
+    let raw = serde_json::to_value(schemars::schema_for!(T)).ok()?;
+    sanitize_mcp_output_schema(raw).map(serde_json::Value::Object)
 }
 
 #[cfg(not(feature = "output-schema"))]
@@ -1610,7 +2045,8 @@ pub fn output_schema_for_type<T>() -> Option<serde_json::Value> {
 
 /// Builds a JSON schema with `oneOf` for the given types. Used by the derive macro when
 /// `#[clap_mcp_output_one_of = "T1, T2, T3"]` is set. Requires the `output-schema` feature
-/// and each type must implement `schemars::JsonSchema`.
+/// and each type must implement `schemars::JsonSchema`. The result is passed through
+/// [`sanitize_mcp_output_schema`].
 #[macro_export]
 macro_rules! output_schema_one_of {
     ($($T:ty),+ $(,)?) => {{
@@ -1618,7 +2054,8 @@ macro_rules! output_schema_one_of {
         {
             let mut one_of = vec![];
             $( one_of.push(serde_json::to_value(&schemars::schema_for!($T)).unwrap()); )+
-            Some(serde_json::json!({ "oneOf": one_of }))
+            $crate::sanitize_mcp_output_schema(serde_json::json!({ "oneOf": one_of }))
+                .map(serde_json::Value::Object)
         }
         #[cfg(not(feature = "output-schema"))]
         {
@@ -1682,6 +2119,11 @@ pub struct ClapCommand {
     /// so their groups are not exported.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub arg_groups: Vec<ClapArgGroup>,
+    /// True when the clap command had nested subcommands before `skip_commands`
+    /// filtering. Used by [`ClapMcpSchemaMetadata::leaves_only`] so a parent whose
+    /// only children were skipped is not treated as a leaf tool.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub had_subcommands: bool,
     pub subcommands: Vec<ClapCommand>,
 }
 
@@ -1891,7 +2333,7 @@ pub fn tools_from_schema_with_metadata(
     config: &ClapMcpConfig,
     metadata: &ClapMcpSchemaMetadata,
 ) -> Vec<Tool> {
-    let commands: Vec<&ClapCommand> =
+    let mut commands: Vec<&ClapCommand> =
         if metadata.skip_root_command_when_subcommands && !schema.root.subcommands.is_empty() {
             schema
                 .root
@@ -1902,6 +2344,14 @@ pub fn tools_from_schema_with_metadata(
         } else {
             schema.root.all_commands()
         };
+    if metadata.leaves_only {
+        // A leaf must have had no clap nesting before skip filtering and no
+        // remaining children after it. `had_subcommands` alone misses older
+        // serialized schemas that default the field to false while still
+        // carrying a parent → child `subcommands` tree; `subcommands.is_empty()`
+        // alone would advertise parents whose only children were skipped.
+        commands.retain(|c| !c.had_subcommands && c.subcommands.is_empty());
+    }
     let tools: Vec<Tool> = commands
         .into_iter()
         .map(|cmd| {
@@ -2342,13 +2792,20 @@ fn command_to_tool_with_config(
     if let Some(meta) = meta {
         tool = tool.with_meta(meta);
     }
-    let tool_out_schema = metadata
-        .tool_output_schemas
-        .get(&cmd.name)
-        .or(output_schema);
+    let tool_out_schema = if let Some(per_tool) = metadata.tool_output_schemas.get(&cmd.name) {
+        Some(per_tool)
+    } else if metadata
+        .omit_tool_output_schemas
+        .iter()
+        .any(|n| n == &cmd.name)
+    {
+        None
+    } else {
+        output_schema
+    };
     if let Some(output_schema) = tool_out_schema
         .cloned()
-        .and_then(|v| v.as_object().cloned())
+        .and_then(sanitize_mcp_output_schema)
     {
         tool = tool.with_raw_output_schema(Arc::new(output_schema));
     }
@@ -2389,13 +2846,22 @@ pub struct ClapArg {
     pub min_items: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_items: Option<usize>,
+    /// JSON Schema type for MCP `inputSchema` when set (`"integer"` or
+    /// `"number"`). Populated from [`ClapMcpSchemaMetadata::arg_value_json_types`]
+    /// (derive inference for plain numeric fields, `#[clap_mcp(input_type = "...")]`,
+    /// or imperative helpers). Not inferred by executing clap value parsers.
+    /// Custom lexical parsers that return a numeric Rust type stay unset so the
+    /// property remains `"string"`. Used by MCP `inputSchema` for `Set` /
+    /// multi-value args.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_json_type: Option<String>,
 }
 
 /// Returns the MCP input schema type for an argument based on its action (and num_args).
 /// - SetTrue / SetFalse: boolean
 /// - Count: integer
-/// - Append (or multi-value num_args): array of strings
-/// - Set / default: string
+/// - Append (or multi-value num_args): array of item types
+/// - Set / default: [`ClapArg::value_json_type`] when set, otherwise string
 ///
 /// When the arg has a single value_name (e.g. VERSION), the array items schema gets a description
 /// so clients know what each element represents.
@@ -2407,6 +2873,7 @@ fn mcp_type_for_arg(arg: &ClapArg) -> (serde_json::Value, Option<serde_json::Val
             .num_args
             .as_deref()
             .is_some_and(|n| n.contains("..") && !n.contains("=1"));
+    let scalar_type = arg.value_json_type.as_deref().unwrap_or("string");
     let (json_type, items) = if matches!(action, "SetTrue" | "SetFalse") {
         (serde_json::json!("boolean"), None)
     } else if action == "Count" {
@@ -2417,12 +2884,12 @@ fn mcp_type_for_arg(arg: &ClapArg) -> (serde_json::Value, Option<serde_json::Val
             .first()
             .map(|name| format!("A {} value", name));
         let items_schema = match item_desc {
-            Some(desc) => serde_json::json!({ "type": "string", "description": desc }),
-            None => serde_json::json!({ "type": "string" }),
+            Some(desc) => serde_json::json!({ "type": scalar_type, "description": desc }),
+            None => serde_json::json!({ "type": scalar_type }),
         };
         (serde_json::json!("array"), Some(items_schema))
     } else {
-        (serde_json::json!("string"), None)
+        (serde_json::json!(scalar_type), None)
     };
     (json_type, items)
 }
@@ -2485,7 +2952,15 @@ fn advertised_default_for_arg(
         return None;
     }
     Some(match json_type {
-        Some("array") => serde_json::json!(arg.default_values),
+        Some("array") => {
+            let item_ty = arg.value_json_type.as_deref().unwrap_or("string");
+            let items: Option<Vec<serde_json::Value>> = arg
+                .default_values
+                .iter()
+                .map(|s| coerce_default_scalar(s, item_ty))
+                .collect();
+            return items.map(serde_json::Value::Array);
+        }
         Some("boolean") => {
             let b = arg
                 .default_values
@@ -2495,18 +2970,51 @@ fn advertised_default_for_arg(
             serde_json::Value::Bool(b)
         }
         Some("integer") => {
-            if let Some(i) = arg
-                .default_values
-                .first()
-                .and_then(|s| s.parse::<i64>().ok())
-            {
-                serde_json::json!(i)
-            } else {
-                serde_json::json!(arg.default_values.first())
-            }
+            return coerce_default_scalar(
+                arg.default_values
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("0"),
+                "integer",
+            );
+        }
+        Some("number") => {
+            return coerce_default_scalar(
+                arg.default_values
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("0"),
+                "number",
+            );
         }
         _ => serde_json::json!(arg.default_values.first()),
     })
+}
+
+/// Coerce a clap default string into a JSON value matching the advertised schema type.
+/// Returns `None` when the value cannot be represented (for example `u128::MAX` under
+/// integer, or non-finite floats under number); callers omit the default.
+fn coerce_default_scalar(raw: &str, json_type: &str) -> Option<serde_json::Value> {
+    match json_type {
+        "integer" => {
+            if let Ok(i) = raw.parse::<i64>() {
+                return Some(serde_json::json!(i));
+            }
+            if let Ok(u) = raw.parse::<u64>() {
+                return Some(serde_json::json!(u));
+            }
+            None
+        }
+        "number" => {
+            let f = raw.parse::<f64>().ok()?;
+            if !f.is_finite() {
+                return None;
+            }
+            serde_json::Number::from_f64(f).map(serde_json::Value::Number)
+        }
+        "boolean" => Some(serde_json::Value::Bool(raw == "true")),
+        _ => Some(serde_json::Value::String(raw.to_string())),
+    }
 }
 
 /// Collects every argument id from a clap command tree (before MCP skip filtering).
@@ -2627,17 +3135,14 @@ pub(crate) fn merge_serve_options_into_metadata(
 fn mcp_action_description_hint(arg: &ClapArg) -> Option<String> {
     let action = arg.action.as_deref()?;
     let hint: String = match action {
-        "SetTrue" => " Boolean flag: set to true to pass this flag.".into(),
-        "SetFalse" => " Boolean flag: set to false to pass this flag (e.g. --no-xxx).".into(),
-        "Count" => " Number of times the flag is passed (e.g. -vvv).".into(),
+        "SetTrue" => " Set true to enable.".into(),
+        "SetFalse" => " Set false to enable (--no-…).".into(),
+        "Count" => " Repeat count (e.g. -vvv).".into(),
         "Append" => {
             if let Some(name) = arg.value_names.first() {
-                format!(
-                    " List of {} values; pass a JSON array (e.g. [\"a\", \"b\"]).",
-                    name
-                )
+                format!(" JSON array of {name} values.")
             } else {
-                " List of values; pass a JSON array (e.g. [\"a\", \"b\"]).".into()
+                " JSON array of values.".into()
             }
         }
         _ => return None,
@@ -3077,10 +3582,50 @@ pub fn schema_from_command_with_metadata(
     cmd: &Command,
     metadata: &ClapMcpSchemaMetadata,
 ) -> ClapSchema {
+    let mut working = metadata.clone();
+    if working.declared_arg_ids.is_empty() && !command_tree_already_built(cmd) {
+        merge_unbuilt_declared_arg_ids(cmd, &mut working.declared_arg_ids);
+    }
+    let mut built = cmd.clone();
+    built.build();
     let skip_commands: std::collections::HashSet<_> =
-        metadata.skip_commands.iter().cloned().collect();
+        working.skip_commands.iter().cloned().collect();
     ClapSchema {
-        root: command_to_schema_with_metadata(cmd, metadata, &skip_commands),
+        root: command_to_schema_with_metadata(&built, &working, &skip_commands, &[]),
+    }
+}
+
+fn command_tree_already_built(cmd: &Command) -> bool {
+    let parent_globals: Vec<String> = cmd
+        .get_arguments()
+        .filter(|a| a.is_global_set())
+        .map(|a| a.get_id().as_str().to_string())
+        .collect();
+    let child_has_parent_global = cmd.get_subcommands().any(|sub| {
+        parent_globals.iter().any(|id| {
+            sub.get_arguments()
+                .any(|a| a.get_id() == id.as_str() && a.is_global_set())
+        })
+    });
+    child_has_parent_global || cmd.get_subcommands().any(command_tree_already_built)
+}
+
+fn merge_unbuilt_declared_arg_ids(
+    cmd: &Command,
+    declared: &mut std::collections::HashMap<String, Vec<String>>,
+) {
+    let ids: Vec<String> = cmd
+        .get_arguments()
+        .map(|a| a.get_id().as_str().to_string())
+        .collect();
+    if !ids.is_empty() {
+        declared
+            .entry(cmd.get_name().to_string())
+            .or_default()
+            .extend(ids);
+    }
+    for sub in cmd.get_subcommands() {
+        merge_unbuilt_declared_arg_ids(sub, declared);
     }
 }
 
@@ -3088,6 +3633,7 @@ fn command_to_schema_with_metadata(
     cmd: &Command,
     metadata: &ClapMcpSchemaMetadata,
     skip_commands: &std::collections::HashSet<String>,
+    ancestors: &[&Command],
 ) -> ClapCommand {
     let visible = mcp_visible_arg_ids_on_command(cmd, metadata);
     let mut args: Vec<ClapArg> = cmd
@@ -3103,19 +3649,36 @@ fn command_to_schema_with_metadata(
         .map(|v| v.iter().cloned().collect())
         .unwrap_or_default();
 
+    let mut path = ancestors.to_vec();
+    path.push(cmd);
+
     for arg in &mut args {
         if requires_args.contains(&arg.id) {
             arg.required = true;
+        }
+        if let Some(ty) = lookup_arg_value_json_type(metadata, &cmd_name, arg, &path) {
+            apply_arg_value_json_type(arg, ty);
         }
     }
     args.sort_by(|a, b| a.id.cmp(&b.id));
 
     let arg_groups = extract_arg_groups(cmd, metadata);
 
+    let had_subcommands = cmd.get_subcommands().next().is_some();
     let subcommands: Vec<ClapCommand> = cmd
         .get_subcommands()
-        .filter(|s| !skip_commands.contains(&s.get_name().to_string()))
-        .map(|s| command_to_schema_with_metadata(s, metadata, skip_commands))
+        .filter(|s| {
+            let name = s.get_name();
+            if skip_commands.contains(name) {
+                return false;
+            }
+            // Clap auto-help whether the input was already built or not. Keep an
+            // application `help` only when auto-help is disabled on this parent
+            // (`#[clap_mcp(skip)]` is the MCP visibility control, not clap `hide`).
+            let auto_help = name == "help" && !cmd.is_disable_help_subcommand_set();
+            !auto_help
+        })
+        .map(|s| command_to_schema_with_metadata(s, metadata, skip_commands, &path))
         .collect();
 
     ClapCommand {
@@ -3125,7 +3688,108 @@ fn command_to_schema_with_metadata(
         version: cmd.get_version().map(|s| s.to_string()),
         args,
         arg_groups,
+        had_subcommands,
         subcommands,
+    }
+}
+
+fn command_declares_arg(
+    metadata: &ClapMcpSchemaMetadata,
+    command_name: &str,
+    arg_id: &str,
+) -> bool {
+    metadata
+        .declared_arg_ids
+        .get(command_name)
+        .is_some_and(|ids| ids.iter().any(|id| id == arg_id))
+}
+
+fn clap_arg_is_global(cmd: &Command, arg_id: &str) -> bool {
+    cmd.get_arguments()
+        .find(|a| a.get_id() == arg_id)
+        .is_some_and(|a| a.is_global_set())
+}
+
+fn clap_arg_is_inherited_copy(cmd: &Command, arg_id: &str) -> bool {
+    clap_arg_is_global(cmd, arg_id)
+}
+
+fn ancestor_arg_value_json_type<'a>(
+    metadata: &'a ClapMcpSchemaMetadata,
+    ancestor_name: &str,
+    arg_id: &str,
+) -> Option<&'a str> {
+    metadata
+        .arg_value_json_types
+        .get(ancestor_name)
+        .and_then(|m| m.get(arg_id))
+        .map(String::as_str)
+}
+
+fn lookup_arg_value_json_type<'a>(
+    metadata: &'a ClapMcpSchemaMetadata,
+    command_name: &str,
+    arg: &ClapArg,
+    path: &[&Command],
+) -> Option<&'a str> {
+    let arg_id = arg.id.as_str();
+    if let Some(ty) = metadata
+        .arg_value_json_types
+        .get(command_name)
+        .and_then(|m| m.get(arg_id))
+        .or_else(|| {
+            metadata
+                .arg_value_json_types
+                .get("*")
+                .and_then(|m| m.get(arg_id))
+        })
+        .map(String::as_str)
+    {
+        return Some(ty);
+    }
+
+    // A local declaration (direct, flattened, or imperative) owns this id.
+    // Same-id ancestors are not owners. Do not use clap Debug.
+    if command_declares_arg(metadata, command_name, arg_id) {
+        return None;
+    }
+
+    let self_cmd = *path.last()?;
+    // Child-local (non-global) same id is a boundary even when the
+    // declaration map is empty. `from_global` is not a declaration in derive
+    // metadata; inherit when clap marks the arg global.
+    if !clap_arg_is_inherited_copy(self_cmd, arg_id) {
+        return None;
+    }
+
+    for ancestor in path.iter().rev().skip(1) {
+        let ancestor_name = ancestor.get_name();
+        if !command_declares_arg(metadata, ancestor_name, arg_id) {
+            continue;
+        }
+        if !clap_arg_is_global(ancestor, arg_id) {
+            continue;
+        }
+        return ancestor_arg_value_json_type(metadata, ancestor_name, arg_id);
+    }
+
+    // Hand-built trees: skip intermediate copies with no typed metadata and
+    // trace to the ancestor that actually recorded the type.
+    for ancestor in path.iter().rev().skip(1) {
+        if let Some(ty) = ancestor_arg_value_json_type(metadata, ancestor.get_name(), arg_id) {
+            return Some(ty);
+        }
+    }
+    None
+}
+
+fn apply_arg_value_json_type(arg: &mut ClapArg, ty: &str) {
+    match ty {
+        "string" => arg.value_json_type = None,
+        "integer" | "number" if arg.possible_values.is_empty() => {
+            arg.value_json_type = Some(ty.to_string());
+        }
+        _ => {}
     }
 }
 
@@ -3887,6 +4551,9 @@ fn arg_to_schema(arg: &clap::Arg) -> ClapArg {
         required_unless,
         min_items,
         max_items,
+        // Numeric JSON types come from metadata (`arg_value_json_types` / derive
+        // `input_type`), not from executing or TypeId-matching the value parser.
+        value_json_type: None,
     }
 }
 
@@ -4290,10 +4957,32 @@ fn value_to_string(v: &serde_json::Value) -> Option<String> {
     }
     Some(match v {
         serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Number(n) => json_number_to_cli_string(n),
         serde_json::Value::Bool(b) => b.to_string(),
         other => other.to_string(),
     })
+}
+
+/// Format a JSON number for clap argv.
+///
+/// Integral floats such as `8080.0` become `"8080"` so stock integer value
+/// parsers accept values that JSON Schema `"integer"` allowed through. Uses
+/// decimal formatting rather than a saturating integer cast so values at the
+/// `u64` boundary (for example `2^64` as `f64`) are not silently changed.
+fn json_number_to_cli_string(n: &serde_json::Number) -> String {
+    if let Some(u) = n.as_u64() {
+        return u.to_string();
+    }
+    if let Some(i) = n.as_i64() {
+        return i.to_string();
+    }
+    if let Some(f) = n.as_f64()
+        && f.is_finite()
+        && f.fract() == 0.0
+    {
+        return format!("{f:.0}");
+    }
+    n.to_string()
 }
 
 /// Stable string for one MCP argument value when building topical lock keys.
@@ -4692,7 +5381,7 @@ mod tests {
         assert!(items.is_none());
         assert_eq!(
             mcp_action_description_hint(&boolean_arg),
-            Some(" Boolean flag: set to true to pass this flag.".to_string())
+            Some(" Set true to enable.".to_string())
         );
 
         let false_arg = ClapArg {
@@ -4702,7 +5391,7 @@ mod tests {
         assert_eq!(mcp_type_for_arg(&false_arg).0, json!("boolean"));
         assert_eq!(
             mcp_action_description_hint(&false_arg),
-            Some(" Boolean flag: set to false to pass this flag (e.g. --no-xxx).".to_string())
+            Some(" Set false to enable (--no-…).".to_string())
         );
 
         let count_arg = ClapArg {
@@ -4712,7 +5401,7 @@ mod tests {
         assert_eq!(mcp_type_for_arg(&count_arg).0, json!("integer"));
         assert_eq!(
             mcp_action_description_hint(&count_arg),
-            Some(" Number of times the flag is passed (e.g. -vvv).".to_string())
+            Some(" Repeat count (e.g. -vvv).".to_string())
         );
 
         let append_arg = ClapArg {
@@ -4728,7 +5417,7 @@ mod tests {
         );
         assert_eq!(
             mcp_action_description_hint(&append_arg),
-            Some(" List of TAG values; pass a JSON array (e.g. [\"a\", \"b\"]).".to_string())
+            Some(" JSON array of TAG values.".to_string())
         );
 
         let multi_value_arg = ClapArg {
@@ -4751,6 +5440,367 @@ mod tests {
             items,
             Some(json!({ "type": "string", "description": "A NAME value" }))
         );
+
+        let port_arg = ClapArg {
+            id: "port".to_string(),
+            long: Some("port".to_string()),
+            action: Some("Set".to_string()),
+            value_json_type: Some("integer".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(mcp_type_for_arg(&port_arg).0, json!("integer"));
+    }
+
+    #[test]
+    fn test_numeric_value_parser_in_input_schema_and_argv() {
+        use serde_json::json;
+        let cmd = Command::new("app").subcommand(
+            Command::new("serve").arg(
+                Arg::new("port")
+                    .long("port")
+                    .value_parser(clap::value_parser!(u16))
+                    .action(ArgAction::Set),
+            ),
+        );
+        // Imperative clap: advertise integer via metadata (schema extraction does
+        // not execute value parsers to infer types).
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        }
+        .with_arg_value_json_type("serve", "port", "integer");
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let serve = schema
+            .root
+            .subcommands
+            .iter()
+            .find(|c| c.name == "serve")
+            .expect("serve");
+        let port = serve.args.iter().find(|a| a.id == "port").expect("port");
+        assert_eq!(port.value_json_type.as_deref(), Some("integer"));
+
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let tool = tools.iter().find(|t| t.name.as_ref() == "serve").unwrap();
+        let props = tool
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            props["port"].get("type").and_then(|v| v.as_str()),
+            Some("integer")
+        );
+
+        let argv = build_tool_argv_with_metadata(
+            &schema,
+            "serve",
+            serde_json::Map::from_iter([("port".to_string(), json!(8080))]),
+            Some(&metadata),
+        );
+        assert!(
+            argv.iter().any(|a| a == "8080"),
+            "JSON number must stringify into argv: {argv:?}"
+        );
+
+        let argv_float = build_tool_argv_with_metadata(
+            &schema,
+            "serve",
+            serde_json::Map::from_iter([("port".to_string(), json!(8080.0))]),
+            Some(&metadata),
+        );
+        assert!(
+            argv_float.iter().any(|a| a == "8080"),
+            "integral JSON floats must normalize for clap integer parsers: {argv_float:?}"
+        );
+        assert!(
+            !argv_float.iter().any(|a| a == "8080.0"),
+            "must not pass fractional spelling to clap: {argv_float:?}"
+        );
+    }
+
+    #[test]
+    fn test_schema_extraction_does_not_execute_value_parsers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static PARSE_COUNT: AtomicUsize = AtomicUsize::new(0);
+        PARSE_COUNT.store(0, Ordering::SeqCst);
+
+        let cmd = Command::new("app")
+            .subcommand(
+                Command::new("serve")
+                    .arg(
+                        Arg::new("host")
+                            .long("host")
+                            .required(true)
+                            .action(ArgAction::Set),
+                    )
+                    .arg(
+                        Arg::new("port")
+                            .long("port")
+                            .required(true)
+                            .requires("host")
+                            .value_parser(|s: &str| -> Result<u16, String> {
+                                PARSE_COUNT.fetch_add(1, Ordering::SeqCst);
+                                s.parse()
+                                    .map_err(|e: std::num::ParseIntError| e.to_string())
+                            })
+                            .action(ArgAction::Set),
+                    ),
+            )
+            .subcommand(
+                Command::new("run")
+                    .arg(
+                        Arg::new("first")
+                            .index(1)
+                            .required(true)
+                            .action(ArgAction::Set),
+                    )
+                    .arg(
+                        Arg::new("second")
+                            .index(2)
+                            .required(true)
+                            .value_parser(|s: &str| -> Result<u32, String> {
+                                PARSE_COUNT.fetch_add(1, Ordering::SeqCst);
+                                s.parse()
+                                    .map_err(|e: std::num::ParseIntError| e.to_string())
+                            })
+                            .action(ArgAction::Set),
+                    ),
+            );
+
+        // Must not panic (requires / positional context) and must not run parsers.
+        let _schema = schema_from_command(&cmd);
+        assert_eq!(
+            PARSE_COUNT.load(Ordering::SeqCst),
+            0,
+            "schema extraction must not execute value parsers"
+        );
+    }
+
+    #[test]
+    fn test_custom_lexical_numeric_parser_stays_string_without_metadata() {
+        use serde_json::json;
+        let cmd = Command::new("app").subcommand(
+            Command::new("alloc").arg(
+                Arg::new("size")
+                    .long("size")
+                    .value_parser(|s: &str| -> Result<u64, String> {
+                        if let Some(n) = s.strip_suffix("MiB") {
+                            n.parse::<u64>()
+                                .map(|x| x * 1024 * 1024)
+                                .map_err(|e| e.to_string())
+                        } else if let Some(n) = s.strip_suffix("KiB") {
+                            n.parse::<u64>()
+                                .map(|x| x * 1024)
+                                .map_err(|e| e.to_string())
+                        } else {
+                            s.parse::<u64>().map_err(|e| e.to_string())
+                        }
+                    })
+                    .action(ArgAction::Set),
+            ),
+        );
+        let schema = schema_from_command(&cmd);
+        let alloc = schema
+            .root
+            .subcommands
+            .iter()
+            .find(|c| c.name == "alloc")
+            .expect("alloc");
+        let size = alloc.args.iter().find(|a| a.id == "size").expect("size");
+        assert!(
+            size.value_json_type.is_none(),
+            "custom lexical parser must stay string without explicit metadata: {:?}",
+            size.value_json_type
+        );
+
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        };
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let tool = tools.iter().find(|t| t.name.as_ref() == "alloc").unwrap();
+        let props = tool
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            props["size"].get("type").and_then(|v| v.as_str()),
+            Some("string")
+        );
+
+        let argv = build_tool_argv_with_metadata(
+            &schema,
+            "alloc",
+            serde_json::Map::from_iter([("size".to_string(), json!("8MiB"))]),
+            Some(&metadata),
+        );
+        assert!(
+            argv.iter().any(|a| a == "8MiB"),
+            "lexical size token must reach argv: {argv:?}"
+        );
+    }
+
+    #[test]
+    fn test_custom_duration_parser_contract_stays_string_and_retains_token() {
+        use serde_json::json;
+        // Distinct from KiB/MiB samples: a "250ms" parser must not be guessed as integer.
+        let cmd = Command::new("app").subcommand(
+            Command::new("wait").arg(
+                Arg::new("delay")
+                    .long("delay")
+                    .value_parser(|s: &str| -> Result<u64, String> {
+                        let ms = s
+                            .strip_suffix("ms")
+                            .ok_or_else(|| format!("expected <n>ms, got {s}"))?;
+                        ms.parse::<u64>().map_err(|e| e.to_string())
+                    })
+                    .action(ArgAction::Set),
+            ),
+        );
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        };
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "wait")
+            .expect("wait");
+        let props = tool
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            props["delay"].get("type").and_then(|v| v.as_str()),
+            Some("string"),
+            "custom duration parser must advertise string"
+        );
+
+        let args = serde_json::Map::from_iter([("delay".to_string(), json!("250ms"))]);
+        let tool_argv =
+            build_tool_argv_with_metadata(&schema, "wait", args.clone(), Some(&metadata));
+        assert!(
+            tool_argv.windows(2).any(|w| w == ["--delay", "250ms"]),
+            "lexical token must be preserved in tool argv: {tool_argv:?}"
+        );
+        let argv = build_argv_for_clap_with_metadata(&schema, "wait", args, Some(&metadata));
+        assert!(
+            argv.windows(2).any(|w| w == ["--delay", "250ms"]),
+            "representative lexical input must reach clap argv unchanged: {argv:?}"
+        );
+        assert!(
+            cmd.clone()
+                .try_get_matches_from(argv.iter().map(String::as_str))
+                .is_ok(),
+            "argv must parse through the custom duration parser"
+        );
+        assert!(
+            cmd.try_get_matches_from(["app", "wait", "--delay", "250"])
+                .is_err(),
+            "bare integer must fail the lexical parser"
+        );
+    }
+
+    #[test]
+    fn test_numeric_input_contract_validates_reaches_command_and_preserves_value() {
+        use serde_json::json;
+        let cmd = Command::new("app").subcommand(
+            Command::new("serve")
+                .arg(
+                    Arg::new("host")
+                        .long("host")
+                        .required(true)
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("port")
+                        .long("port")
+                        .required(true)
+                        .requires("host")
+                        .value_parser(clap::value_parser!(u16))
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("quota")
+                        .long("quota")
+                        .value_parser(clap::value_parser!(u128))
+                        .action(ArgAction::Set),
+                ),
+        );
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        }
+        .with_arg_value_json_type("serve", "port", "integer")
+        .with_arg_value_json_type("serve", "quota", "integer");
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "serve")
+            .expect("serve");
+        let props = tool
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            props["port"].get("type").and_then(|v| v.as_str()),
+            Some("integer")
+        );
+        assert_eq!(
+            props["quota"].get("type").and_then(|v| v.as_str()),
+            Some("integer")
+        );
+
+        let args = serde_json::Map::from_iter([
+            ("host".to_string(), json!("localhost")),
+            ("port".to_string(), json!(8080.0)),
+            // 2^64 as f64 — must not saturate to u64::MAX when building argv for u128.
+            ("quota".to_string(), json!(18446744073709551616.0)),
+        ]);
+        let argv = build_argv_for_clap_with_metadata(&schema, "serve", args, Some(&metadata));
+        assert!(
+            argv.windows(2).any(|w| w == ["--port", "8080"]),
+            "integral float port must normalize without a trailing .0: {argv:?}"
+        );
+        assert!(
+            argv.windows(2)
+                .any(|w| w == ["--quota", "18446744073709551616"]),
+            "u64-boundary float must preserve full decimal for u128: {argv:?}"
+        );
+        assert!(
+            !argv.iter().any(|a| a == "18446744073709551615"),
+            "must not saturate to u64::MAX: {argv:?}"
+        );
+
+        let matches = cmd
+            .try_get_matches_from(argv.iter().map(String::as_str))
+            .expect("argv must parse with requires/host intact");
+        let serve = matches.subcommand_matches("serve").expect("serve");
+        assert_eq!(
+            serve.get_one::<String>("host").map(String::as_str),
+            Some("localhost")
+        );
+        assert_eq!(serve.get_one::<u16>("port").copied(), Some(8080));
+        assert_eq!(
+            serve.get_one::<u128>("quota").copied(),
+            Some(18446744073709551616)
+        );
+    }
+
+    #[test]
+    fn test_json_number_to_cli_string_preserves_u64_boundary_float() {
+        use serde_json::Number;
+        // 2^64 as f64 — must not saturate to u64::MAX via integer cast.
+        let n = Number::from_f64(18446744073709551616.0).expect("f64");
+        assert_eq!(json_number_to_cli_string(&n), "18446744073709551616");
+        assert_eq!(json_number_to_cli_string(&Number::from(8080u64)), "8080");
+        let integral = Number::from_f64(8080.0).expect("f64");
+        assert_eq!(json_number_to_cli_string(&integral), "8080");
     }
 
     #[test]
@@ -4805,7 +5855,7 @@ mod tests {
             props["verbose"]["description"]
                 .as_str()
                 .expect("verbose description")
-                .contains("Boolean flag")
+                .contains("Set true to enable")
         );
         assert_eq!(
             props["level"].get("type").and_then(|value| value.as_str()),
@@ -5384,6 +6434,7 @@ mod tests {
     fn test_value_to_string_and_value_to_strings_cover_scalar_and_array_inputs() {
         assert_eq!(value_to_string(&json!("hello")), Some("hello".to_string()));
         assert_eq!(value_to_string(&json!(3)), Some("3".to_string()));
+        assert_eq!(value_to_string(&json!(8080.0)), Some("8080".to_string()));
         assert_eq!(value_to_string(&json!(false)), Some("false".to_string()));
         assert_eq!(value_to_string(&serde_json::Value::Null), None);
         assert_eq!(
@@ -5791,19 +6842,21 @@ mod tests {
         }
 
         let schema = schema_from_command(&App::command());
+        // Agent-supplied JSON keys map by clap arg id; positional argv follows
+        // clap indices after `Command::build()` (declaration order here).
         let args = serde_json::Map::from_iter([
             ("task_id".to_string(), json!("done")),
             ("state".to_string(), json!("TASK-0")),
         ]);
         let argv = build_argv_for_clap(&schema, "edit", args);
-        assert_eq!(argv, vec!["cli", "edit", "TASK-0", "done"]);
+        assert_eq!(argv, vec!["cli", "edit", "done", "TASK-0"]);
 
         let matches = App::command().get_matches_from(argv);
         let parsed = App::from_arg_matches(&matches).expect("app should parse");
         match parsed.cmd {
             Cmd::Edit { task_id, state } => {
-                assert_eq!(task_id, "TASK-0");
-                assert_eq!(state, "done");
+                assert_eq!(task_id, "done");
+                assert_eq!(state, "TASK-0");
             }
         }
     }
@@ -5846,6 +6899,708 @@ mod tests {
         }
         let schema = output_schema_for_type::<Dummy>();
         assert!(schema.is_some());
+        assert_eq!(
+            schema
+                .as_ref()
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("object")
+        );
+
+        // Unrestricted JSON values must not become a false object outputSchema.
+        assert!(
+            output_schema_for_type::<serde_json::Value>().is_none(),
+            "serde_json::Value must omit outputSchema rather than coerce to object"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_mcp_output_schema_keep_object_type() {
+        use serde_json::json;
+        let out = sanitize_mcp_output_schema(json!({
+            "type": "object",
+            "properties": { "x": { "type": "string" } }
+        }))
+        .expect("keep object schema");
+        assert_eq!(out.get("type").and_then(|v| v.as_str()), Some("object"));
+        assert!(out.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_sanitize_mcp_output_schema_omit_non_object_type() {
+        use serde_json::json;
+        assert!(sanitize_mcp_output_schema(json!({ "type": "string" })).is_none());
+        assert!(sanitize_mcp_output_schema(json!({ "type": "array" })).is_none());
+        assert!(sanitize_mcp_output_schema(json!("not-an-object")).is_none());
+        // Option<BTreeMap<…>> / nullable object — do not narrow to type:object.
+        assert!(
+            sanitize_mcp_output_schema(json!({
+                "type": ["object", "null"],
+                "additionalProperties": { "type": "string" }
+            }))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_sanitize_mcp_output_schema_omits_unrestricted() {
+        use serde_json::json;
+        // schemars AnyValue / serde_json::Value — title-only, no object contract.
+        assert!(
+            sanitize_mcp_output_schema(json!({
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "title": "AnyValue"
+            }))
+            .is_none()
+        );
+        assert!(sanitize_mcp_output_schema(json!({})).is_none());
+        assert!(sanitize_mcp_output_schema(json!({ "additionalProperties": true })).is_none());
+
+        // Structured properties without an explicit type still coerce to object.
+        let with_props = sanitize_mcp_output_schema(json!({
+            "properties": { "x": { "type": "string" } }
+        }))
+        .expect("properties imply object");
+        assert_eq!(
+            with_props.get("type").and_then(|v| v.as_str()),
+            Some("object")
+        );
+
+        // Map-shaped additionalProperties schema (not bare true) is object-compatible.
+        let map_shaped = sanitize_mcp_output_schema(json!({
+            "additionalProperties": { "type": "string" }
+        }))
+        .expect("map-shaped schema");
+        assert_eq!(
+            map_shaped.get("type").and_then(|v| v.as_str()),
+            Some("object")
+        );
+    }
+
+    #[test]
+    fn test_sanitize_mcp_output_schema_one_of_gets_object_type() {
+        use serde_json::json;
+        let out = sanitize_mcp_output_schema(json!({
+            "oneOf": [
+                { "type": "object", "properties": { "a": { "type": "string" } } },
+                { "type": "object", "properties": { "b": { "type": "integer" } } }
+            ]
+        }))
+        .expect("oneOf root");
+        assert_eq!(out.get("type").and_then(|v| v.as_str()), Some("object"));
+        assert!(out.get("oneOf").is_some());
+    }
+
+    #[test]
+    fn test_sanitize_mcp_output_schema_omits_non_object_any_of() {
+        use serde_json::json;
+        // Untagged String | Vec<String> style schemars output must not become
+        // type:object over anyOf(string, array).
+        assert!(
+            sanitize_mcp_output_schema(json!({
+                "anyOf": [
+                    { "type": "string" },
+                    { "type": "array", "items": { "type": "string" } }
+                ]
+            }))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_sanitize_mcp_output_schema_omits_non_object_defs_refs() {
+        use serde_json::json;
+        // Untagged enum via $defs refs (Text=string, List=array) must not gain
+        // type:object over unresolved-as-object references.
+        assert!(
+            sanitize_mcp_output_schema(json!({
+                "oneOf": [
+                    { "$ref": "#/$defs/Text" },
+                    { "$ref": "#/$defs/List" }
+                ],
+                "$defs": {
+                    "Text": { "type": "string" },
+                    "List": { "type": "array", "items": { "type": "string" } }
+                }
+            }))
+            .is_none()
+        );
+
+        let object_refs = sanitize_mcp_output_schema(json!({
+            "oneOf": [
+                { "$ref": "#/$defs/A" },
+                { "$ref": "#/$defs/B" }
+            ],
+            "$defs": {
+                "A": { "type": "object", "properties": { "a": { "type": "string" } } },
+                "B": { "type": "object", "properties": { "b": { "type": "integer" } } }
+            }
+        }))
+        .expect("object $defs refs");
+        assert_eq!(
+            object_refs.get("type").and_then(|v| v.as_str()),
+            Some("object")
+        );
+
+        // Schemars names with `/` or `~` use JSON Pointer escapes in $ref.
+        let escaped = sanitize_mcp_output_schema(json!({
+            "oneOf": [
+                { "$ref": "#/$defs/With~1Slash" },
+                { "$ref": "#/$defs/With~0Tilde" }
+            ],
+            "$defs": {
+                "With/Slash": {
+                    "type": "object",
+                    "properties": { "x": { "type": "string" } }
+                },
+                "With~Tilde": {
+                    "type": "object",
+                    "properties": { "y": { "type": "integer" } }
+                }
+            }
+        }))
+        .expect("escaped $defs names");
+        assert_eq!(escaped.get("type").and_then(|v| v.as_str()), Some("object"));
+    }
+
+    #[test]
+    fn test_possible_values_parser_stays_string_enum_not_integer() {
+        use serde_json::json;
+        // PossibleValuesParser maps lexical "low"/"high" to u8; TypeId is u8 but
+        // MCP input must stay string enum (no value is both integer and "low").
+        let cmd = Command::new("app").subcommand(
+            Command::new("run").arg(
+                Arg::new("level")
+                    .long("level")
+                    .value_parser({
+                        use clap::builder::TypedValueParser as _;
+                        clap::builder::PossibleValuesParser::new(["low", "high"]).map(|s| {
+                            match s.as_str() {
+                                "low" => 0u8,
+                                "high" => 1u8,
+                                _ => unreachable!(),
+                            }
+                        })
+                    })
+                    .action(ArgAction::Set),
+            ),
+        );
+        let schema = schema_from_command(&cmd);
+        let level = schema.root.subcommands[0]
+            .args
+            .iter()
+            .find(|a| a.id == "level")
+            .expect("level");
+        assert!(
+            level.value_json_type.is_none(),
+            "lexical possible values must not advertise integer: {:?}",
+            level.value_json_type
+        );
+        assert_eq!(level.possible_values, vec!["low", "high"]);
+
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        };
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let props = tools[0]
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            props["level"].get("type").and_then(|v| v.as_str()),
+            Some("string")
+        );
+        assert_eq!(props["level"].get("enum"), Some(&json!(["low", "high"])));
+    }
+
+    #[test]
+    fn test_hidden_possible_values_still_block_integer_type() {
+        let cmd = Command::new("app").subcommand(
+            Command::new("run").arg(
+                Arg::new("level")
+                    .long("level")
+                    .hide_possible_values(true)
+                    .value_parser({
+                        use clap::builder::TypedValueParser as _;
+                        clap::builder::PossibleValuesParser::new(["low", "high"]).map(|s| {
+                            match s.as_str() {
+                                "low" => 0u8,
+                                "high" => 1u8,
+                                _ => unreachable!(),
+                            }
+                        })
+                    })
+                    .action(ArgAction::Set),
+            ),
+        );
+        let schema = schema_from_command(&cmd);
+        let level = schema.root.subcommands[0]
+            .args
+            .iter()
+            .find(|a| a.id == "level")
+            .expect("level");
+        assert!(
+            level.possible_values.is_empty(),
+            "hidden choices must not appear in advertised enum"
+        );
+        assert!(
+            level.value_json_type.is_none(),
+            "hidden lexical choices must still block integer TypeId: {:?}",
+            level.value_json_type
+        );
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        };
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let props = tools[0]
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            props["level"].get("type").and_then(|v| v.as_str()),
+            Some("string")
+        );
+        assert!(props["level"].get("enum").is_none());
+    }
+
+    #[test]
+    fn test_numeric_defaults_match_advertised_types() {
+        use serde_json::json;
+        let cmd = Command::new("app").subcommand(
+            Command::new("tune")
+                .arg(
+                    Arg::new("ratio")
+                        .long("ratio")
+                        .value_parser(clap::value_parser!(f64))
+                        .default_value("0.5")
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("ports")
+                        .long("ports")
+                        .value_parser(clap::value_parser!(u16))
+                        .num_args(1..)
+                        .default_values(["80", "443"])
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("max")
+                        .long("max")
+                        .value_parser(clap::value_parser!(u64))
+                        .default_value("18446744073709551615")
+                        .action(ArgAction::Set),
+                ),
+        );
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        }
+        .with_arg_value_json_type("tune", "ratio", "number")
+        .with_arg_value_json_type("tune", "ports", "integer")
+        .with_arg_value_json_type("tune", "max", "integer");
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let props = tools[0]
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(props["ratio"].get("default"), Some(&json!(0.5)));
+        assert_eq!(props["ports"].get("default"), Some(&json!([80, 443])));
+        assert_eq!(props["max"].get("default"), Some(&json!(u64::MAX)));
+        assert_eq!(
+            props["ratio"].get("type").and_then(|v| v.as_str()),
+            Some("number")
+        );
+        assert_eq!(
+            props["ports"].get("type").and_then(|v| v.as_str()),
+            Some("array")
+        );
+        assert_eq!(
+            props["max"].get("type").and_then(|v| v.as_str()),
+            Some("integer")
+        );
+    }
+
+    #[test]
+    fn test_unrepresentable_numeric_defaults_are_omitted() {
+        let cmd = Command::new("app").subcommand(
+            Command::new("tune")
+                .arg(
+                    Arg::new("huge")
+                        .long("huge")
+                        .value_parser(clap::value_parser!(u128))
+                        .default_value("340282366920938463463374607431768211455")
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("rate")
+                        .long("rate")
+                        .value_parser(clap::value_parser!(f64))
+                        .default_value("inf")
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("ports")
+                        .long("ports")
+                        .value_parser(clap::value_parser!(u16))
+                        .num_args(1..)
+                        .default_values(["80", "inf"])
+                        .action(ArgAction::Set),
+                ),
+        );
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        }
+        .with_arg_value_json_type("tune", "huge", "integer")
+        .with_arg_value_json_type("tune", "rate", "number")
+        .with_arg_value_json_type("tune", "ports", "integer");
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let props = tools[0]
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(
+            props["huge"].get("type").and_then(|v| v.as_str()),
+            Some("integer")
+        );
+        assert!(
+            props["huge"].get("default").is_none(),
+            "u128::MAX must not become a string default: {:?}",
+            props["huge"].get("default")
+        );
+        assert_eq!(
+            props["rate"].get("type").and_then(|v| v.as_str()),
+            Some("number")
+        );
+        assert!(
+            props["rate"].get("default").is_none(),
+            "non-finite float must not become a string default: {:?}",
+            props["rate"].get("default")
+        );
+        assert!(
+            props["ports"].get("default").is_none(),
+            "array default with unrepresentable item must be omitted: {:?}",
+            props["ports"].get("default")
+        );
+    }
+
+    #[test]
+    fn test_leaves_only_hides_parent_when_only_child_skipped() {
+        let cmd = Command::new("app").subcommand(
+            Command::new("parent")
+                .subcommand_required(true)
+                .subcommand(Command::new("internal")),
+        );
+        let schema = schema_from_command_with_metadata(
+            &cmd,
+            &ClapMcpSchemaMetadata {
+                skip_commands: vec!["internal".into()],
+                skip_root_command_when_subcommands: true,
+                leaves_only: true,
+                ..Default::default()
+            },
+        );
+        assert!(
+            schema.root.subcommands[0].had_subcommands,
+            "parent must retain pre-skip nesting flag"
+        );
+        assert!(
+            schema.root.subcommands[0].subcommands.is_empty(),
+            "skipped child removed from tree"
+        );
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig::default(),
+            &ClapMcpSchemaMetadata {
+                skip_commands: vec!["internal".into()],
+                skip_root_command_when_subcommands: true,
+                leaves_only: true,
+                ..Default::default()
+            },
+        );
+        let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+        assert!(
+            !names.contains(&"parent"),
+            "parent of only-skipped children must not become a leaf tool: {names:?}"
+        );
+        assert!(names.is_empty(), "expected no tools, got {names:?}");
+    }
+
+    #[test]
+    fn test_leaves_only_hides_parent_when_had_subcommands_defaults_false() {
+        // Older serialized schemas omit `had_subcommands` (serde default false)
+        // while still carrying a parent → child tree.
+        let schema = ClapSchema {
+            root: ClapCommand {
+                name: "app".into(),
+                about: None,
+                long_about: None,
+                version: None,
+                args: vec![],
+                arg_groups: vec![],
+                had_subcommands: false,
+                subcommands: vec![ClapCommand {
+                    name: "parent".into(),
+                    about: None,
+                    long_about: None,
+                    version: None,
+                    args: vec![],
+                    arg_groups: vec![],
+                    had_subcommands: false,
+                    subcommands: vec![ClapCommand {
+                        name: "child".into(),
+                        about: None,
+                        long_about: None,
+                        version: None,
+                        args: vec![],
+                        arg_groups: vec![],
+                        had_subcommands: false,
+                        subcommands: vec![],
+                    }],
+                }],
+            },
+        };
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig::default(),
+            &ClapMcpSchemaMetadata {
+                skip_root_command_when_subcommands: true,
+                leaves_only: true,
+                ..Default::default()
+            },
+        );
+        let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+        assert!(
+            !names.contains(&"parent"),
+            "visibly nested parent must stay hidden when had_subcommands defaults false: {names:?}"
+        );
+        assert!(
+            names.contains(&"child"),
+            "leaf child must remain: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_leaves_only_unique_leaf_inherits_root_global() {
+        let cmd = Command::new("app")
+            .arg(
+                Arg::new("verbose")
+                    .long("verbose")
+                    .global(true)
+                    .action(ArgAction::SetTrue),
+            )
+            .subcommand(
+                Command::new("parent")
+                    .subcommand_required(true)
+                    .subcommand(Command::new("greet").arg(Arg::new("name").long("name"))),
+            );
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            leaves_only: true,
+            ..Default::default()
+        };
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+        assert_eq!(
+            names,
+            vec!["greet"],
+            "unique leaf stays bare under leaves_only: {names:?}"
+        );
+        assert!(!names.contains(&"parent"));
+
+        let greet = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "greet")
+            .expect("greet");
+        let props = greet
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("props");
+        assert!(
+            props.contains_key("verbose"),
+            "root global must appear on leaves_only leaf schema: {props:?}"
+        );
+        assert!(props.contains_key("name"));
+
+        let argv = build_argv_for_clap_with_metadata(
+            &schema,
+            "greet",
+            serde_json::Map::from_iter([
+                ("name".into(), json!("Ada")),
+                ("verbose".into(), json!(true)),
+            ]),
+            Some(&metadata),
+        );
+        assert_eq!(
+            argv,
+            vec!["cli", "parent", "greet", "--name", "Ada", "--verbose"]
+        );
+        let matches = cmd.try_get_matches_from(argv).expect("clap parse");
+        assert!(matches.get_flag("verbose"));
+    }
+
+    /// Known limitation until path-qualified tool identity lands: duplicate leaf
+    /// clap names under different parents both advertise the bare leaf name, and
+    /// `command_path` / argv resolve to the first DFS match. Flip this test when
+    /// introducing an explicit advertised-name → path routing table.
+    #[test]
+    fn test_duplicate_leaf_names_advertise_bare_and_first_match_dispatch() {
+        let cmd = Command::new("app")
+            .subcommand(
+                Command::new("foo")
+                    .subcommand(Command::new("child").arg(Arg::new("from_foo").long("from-foo"))),
+            )
+            .subcommand(
+                Command::new("bar")
+                    .subcommand(Command::new("child").arg(Arg::new("from_bar").long("from-bar"))),
+            );
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            leaves_only: true,
+            ..Default::default()
+        };
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let names: Vec<_> = tools.iter().map(|t| t.name.to_string()).collect();
+        assert_eq!(
+            names.iter().filter(|n| n.as_str() == "child").count(),
+            2,
+            "duplicate leaves currently both advertise bare 'child': {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.contains("__")),
+            "path-qualified names are not advertised yet: {names:?}"
+        );
+
+        assert_eq!(
+            command_path(&schema, "child"),
+            Some(vec!["app".into(), "foo".into(), "child".into()]),
+            "bare 'child' must first-match DFS to foo/child"
+        );
+
+        let argv = build_argv_for_clap_with_metadata(
+            &schema,
+            "child",
+            serde_json::Map::from_iter([("from_foo".into(), json!("a"))]),
+            Some(&metadata),
+        );
+        assert_eq!(argv, vec!["cli", "foo", "child", "--from-foo", "a"]);
+
+        // Schema for the second tools/list entry still walks first-match path,
+        // so both tools may show foo locals — lock that footgun in until identity.
+        let schemas: Vec<_> = tools
+            .iter()
+            .filter(|t| t.name.as_ref() == "child")
+            .map(|t| {
+                t.input_schema
+                    .get("properties")
+                    .and_then(|v| v.as_object())
+                    .map(|p| p.keys().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default()
+            })
+            .collect();
+        assert_eq!(schemas.len(), 2);
+        for props in &schemas {
+            assert!(
+                props.iter().any(|k| k == "from_foo"),
+                "first-match schema path exposes foo locals on every 'child' tool: {props:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_tools_attach_sanitized_output_schema() {
+        use serde_json::json;
+        let schema =
+            schema_from_command(&clap::Command::new("app").subcommand(clap::Command::new("ping")));
+        let metadata = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            ..Default::default()
+        }
+        .with_tool_output_schema(
+            "ping",
+            json!({
+                "properties": { "ok": { "type": "boolean" } }
+            }),
+        );
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let ping = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "ping")
+            .expect("ping");
+        let out = ping.output_schema.as_ref().expect("outputSchema attached");
+        assert_eq!(out.get("type").and_then(|v| v.as_str()), Some("object"));
+        assert!(out.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_tools_omit_unrestricted_and_suppressed_per_tool_schemas() {
+        use serde_json::json;
+        let schema = schema_from_command(
+            &clap::Command::new("app")
+                .subcommand(clap::Command::new("open"))
+                .subcommand(clap::Command::new("list")),
+        );
+        let global = json!({
+            "type": "object",
+            "properties": { "ok": { "type": "boolean" } }
+        });
+        // Unrestricted per-tool schema must not be coerced into a false object contract.
+        let metadata_unrestricted = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            output_schema: Some(global.clone()),
+            ..Default::default()
+        }
+        .with_tool_output_schema("open", json!({ "title": "AnyValue" }));
+        let tools = tools_from_schema_with_metadata(
+            &schema,
+            &ClapMcpConfig::default(),
+            &metadata_unrestricted,
+        );
+        let open = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "open")
+            .expect("open");
+        assert!(
+            open.output_schema.is_none(),
+            "unrestricted per-tool schema must not advertise outputSchema"
+        );
+
+        // Explicit omit must not fall back to the global object schema.
+        let metadata_omit = ClapMcpSchemaMetadata {
+            skip_root_command_when_subcommands: true,
+            output_schema: Some(global),
+            ..Default::default()
+        }
+        .with_omit_tool_output_schema("list");
+        let tools =
+            tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata_omit);
+        let list = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "list")
+            .expect("list");
+        assert!(
+            list.output_schema.is_none(),
+            "omitted per-tool schema must not inherit global outputSchema"
+        );
+        let open = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "open")
+            .expect("open");
+        assert!(
+            open.output_schema.is_some(),
+            "sibling tools still inherit global outputSchema"
+        );
     }
 
     #[tokio::test]

@@ -6,10 +6,11 @@ publish = false
 description = "Examples for clap-mcp"
 
 [dependencies]
-clap-mcp = { path = "../clap-mcp", features = ["tracing", "log", "derive"] }
+clap-mcp = { path = "../clap-mcp", features = ["tracing", "log", "derive", "output-schema"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+schemars = "1"
 rmcp = { workspace = true }
 async-trait = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
@@ -97,6 +98,10 @@ path = "servers/panic_catch_opt_in.rs"
 [[bin]]
 name = "custom_resources_prompts"
 path = "servers/custom_resources_prompts.rs"
+
+[[bin]]
+name = "server_metadata"
+path = "servers/server_metadata.rs"
 
 [[bin]]
 name = "vec_and_flags"

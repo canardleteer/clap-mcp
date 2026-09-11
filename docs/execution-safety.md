@@ -249,8 +249,9 @@ fields. See [Supported CLI shapes — Known limitations](supported-cli-shapes.md
 ### Nested `serialize_topic` in flattened `Args`
 
 Mark shared `Args` helpers with `#[clap_mcp(args_metadata)]` (same crate) and
-place `#[clap_mcp(serialize_topic)]` on fields inside the helper. Parent variants
-with `#[clap_mcp(serialized = "...")]` list arg ids from the flattened group.
+place `#[clap_mcp(serialize_topic)]` on fields inside the helper. The flatten
+field does not need to repeat `args_metadata`. Parent variants with
+`#[clap_mcp(serialized = "...")]` list arg ids from the flattened group.
 External `Args` crates need imperative `serialize_topic_args`. Skipped flattened
 groups stay CLI-only for MCP exposure.
 
@@ -504,12 +505,26 @@ to `true` via the derive with `#[clap_mcp(skip_root_when_subcommands)]` on the
 root struct, or imperatively (e.g. implement `ClapMcpSchemaMetadataProvider` for
 the root and set the field, or build metadata manually).
 
+To advertise **only leaf** tools (omit intermediate parents that only hold nested
+`#[command(subcommand)]` trees), set
+[`ClapMcpSchemaMetadata::leaves_only`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.leaves_only)
+via `#[clap_mcp(leaves_only)]` / `leaves_only = true|false` on the root struct
+or enum, or set the field imperatively. A leaf must have no clap nesting
+**before** `skip_commands` filtering (`had_subcommands` is false) and no
+remaining children after filtering, so a parent whose only children were skipped
+does not appear as a tool and older serialized schemas that omit
+`had_subcommands` still hide visibly nested parents. Combine with
+`skip_root_when_subcommands` when the clap root should also be excluded.
+Leaf tool names still match clap leaf names.
+
 **Nested enums (schema only):** When a struct root or ancestor enum owns tool
 execution (manual `ClapMcpToolExecutor` or `#[clap_mcp_output_from]` on the
 executor type), intermediate subcommand enums can use `#[clap_mcp(schema_only)]`
 instead of a dead `#[clap_mcp_output_from]` stub. The derive emits
 `ClapMcpSchemaMetadataProvider` only; skip, requires, task, and serialization
-attrs still apply and merge into ancestor metadata. See **nested_subcommands** in
+attrs still apply and merge into ancestor metadata. `schema_only` does **not**
+hide those intermediate command names from `tools/list`; use `leaves_only` for
+that. See **nested_subcommands** in
 [examples/README.md](../examples/README.md).
 
 ## Runtime config

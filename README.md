@@ -82,8 +82,10 @@ clap-mcp = "0.1.0"
   [logging](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/logging.md)
 * Structured tool output and optional JSON `outputSchema` (global or per-tool);
   tool `inputSchema` advertises JSON Schema draft 2020-12 (`$schema`) with
-  enums, defaults, cardinality, conflicts, and `additionalProperties: false`.
-  See
+  enums, defaults, cardinality, conflicts, numeric clap value parsers as
+  `"integer"` / `"number"`, and `additionalProperties: false`.
+  Advertised `outputSchema` values are sanitized so clients that require
+  `"type": "object"` can list tools. See
   [tool-output](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/tool-output.md)
 * Subprocess stderr policy (`SubprocessStderr::Capture` default, `Notify`, or
   `Ignore`); see
@@ -93,6 +95,9 @@ clap-mcp = "0.1.0"
   or override advertised defaults (`hide_default` / `override_default`) without
   changing clap CLI defaults; see
   [usage](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/usage.md#filter-global-arguments-from-mcp-schemas)
+* Leaf-only MCP tool lists for nested CLIs (`leaves_only`, plus
+  `skip_root_when_subcommands` for the clap root); see
+  [execution-safety](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/execution-safety.md)
 * Custom MCP resources, prompts, and optional raw-schema tools (`custom_tools`);
   see [custom-content](https://github.com/canardleteer/clap-mcp/blob/HEAD/docs/custom-content.md)
 * Application server metadata (`Implementation`), server instructions, and

@@ -22,16 +22,17 @@ and shapes that are intentionally out of scope. Runnable binaries are listed in
 | Skipped flattened `Args` | `#[command(flatten)]` + `#[clap_mcp(skip)]` on field | `flatten_skip` | Every clap arg id from the flattened type is excluded, not only the Rust field name |
 | Skipped subcommand group | `#[command(subcommand)]` + `#[clap_mcp(skip)]` on field | `flatten_subcommand_skip_flat`, `flatten_subcommand_skip_nested` | `Subcommand::augment_subcommands` probe adds subcommand names to `skip_commands` (recursive) |
 | Explicit arg-id skip list | `#[clap_mcp(skip = "id1,id2")]` on field | `optional_commands_and_args` | Comma-separated clap arg ids on flatten; subcommand names on `#[command(subcommand)]` |
-| Nested `serialize_topic` in flattened `Args` | `#[clap_mcp(args_metadata)]` on shared `Args` + flatten on variant | `flatten_skip` | `#[clap_mcp(serialize_topic)]` inside the helper; same-crate `Args` source required |
+| Nested `serialize_topic` in flattened `Args` | `#[clap_mcp(args_metadata)]` on shared `Args` | `flatten_skip` | `#[clap_mcp(serialize_topic)]` inside the helper; field-level `args_metadata` is not required; same-crate `Args` source required |
 | Preserve-cli parse | `parse_or_serve_mcp_preserve_cli*` / `get_matches_preserve_cli_or_serve_mcp*` | `preserve_cli_parse` | Native `Parser::parse` when argv has no clap-mcp entry flags |
 | Struct root, subcommand only in `run` | Dual derive; delegate | `struct_subcommand_required` | Root globals not in `run` unless struct `output_from` |
 | Struct root + globals in `run` | `output_from` on struct; `schema_only` on nested enums | `struct_subcommand_globals` | Tool execution receives full parsed root; root `#[arg(global)]` appear on leaf tool `inputSchema` |
 | Annotated tools | `#[clap_mcp(read_only, idempotent, destructive, open_world, tool_title = "...")]` or `#[clap_mcp(annotation(...))]` | `docs/usage.md` | Populates `ToolAnnotations` and advertised title in `tools/list` |
-| Multi-level subcommands | `schema_only` on intermediates; auto metadata merge | `nested_subcommands` | Manual `merge_from` rarely needed |
+| Multi-level subcommands | `schema_only` on intermediates; `leaves_only` (+ optional `skip_root_when_subcommands`) for leaf-only `tools/list`; auto metadata merge | `nested_subcommands` | `schema_only` does not hide tools; `leaves_only` does |
 | Skipped shell-only tools | `#[clap_mcp(skip)]`; positionals OK on skipped variants | `optional_commands_and_args` | Skipped variants exempt from multi-positional guard |
 | Interactive / TTY / exec | `skip` | [Execution safety — Interactive](execution-safety.md#interactive-and-session-commands) | Not an MCP tool |
 | Cross-tool locking | `Mutex` / stateful / `parallel_safe = false` | [Execution safety — Cross-tool](execution-safety.md#cross-tool-serialization) | No lock-group attribute |
 | ArgGroup hints (not schema `oneOf`) | clap `#[group]` / `.group()`; `meta.clapMcp.argGroups` + description suffix | `arg_group_hints` | Advisory; parse-time enforcement only |
+| `#[arg(from_global)]` | Inherit the owning global's advertised type | `test_from_global_does_not_infer_integer_over_lexical_root` | Not a new declaration or numeric inference; custom root parsers stay `"string"` |
 
 ## Flat struct tradeoff
 
@@ -58,6 +59,11 @@ Every tool `inputSchema` advertises JSON Schema draft 2020-12 via `$schema`
   `Args` / `Subcommand` types visible to the proc macro. Opaque or dependency
   types need imperative `skip_commands`, `skip_args`, or `serialize_topic_args`.
 * `skip_commands` entries are global by subcommand name across the schema tree.
+* Duplicate leaf clap names under different parents are unsupported for MCP:
+  both tools advertise the bare leaf name, and `command_path` / argv use the
+  first DFS match. Keep clap command names unique across the tree until
+  path-qualified tool identity lands. See
+  `test_duplicate_leaf_names_advertise_bare_and_first_match_dispatch`.
 * Topical serialization (`serialized`, `serialize_topic`) gates concurrent tool
   entry only; it does not isolate
   [`ClapMcpToolExecutorWithState`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.ClapMcpToolExecutorWithState.html)

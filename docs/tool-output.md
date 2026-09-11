@@ -150,6 +150,24 @@ type must implement
 [`schemars::JsonSchema`](https://docs.rs/schemars/latest/schemars/trait.JsonSchema.html)
 (schemars **1.x**). For enums, schemars typically produces a `oneOf` schema.
 
+Prefer a concrete response struct or enum over open JSON types such as
+`serde_json::Value`. Many MCP clients require `outputSchema.type` to be
+`"object"`. clap-mcp runs advertised schemas through
+[`sanitize_mcp_output_schema`](https://docs.rs/clap-mcp/latest/clap_mcp/fn.sanitize_mcp_output_schema.html):
+schemas that already use `"type": "object"` are kept; schemas with `properties`
+(or a non-boolean `additionalProperties` schema) and no type gain
+`"type": "object"`; unrestricted / free-form schemas (empty objects, title-only
+schemars `AnyValue`, or bare `"additionalProperties": true`) are omitted;
+`oneOf` / `anyOf` / `allOf` roots are kept only when every branch is
+object-compatible after resolving local `$defs` / `definitions` references
+(JSON Pointer `~0` / `~1` escapes are decoded; cycles and non-object targets
+omit the schema). Type unions that mix `object`
+with other tokens (for example `["object","null"]` from `Option<Map<…>>`) are
+omitted rather than narrowed. Non-object `"type"` values are omitted from
+`tools/list` instead of breaking clients that reject the whole tool list. A
+per-tool `output_type` that sanitizes to nothing records an omit marker so the
+leaf does not inherit an unrelated global `output_schema`.
+
 Excerpt (requires `features = ["output-schema"]` and `JsonSchema` on the type):
 
 ```rust

@@ -4,6 +4,88 @@
 
 [← Documentation index](../README.md#documentation)
 
+## After 0.1.0 — client-safe `outputSchema`
+
+clap-mcp sanitizes tool `outputSchema` before advertising it on `tools/list`.
+Schemas whose JSON Schema `"type"` is not `"object"` are omitted. Schemas with
+`properties` (or a non-boolean `additionalProperties` schema) and no type gain
+`"type": "object"`. Unrestricted / free-form schemas (empty objects, title-only
+schemars `AnyValue`, or bare `"additionalProperties": true`) are omitted so
+tools that can return arrays or scalars do not advertise a false object
+contract. `oneOf` / `anyOf` / `allOf` without an object type are kept only when
+every branch is object-compatible after resolving local `$ref` targets in
+`$defs` / `definitions`. Local refs decode JSON Pointer escapes (`~0` / `~1`);
+cycles and non-object targets omit the schema. Type unions such as
+`["object","null"]` are omitted rather than narrowed to `"object"`. Prefer a
+concrete `JsonSchema` response type over open JSON values. See
+[tool-output.md](tool-output.md).
+
+When a per-tool `output_type` cannot be advertised after sanitization, clap-mcp
+records an omit marker so that leaf does not inherit a global `output_schema`.
+
+## After 0.1.0 — `leaves_only`
+
+Additive: `#[clap_mcp(leaves_only)]` / `leaves_only = true|false` /
+`ClapMcpSchemaMetadata::leaves_only` omits intermediate (non-leaf) commands from
+`tools/list`. A leaf must have `had_subcommands == false` (pre-skip clap nesting)
+and an empty `subcommands` list after filtering. Default remains unchanged
+(parents still appear unless you opt in). See
+[execution-safety.md](execution-safety.md).
+
+### Struct-literal compatibility for new schema fields
+
+Schema extraction and metadata now include fields that older hand-built literals
+must account for:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| [`ClapCommand::had_subcommands`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapCommand.html#structfield.had_subcommands) | `bool` | Pre-skip nesting; `#[serde(default)]` when deserializing |
+| [`ClapArg::value_json_type`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapArg.html#structfield.value_json_type) | `Option<String>` | `"integer"` / `"number"` from metadata; `#[serde(default)]` |
+| [`ClapMcpSchemaMetadata::leaves_only`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.leaves_only) | `bool` | Defaults to `false` via `Default` |
+| [`ClapMcpSchemaMetadata::omit_tool_output_schemas`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.omit_tool_output_schemas) | `Vec<String>` | Per-tool outputSchema suppressions; defaults empty |
+| [`ClapMcpSchemaMetadata::arg_value_json_types`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#structfield.arg_value_json_types) | nested `HashMap` | Per-arg `"integer"` / `"number"` / `"string"`; defaults empty |
+
+Hand-built `ClapCommand { … }` / `ClapArg { … }` struct literals that listed every
+field must add the new fields or use struct update syntax:
+
+```rust
+root: ClapCommand {
+    subcommands: leaves,
+    ..existing.root
+},
+arg: ClapArg {
+    id: "port".into(),
+    ..existing_arg
+},
+metadata: ClapMcpSchemaMetadata {
+    leaves_only: true,
+    ..existing_metadata
+},
+```
+
+`#[serde(default)]` keeps deserialized schemas compatible when `had_subcommands`
+or `value_json_type` is absent.
+
+## After 0.1.0 — numeric `inputSchema` types
+
+clap-mcp can advertise JSON Schema `"integer"` or `"number"` in tool
+`inputSchema` for numeric args (previously always `"string"` for `Set` args).
+Schema extraction does **not** execute clap value parsers or trust parser
+TypeIds alone (custom lexical parsers share numeric TypeIds). Types come from:
+
+* Derive inference for plain numeric fields without an explicit clap
+  `value_parser`
+* `#[clap_mcp(input_type = "integer"|"number"|"string")]` on a field
+* Imperative [`ClapMcpSchemaMetadata::with_arg_value_json_type`](https://docs.rs/clap-mcp/latest/clap_mcp/struct.ClapMcpSchemaMetadata.html#method.with_arg_value_json_type)
+
+Args whose value parser exposes possible values stay `"string"` (and `enum`
+when those choices are not hidden). JSON numbers in `tools/call` arguments
+stringify into argv; integral floats such as `8080.0` normalize to `"8080"`
+without saturating integer casts. Advertised defaults are coerced to match the
+property type; values that cannot be represented as JSON numbers (for example
+`u128::MAX` or `inf`) omit the `default` keyword instead of advertising a
+string. See [usage.md](usage.md#input-schema-fidelity-notes).
+
 ## RC line → 0.1.0
 
 `0.1.0` is the first non-RC release on the `0.1` line. Copy-paste dependency
@@ -396,6 +478,9 @@ Additive API (no migration required for existing embedders):
   [`ClapMcpSerializeTopic`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.ClapMcpSerializeTopic.html)
   (`impl_serialize_topic_hash_eq!`, `impl_serialize_topic_serde_eq!`)
 * **`ClapMcpSchemaMetadata::serialize_topic_args`** for imperative typed topics
+* Nested `serialize_topic` in flattened `Args` still opts in on the helper with
+  `#[clap_mcp(args_metadata)]`. Repeating that attribute on the flatten field is
+  not required.
 
 When `parallel_safe = false`, global serialization is unchanged (topical
 metadata is ignored). See

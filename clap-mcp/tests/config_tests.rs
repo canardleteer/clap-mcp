@@ -1,6 +1,6 @@
 //! Tests for ClapMcpConfig and configuration possibilities.
 
-use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap::{Arg, Args, Command, CommandFactory, Parser, Subcommand};
 use clap_mcp::AsStructured;
 use clap_mcp::ClapMcp;
 use clap_mcp::{
@@ -232,6 +232,47 @@ fn run_struct_optional_commands(cmd: TestStructOptionalCommands) -> String {
 struct TestRootSkipWhenSubcommands {
     #[command(subcommand)]
     command: Option<TestStructOptionalCommands>,
+}
+
+// Nested parents omitted from tools/list via #[clap_mcp(leaves_only)]
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(
+    reinvocation_safe,
+    parallel_safe = false,
+    skip_root_when_subcommands,
+    leaves_only
+)]
+#[clap_mcp_output_from = "run_leaves_only"]
+#[command(name = "test-leaves-only", subcommand_required = true)]
+struct TestLeavesOnly {
+    #[command(subcommand)]
+    command: TestLeavesOnlyTop,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum TestLeavesOnlyTop {
+    Parent {
+        #[command(subcommand)]
+        command: TestLeavesOnlyLeaf,
+    },
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum TestLeavesOnlyLeaf {
+    Child {
+        #[arg(long)]
+        value: String,
+    },
+}
+
+fn run_leaves_only(cli: TestLeavesOnly) -> String {
+    match cli.command {
+        TestLeavesOnlyTop::Parent { command } => match command {
+            TestLeavesOnlyLeaf::Child { value } => format!("child={value}"),
+        },
+    }
 }
 
 // Struct root with task_augmented_tools and schema_only nested enum (no root field attrs)
@@ -1575,6 +1616,50 @@ fn test_skip_root_when_subcommands_derive() {
 }
 
 #[test]
+fn test_leaves_only_hides_intermediate_tools() {
+    let cmd = Command::new("app")
+        .subcommand(Command::new("parent").subcommand(Command::new("child").arg(Arg::new("value"))))
+        .subcommand(Command::new("leaf"));
+    let schema = schema_from_command(&cmd);
+    let metadata = ClapMcpSchemaMetadata {
+        skip_root_command_when_subcommands: true,
+        leaves_only: true,
+        ..Default::default()
+    };
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        !names.contains(&"parent"),
+        "intermediate parent should be hidden: {names:?}"
+    );
+    assert!(names.contains(&"child"), "leaf child missing: {names:?}");
+    assert!(names.contains(&"leaf"), "sibling leaf missing: {names:?}");
+}
+
+#[test]
+fn test_leaves_only_derive() {
+    let metadata = TestLeavesOnly::clap_mcp_schema_metadata();
+    assert!(
+        metadata.leaves_only,
+        "derive with #[clap_mcp(leaves_only)] should set the flag"
+    );
+    assert!(metadata.skip_root_command_when_subcommands);
+    let cmd = TestLeavesOnly::command();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        !names.contains(&"test-leaves-only"),
+        "root should be skipped: {names:?}"
+    );
+    assert!(
+        !names.contains(&"parent"),
+        "intermediate parent should be hidden: {names:?}"
+    );
+    assert!(names.contains(&"child"), "leaf child missing: {names:?}");
+}
+
+#[test]
 fn test_clap_mcp_requires_arg() {
     let cmd = TestSkipRequires::command();
     let metadata = TestSkipRequires::clap_mcp_schema_metadata();
@@ -1804,6 +1889,1344 @@ fn test_tools_from_schema_with_metadata_output_schema() {
     }
 }
 
+#[cfg(feature = "output-schema")]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct GlobalObjectOut {
+    ok: bool,
+}
+
+#[cfg(feature = "output-schema")]
+#[derive(Debug, Parser, ClapMcp)]
+#[clap_mcp(reinvocation_safe, parallel_safe = false)]
+#[clap_mcp(skip_root_when_subcommands)]
+#[clap_mcp_output_from = "run_omit_leaf_schema"]
+#[clap_mcp_output_type = "GlobalObjectOut"]
+#[command(name = "test-omit-leaf-schema", subcommand_required = true)]
+enum TestOmitLeafSchema {
+    Objectish,
+    #[clap_mcp(output_type = "Vec<String>")]
+    Listed,
+}
+
+#[cfg(feature = "output-schema")]
+fn run_omit_leaf_schema(cmd: TestOmitLeafSchema) -> AsStructured<serde_json::Value> {
+    match cmd {
+        TestOmitLeafSchema::Objectish => AsStructured(serde_json::json!({ "ok": true })),
+        TestOmitLeafSchema::Listed => AsStructured(serde_json::json!(["a", "b"])),
+    }
+}
+
+#[cfg(feature = "output-schema")]
+#[test]
+fn test_non_object_leaf_output_type_does_not_inherit_global_schema() {
+    let metadata = TestOmitLeafSchema::clap_mcp_schema_metadata();
+    assert!(
+        metadata.output_schema.is_some(),
+        "global object output schema expected"
+    );
+    assert!(
+        metadata
+            .omit_tool_output_schemas
+            .iter()
+            .any(|n| n == "listed"),
+        "Vec<String> leaf must be recorded as omitted: {:?}",
+        metadata.omit_tool_output_schemas
+    );
+    assert!(
+        !metadata.tool_output_schemas.contains_key("listed"),
+        "unsanitizable leaf must not keep a tool_output_schemas entry"
+    );
+
+    let cmd = TestOmitLeafSchema::command();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let listed = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "listed")
+        .expect("listed");
+    assert!(
+        listed.output_schema.is_none(),
+        "non-object leaf override must not fall back to global object schema"
+    );
+    let objectish = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "objectish")
+        .expect("objectish");
+    assert!(
+        objectish.output_schema.is_some(),
+        "siblings without omit still inherit the global schema"
+    );
+}
+
+#[test]
+fn test_leaves_only_after_annotation_nested_meta() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(annotation(read_only = true), leaves_only)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_ann_leaves"]
+    #[command(name = "test-ann-leaves", subcommand_required = true)]
+    struct TestAnnLeaves {
+        #[command(subcommand)]
+        command: AnnTop,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum AnnTop {
+        Parent {
+            #[command(subcommand)]
+            command: AnnLeaf,
+        },
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum AnnLeaf {
+        Child,
+    }
+
+    fn run_ann_leaves(_: TestAnnLeaves) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestAnnLeaves::clap_mcp_schema_metadata();
+    assert!(
+        metadata.leaves_only,
+        "leaves_only after annotation(...) must remain visible"
+    );
+    let schema = schema_from_command_with_metadata(&TestAnnLeaves::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        !names.iter().any(|n| n.contains("parent")),
+        "intermediate parent must stay hidden: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n.contains("child")),
+        "leaf must remain: {names:?}"
+    );
+}
+
+#[test]
+fn test_derive_infers_numeric_input_type_without_custom_value_parser() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_numeric_infer"]
+    #[command(name = "test-numeric-infer", subcommand_required = true)]
+    enum TestNumericInfer {
+        Serve {
+            #[arg(long)]
+            port: u16,
+            #[arg(long)]
+            #[clap_mcp(input_type = "string")]
+            size: u64,
+            #[arg(long, value_parser = parse_kib)]
+            kib: u64,
+        },
+    }
+
+    fn parse_kib(s: &str) -> Result<u64, String> {
+        s.strip_suffix("KiB")
+            .unwrap_or(s)
+            .parse()
+            .map_err(|e: std::num::ParseIntError| e.to_string())
+    }
+
+    fn run_numeric_infer(_: TestNumericInfer) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestNumericInfer::clap_mcp_schema_metadata();
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("serve")
+            .and_then(|m| m.get("port"))
+            .map(String::as_str),
+        Some("integer")
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("serve")
+            .and_then(|m| m.get("size"))
+            .map(String::as_str),
+        Some("string")
+    );
+    assert!(
+        metadata
+            .arg_value_json_types
+            .get("serve")
+            .and_then(|m| m.get("kib"))
+            .is_none(),
+        "explicit value_parser must not infer integer: {:?}",
+        metadata.arg_value_json_types
+    );
+
+    let schema = schema_from_command_with_metadata(&TestNumericInfer::command(), &metadata);
+    let serve = schema
+        .root
+        .subcommands
+        .iter()
+        .find(|c| c.name == "serve")
+        .expect("serve");
+    assert_eq!(
+        serve
+            .args
+            .iter()
+            .find(|a| a.id == "port")
+            .and_then(|a| a.value_json_type.as_deref()),
+        Some("integer")
+    );
+    assert!(
+        serve
+            .args
+            .iter()
+            .find(|a| a.id == "kib")
+            .unwrap()
+            .value_json_type
+            .is_none()
+    );
+}
+
+#[test]
+fn test_num_args_before_value_parser_disables_numeric_inference() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_mib"]
+    #[command(name = "test-mib-parser", subcommand_required = true)]
+    enum TestMibParser {
+        Size {
+            #[arg(long, num_args(1), value_parser = parse_mib)]
+            size: u64,
+            #[arg(long)]
+            plain: u64,
+        },
+    }
+
+    fn parse_mib(s: &str) -> Result<u64, String> {
+        s.strip_suffix("MiB")
+            .unwrap_or(s)
+            .parse()
+            .map_err(|e: std::num::ParseIntError| e.to_string())
+    }
+
+    fn run_mib(_: TestMibParser) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestMibParser::clap_mcp_schema_metadata();
+    assert!(
+        metadata
+            .arg_value_json_types
+            .get("size")
+            .and_then(|m| m.get("size"))
+            .is_none(),
+        "num_args(1) before value_parser must not infer integer: {:?}",
+        metadata.arg_value_json_types
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("size")
+            .and_then(|m| m.get("plain"))
+            .map(String::as_str),
+        Some("integer")
+    );
+
+    let schema = schema_from_command_with_metadata(&TestMibParser::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let size_tool = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "size")
+        .expect("size");
+    let props = size_tool
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("size")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("string"),
+        "lexical MiB parser must advertise string: {props:?}"
+    );
+    assert_eq!(
+        props
+            .get("plain")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_struct_root_numeric_metadata_uses_clap_command_name() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp_output_from = "run_plain_root"]
+    // No #[command(name = ...)]: clap defaults to the package name, not "plain-root".
+    struct PlainRoot {
+        #[arg(long)]
+        port: u16,
+        #[arg(long)]
+        #[clap_mcp(input_type = "number")]
+        ratio: f64,
+    }
+
+    fn run_plain_root(_: PlainRoot) -> String {
+        "ok".into()
+    }
+
+    let metadata = PlainRoot::clap_mcp_schema_metadata();
+    let clap_root = PlainRoot::command().get_name().to_string();
+    assert_ne!(
+        clap_root, "plain-root",
+        "test assumes clap package name differs from kebab struct name"
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get(&clap_root)
+            .and_then(|m| m.get("port"))
+            .map(String::as_str),
+        Some("integer"),
+        "metadata must be keyed by clap root name {clap_root:?}: {:?}",
+        metadata.arg_value_json_types
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get(&clap_root)
+            .and_then(|m| m.get("ratio"))
+            .map(String::as_str),
+        Some("number")
+    );
+
+    let schema = schema_from_command_with_metadata(&PlainRoot::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let root = tools
+        .iter()
+        .find(|t| t.name.as_ref() == clap_root)
+        .unwrap_or_else(|| panic!("tool named {clap_root}"));
+    let props = root
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("port")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_flatten_args_metadata_forwards_input_types() {
+    #[derive(Debug, clap::Args, ClapMcp)]
+    #[clap_mcp(args_metadata)]
+    struct SharedArgs {
+        #[arg(long)]
+        count: u32,
+        #[arg(long)]
+        #[clap_mcp(input_type = "integer")]
+        forced: String,
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_types"]
+    #[command(name = "test-flat-types", subcommand_required = true)]
+    enum TestFlatTypes {
+        Apply {
+            #[command(flatten)]
+            #[clap_mcp(args_metadata)]
+            args: SharedArgs,
+        },
+    }
+
+    fn run_flat_types(_: TestFlatTypes) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestFlatTypes::clap_mcp_schema_metadata();
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("apply")
+            .and_then(|m| m.get("count"))
+            .map(String::as_str),
+        Some("integer"),
+        "flattened inference missing: {:?}",
+        metadata.arg_value_json_types
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("apply")
+            .and_then(|m| m.get("forced"))
+            .map(String::as_str),
+        Some("integer")
+    );
+
+    let schema = schema_from_command_with_metadata(&TestFlatTypes::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let apply = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "apply")
+        .expect("apply");
+    let props = apply
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("count")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+    assert_eq!(
+        props
+            .get("forced")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_global_numeric_type_survives_command_build() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_global_num"]
+    #[command(name = "test-global-num", subcommand_required = true)]
+    struct TestGlobalNum {
+        #[arg(long, global = true)]
+        workers: Option<u32>,
+        #[command(subcommand)]
+        command: GlobalNumCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum GlobalNumCmd {
+        Run,
+    }
+
+    fn run_global_num(_: TestGlobalNum) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestGlobalNum::clap_mcp_schema_metadata();
+    let mut cmd = TestGlobalNum::command();
+    cmd.build();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let run = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "run")
+        .expect("run");
+    let props = run
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("workers")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer"),
+        "built command must keep root global numeric type on leaf: {props:?}"
+    );
+}
+
+#[test]
+fn test_nonglobal_root_numeric_id_does_not_leak_to_child_string_id() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_id_leak"]
+    #[command(name = "test-id-leak", subcommand_required = true)]
+    struct TestIdLeak {
+        #[arg(long)]
+        id: u32,
+        #[command(subcommand)]
+        command: IdLeakCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum IdLeakCmd {
+        Show {
+            #[arg(long)]
+            id: String,
+        },
+    }
+
+    fn run_id_leak(_: TestIdLeak) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestIdLeak::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&TestIdLeak::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let show = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "show")
+        .expect("show");
+    let props = show
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("id")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("string"),
+        "child string --id must not inherit root integer --id: {props:?}"
+    );
+}
+
+#[test]
+fn test_global_string_id_does_not_inherit_sibling_integer_metadata() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_sibling_id"]
+    #[command(name = "test-sibling-id", subcommand_required = true)]
+    enum TestSiblingId {
+        Alpha {
+            #[arg(long, global = true, default_value = "")]
+            id: String,
+        },
+        Beta {
+            #[arg(long)]
+            id: u32,
+        },
+    }
+
+    fn run_sibling_id(_: TestSiblingId) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestSiblingId::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&TestSiblingId::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let alpha = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "alpha")
+        .expect("alpha");
+    let props = alpha
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("id")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("string"),
+        "global string --id must not pick up sibling integer metadata: {props:?}"
+    );
+    let beta = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "beta")
+        .expect("beta");
+    assert_eq!(
+        beta.input_schema
+            .get("properties")
+            .and_then(|v| v.get("id"))
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_hide_true_subcommand_stays_in_mcp_catalog() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_hide_keep"]
+    #[command(name = "test-hide-keep", subcommand_required = true)]
+    enum TestHideKeep {
+        Visible,
+        #[command(hide = true)]
+        ShellOnly,
+    }
+
+    fn run_hide_keep(_: TestHideKeep) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestHideKeep::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&TestHideKeep::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        names.contains(&"shell-only"),
+        "clap hide must not remove MCP tools (use #[clap_mcp(skip)]): {names:?}"
+    );
+    assert!(names.contains(&"visible"), "{names:?}");
+    assert!(
+        !names.contains(&"help"),
+        "injected help must stay out: {names:?}"
+    );
+}
+
+#[test]
+fn test_application_help_subcommand_stays_in_mcp_catalog() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_app_help"]
+    #[command(
+        name = "test-app-help",
+        subcommand_required = true,
+        disable_help_subcommand = true
+    )]
+    enum TestAppHelp {
+        Run,
+        /// Application-defined help tool (not clap's injected help).
+        Help,
+    }
+
+    fn run_app_help(_: TestAppHelp) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestAppHelp::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&TestAppHelp::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        names.contains(&"help"),
+        "explicit application help must remain an MCP tool: {names:?}"
+    );
+    assert!(names.contains(&"run"), "{names:?}");
+}
+
+#[test]
+fn test_struct_root_flatten_args_metadata_forwards_input_types() {
+    #[derive(Debug, clap::Args, ClapMcp)]
+    #[clap_mcp(args_metadata)]
+    struct FlatSharedArgs {
+        #[arg(long)]
+        count: u32,
+        #[arg(long)]
+        #[clap_mcp(input_type = "integer")]
+        code: String,
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp_output_from = "run_flat_struct_types"]
+    #[command(name = "test-flat-struct-types")]
+    struct TestFlatStructTypes {
+        #[command(flatten)]
+        #[clap_mcp(args_metadata)]
+        args: FlatSharedArgs,
+    }
+
+    fn run_flat_struct_types(_: TestFlatStructTypes) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestFlatStructTypes::clap_mcp_schema_metadata();
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("test-flat-struct-types")
+            .and_then(|m| m.get("count"))
+            .map(String::as_str),
+        Some("integer"),
+        "struct-root flatten must forward inference: {:?}",
+        metadata.arg_value_json_types
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("test-flat-struct-types")
+            .and_then(|m| m.get("code"))
+            .map(String::as_str),
+        Some("integer")
+    );
+
+    let schema = schema_from_command_with_metadata(&TestFlatStructTypes::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    assert_eq!(tools.len(), 1);
+    let props = tools[0]
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("count")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+    assert_eq!(
+        props
+            .get("code")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_child_declared_global_string_id_does_not_inherit_root_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_child_global_id"]
+    #[command(name = "test-child-global-id", subcommand_required = true)]
+    struct TestChildGlobalId {
+        #[arg(long)]
+        id: u32,
+        #[command(subcommand)]
+        command: ChildGlobalIdCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum ChildGlobalIdCmd {
+        Show {
+            #[arg(long, global = true, default_value = "")]
+            id: String,
+            #[command(subcommand)]
+            command: ChildGlobalIdLeaf,
+        },
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum ChildGlobalIdLeaf {
+        Nested,
+    }
+
+    fn run_child_global_id(_: TestChildGlobalId) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestChildGlobalId::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&TestChildGlobalId::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    for name in ["show", "nested"] {
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == name)
+            .unwrap_or_else(|| panic!("missing tool {name}"));
+        let props = tool
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("props");
+        assert_eq!(
+            props
+                .get("id")
+                .and_then(|p| p.get("type"))
+                .and_then(|t| t.as_str()),
+            Some("string"),
+            "{name}: child-declared global string --id must not inherit root integer: {props:?}"
+        );
+    }
+}
+
+#[test]
+fn test_child_local_size_override_does_not_inherit_root_global_integer() {
+    fn parse_mib(s: &str) -> Result<u64, String> {
+        s.strip_suffix("MiB")
+            .unwrap_or(s)
+            .parse()
+            .map_err(|e: std::num::ParseIntError| e.to_string())
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_size_override"]
+    #[command(name = "test-size-override", subcommand_required = true)]
+    struct TestSizeOverride {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: SizeOverrideCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum SizeOverrideCmd {
+        Measure {
+            /// Lexical parser (`8MiB`); must stay string despite root global u64.
+            #[arg(long, value_parser = parse_mib)]
+            size: u64,
+        },
+    }
+
+    fn run_size_override(_: TestSizeOverride) -> String {
+        "ok".into()
+    }
+
+    assert!(
+        TestSizeOverride::command()
+            .try_get_matches_from(["test-size-override", "measure", "--size", "8MiB"])
+            .is_ok(),
+        "native clap must accept lexical --size on the child override"
+    );
+
+    let metadata = TestSizeOverride::clap_mcp_schema_metadata();
+    for built in [false, true] {
+        let mut cmd = TestSizeOverride::command();
+        if built {
+            cmd.build();
+        }
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let measure = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "measure")
+            .expect("measure");
+        let props = measure
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("props");
+        assert_eq!(
+            props
+                .get("size")
+                .and_then(|p| p.get("type"))
+                .and_then(|t| t.as_str()),
+            Some("string"),
+            "built={built}: child lexical --size must not inherit root global integer: {props:?}"
+        );
+    }
+}
+
+#[test]
+fn test_child_global_size_override_does_not_inherit_root_integer_on_descendants() {
+    fn parse_mib(s: &str) -> Result<u64, String> {
+        s.strip_suffix("MiB")
+            .unwrap_or(s)
+            .parse()
+            .map_err(|e: std::num::ParseIntError| e.to_string())
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_global_size_override"]
+    #[command(name = "test-global-size-override", subcommand_required = true)]
+    struct TestGlobalSizeOverride {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: GlobalSizeOverrideCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum GlobalSizeOverrideCmd {
+        Measure {
+            #[arg(long, global = true, value_parser = parse_mib)]
+            size: Option<u64>,
+            #[command(subcommand)]
+            command: GlobalSizeOverrideLeaf,
+        },
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum GlobalSizeOverrideLeaf {
+        Inspect,
+    }
+
+    fn run_global_size_override(_: TestGlobalSizeOverride) -> String {
+        "ok".into()
+    }
+
+    assert!(
+        TestGlobalSizeOverride::command()
+            .try_get_matches_from([
+                "test-global-size-override",
+                "measure",
+                "inspect",
+                "--size",
+                "8MiB",
+            ])
+            .is_ok(),
+        "native clap must accept lexical --size on a child-declared global override"
+    );
+
+    let metadata = TestGlobalSizeOverride::clap_mcp_schema_metadata();
+    for built in [false, true] {
+        let mut cmd = TestGlobalSizeOverride::command();
+        if built {
+            cmd.build();
+        }
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        for name in ["measure", "inspect"] {
+            let tool = tools
+                .iter()
+                .find(|t| t.name.as_ref() == name)
+                .unwrap_or_else(|| panic!("missing tool {name}"));
+            let props = tool
+                .input_schema
+                .get("properties")
+                .and_then(|v| v.as_object())
+                .expect("props");
+            assert_eq!(
+                props
+                    .get("size")
+                    .and_then(|p| p.get("type"))
+                    .and_then(|t| t.as_str()),
+                Some("string"),
+                "built={built} {name}: child-declared global lexical --size must stay string: {props:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_type_level_flatten_serialize_topic_keeps_case_insensitive_lock_keys() {
+    #[derive(Debug, Clone)]
+    struct ResourceName(#[allow(dead_code)] String);
+
+    impl std::str::FromStr for ResourceName {
+        type Err = std::convert::Infallible;
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            Ok(Self(s.to_string()))
+        }
+    }
+
+    impl clap_mcp::ClapMcpSerializeTopic for ResourceName {
+        fn serialize_topic_segment(value: &serde_json::Value) -> Option<String> {
+            value.as_str().map(|s| s.to_ascii_lowercase())
+        }
+    }
+
+    #[derive(Debug, Args, ClapMcp)]
+    #[clap_mcp(args_metadata)]
+    struct ResourceArgs {
+        #[clap_mcp(serialize_topic)]
+        #[arg(long)]
+        name: ResourceName,
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = true, parallel_safe = true)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_type_level_topic"]
+    #[command(name = "test-type-level-topic", subcommand_required = true)]
+    enum TestTypeLevelTopic {
+        #[clap_mcp(serialized = "name")]
+        Fetch {
+            #[command(flatten)]
+            args: ResourceArgs,
+        },
+    }
+
+    fn run_type_level_topic(_: TestTypeLevelTopic) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestTypeLevelTopic::clap_mcp_schema_metadata();
+    let segment = metadata
+        .serialize_topic_args
+        .get("fetch")
+        .and_then(|m| m.get("name"))
+        .copied()
+        .expect("type-level args_metadata must forward serialize_topic without field attr");
+    assert_eq!(
+        segment(&serde_json::json!("ALICE")),
+        segment(&serde_json::json!("alice"))
+    );
+    assert_eq!(
+        segment(&serde_json::json!("artifact")),
+        segment(&serde_json::json!("ARTIFACT"))
+    );
+
+    let schema = schema_from_command_with_metadata(&TestTypeLevelTopic::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(
+        &schema,
+        &ClapMcpConfig {
+            reinvocation_safe: true,
+            parallel_safe: true,
+            ..Default::default()
+        },
+        &metadata,
+    );
+    let fetch = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "fetch")
+        .expect("fetch");
+    let meta = fetch
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("clapMcp"))
+        .and_then(|v| v.as_object())
+        .expect("clapMcp meta");
+    assert_eq!(
+        meta.get("serializeTopicArgs").and_then(|v| v.as_array()),
+        Some(&vec![serde_json::json!("name")])
+    );
+}
+
+#[test]
+fn test_serialized_local_arg_with_plain_flatten_options_compiles() {
+    mod shared {
+        use clap::Args;
+
+        #[derive(Debug, Args)]
+        pub struct Options {
+            #[arg(long)]
+            pub verbose: bool,
+        }
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = true, parallel_safe = true)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_serialized_plain_flat"]
+    #[command(name = "test-serialized-plain-flat", subcommand_required = true)]
+    enum TestSerializedPlainFlat {
+        #[clap_mcp(serialized = "id")]
+        Flush {
+            #[arg(long)]
+            id: String,
+            #[command(flatten)]
+            options: shared::Options,
+        },
+    }
+
+    fn run_serialized_plain_flat(_: TestSerializedPlainFlat) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestSerializedPlainFlat::clap_mcp_schema_metadata();
+    assert!(
+        matches!(
+            metadata.serialize_tools.get("flush"),
+            Some(ClapMcpSerializeScope::Args(ids)) if ids.iter().any(|s| s == "id")
+        ),
+        "serialized = \"id\" must remain on flush: {:?}",
+        metadata.serialize_tools
+    );
+    let schema = schema_from_command_with_metadata(&TestSerializedPlainFlat::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(
+        &schema,
+        &ClapMcpConfig {
+            reinvocation_safe: true,
+            parallel_safe: true,
+            ..Default::default()
+        },
+        &metadata,
+    );
+    let flush = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "flush")
+        .expect("flush");
+    let props = flush
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert!(props.contains_key("id"), "{props:?}");
+    assert!(props.contains_key("verbose"), "{props:?}");
+}
+
+#[test]
+fn test_unnamed_struct_root_flatten_args_metadata_uses_clap_command_name() {
+    #[derive(Debug, clap::Args, ClapMcp)]
+    #[clap_mcp(args_metadata)]
+    struct UnnamedFlatArgs {
+        #[arg(long)]
+        count: u32,
+        #[arg(long)]
+        #[clap_mcp(input_type = "number")]
+        ratio: String,
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp_output_from = "run_unnamed_flat"]
+    // No #[command(name)] — clap uses the package / binary name at runtime.
+    struct TestUnnamedFlatRoot {
+        #[command(flatten)]
+        #[clap_mcp(args_metadata)]
+        args: UnnamedFlatArgs,
+    }
+
+    fn run_unnamed_flat(_: TestUnnamedFlatRoot) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestUnnamedFlatRoot::clap_mcp_schema_metadata();
+    let live_root = TestUnnamedFlatRoot::command().get_name().to_string();
+    assert_ne!(
+        live_root, "test-unnamed-flat-root",
+        "regression requires clap live name != Rust kebab: {live_root}"
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get(&live_root)
+            .and_then(|m| m.get("count"))
+            .map(String::as_str),
+        Some("integer"),
+        "flatten merge must key by live clap root ({live_root}): {:?}",
+        metadata.arg_value_json_types
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get(&live_root)
+            .and_then(|m| m.get("ratio"))
+            .map(String::as_str),
+        Some("number")
+    );
+
+    let schema = schema_from_command_with_metadata(&TestUnnamedFlatRoot::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    assert_eq!(tools.len(), 1);
+    let props = tools[0]
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("count")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer"),
+        "{props:?}"
+    );
+    assert_eq!(
+        props
+            .get("ratio")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("number"),
+        "{props:?}"
+    );
+}
+
+#[test]
+fn test_relative_path_flatten_args_metadata_forwards_input_types() {
+    mod shared {
+        use clap::Args;
+        use clap_mcp::ClapMcp;
+
+        #[derive(Debug, Args, ClapMcp)]
+        #[clap_mcp(args_metadata)]
+        pub struct Options {
+            #[arg(long)]
+            pub workers: u32,
+            #[arg(long)]
+            #[clap_mcp(input_type = "integer")]
+            pub code: String,
+        }
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp_output_from = "run_rel_flat"]
+    #[command(name = "test-rel-flat")]
+    struct TestRelFlat {
+        #[command(flatten)]
+        #[clap_mcp(args_metadata)]
+        // Relative path (not `crate::…`) must still forward types.
+        opts: shared::Options,
+    }
+
+    fn run_rel_flat(_: TestRelFlat) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestRelFlat::clap_mcp_schema_metadata();
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("test-rel-flat")
+            .and_then(|m| m.get("workers"))
+            .map(String::as_str),
+        Some("integer"),
+        "{:?}",
+        metadata.arg_value_json_types
+    );
+    assert_eq!(
+        metadata
+            .arg_value_json_types
+            .get("test-rel-flat")
+            .and_then(|m| m.get("code"))
+            .map(String::as_str),
+        Some("integer")
+    );
+
+    let schema = schema_from_command_with_metadata(&TestRelFlat::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let props = tools[0]
+        .input_schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("props");
+    assert_eq!(
+        props
+            .get("workers")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+    assert_eq!(
+        props
+            .get("code")
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_already_built_command_omits_auto_help_from_mcp_catalog() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(leaves_only)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_built_help"]
+    #[command(name = "test-built-help", subcommand_required = true)]
+    enum TestBuiltHelp {
+        Greet,
+    }
+
+    fn run_built_help(_: TestBuiltHelp) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestBuiltHelp::clap_mcp_schema_metadata();
+    let mut cmd = TestBuiltHelp::command();
+    cmd.build();
+    let schema = schema_from_command_with_metadata(&cmd, &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        !names.contains(&"help"),
+        "already-built Command must still omit clap auto-help: {names:?}"
+    );
+    assert_eq!(
+        names.iter().filter(|n| **n == "greet").count(),
+        1,
+        "leaf tool must appear once: {names:?}"
+    );
+}
+
+#[test]
+fn test_schema_only_enum_matching_variant_name_compiles_with_numeric_types() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_status_root"]
+    #[command(name = "test-status-root", subcommand_required = true)]
+    struct TestStatusRoot {
+        #[command(subcommand)]
+        command: Status,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum Status {
+        Status {
+            #[arg(long)]
+            count: u32,
+        },
+    }
+
+    fn run_status_root(_: TestStatusRoot) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestStatusRoot::clap_mcp_schema_metadata();
+    let schema = schema_from_command_with_metadata(&TestStatusRoot::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let status = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "status")
+        .expect("status");
+    assert_eq!(
+        status
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.get("count"))
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str()),
+        Some("integer")
+    );
+}
+
+#[test]
+fn test_leaves_only_equals_false_disables_flag() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(leaves_only = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_leaves_false"]
+    #[command(name = "test-leaves-false", subcommand_required = true)]
+    struct TestLeavesFalse {
+        #[command(subcommand)]
+        command: LeavesFalseTop,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum LeavesFalseTop {
+        Parent {
+            #[command(subcommand)]
+            command: LeavesFalseLeaf,
+        },
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum LeavesFalseLeaf {
+        Child,
+    }
+
+    fn run_leaves_false(_: TestLeavesFalse) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestLeavesFalse::clap_mcp_schema_metadata();
+    assert!(
+        !metadata.leaves_only,
+        "leaves_only = false must disable the flag, not enable it"
+    );
+    let schema = schema_from_command_with_metadata(&TestLeavesFalse::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+    let names: Vec<_> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(
+        names.iter().any(|n| n.contains("parent")),
+        "with leaves_only disabled, intermediate parents stay advertised: {names:?}"
+    );
+}
+
 #[test]
 fn test_preserve_cli_argv_detection_for_normal_cli() {
     let flags = TestCliDefaults::clap_mcp_config().builtin_flags;
@@ -1821,4 +3244,940 @@ fn test_preserve_cli_argv_detection_for_normal_cli() {
         !argv_contains_clap_mcp_flags(&passthrough, &flags),
         "tokens after -- must not count as clap-mcp entry flags"
     );
+}
+
+fn parse_mib_token(s: &str) -> Result<u64, String> {
+    s.strip_suffix("MiB")
+        .unwrap_or(s)
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())
+}
+
+fn tool_arg_json_type(
+    cmd: &Command,
+    metadata: &ClapMcpSchemaMetadata,
+    tool: &str,
+    arg: &str,
+) -> Option<String> {
+    let schema = schema_from_command_with_metadata(cmd, metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), metadata);
+    let tool = tools.iter().find(|t| t.name.as_ref() == tool)?;
+    tool.input_schema
+        .get("properties")?
+        .as_object()?
+        .get(arg)?
+        .get("type")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn assert_clap_accepts(cmd: Command, argv: &[&str], msg: &str) {
+    assert!(
+        cmd.try_get_matches_from(argv).is_ok(),
+        "{msg}: argv={argv:?}"
+    );
+}
+
+fn assert_tool_arg_type_fresh_and_built(
+    make_cmd: impl Fn() -> Command,
+    metadata: &ClapMcpSchemaMetadata,
+    tool: &str,
+    arg: &str,
+    expected: &str,
+) {
+    for built in [false, true] {
+        let mut cmd = make_cmd();
+        if built {
+            cmd.build();
+        }
+        assert_eq!(
+            tool_arg_json_type(&cmd, metadata, tool, arg).as_deref(),
+            Some(expected),
+            "built={built} {tool}.{arg} must be {expected}"
+        );
+    }
+}
+
+#[derive(Debug, Args)]
+struct OrdinaryLexicalSizeArgs {
+    #[arg(long, value_parser = parse_mib_token)]
+    size: u64,
+}
+
+#[derive(Debug, Args)]
+struct OrdinaryGlobalLexicalSizeArgs {
+    #[arg(long, global = true, value_parser = parse_mib_token)]
+    size: Option<u64>,
+}
+
+#[derive(Debug, Args, ClapMcp)]
+#[clap_mcp(args_metadata)]
+struct MetaLexicalSizeArgs {
+    #[arg(long, value_parser = parse_mib_token)]
+    size: u64,
+}
+
+#[derive(Debug, Args, ClapMcp)]
+#[clap_mcp(args_metadata)]
+struct MetaGlobalLexicalSizeArgs {
+    #[arg(long, global = true, value_parser = parse_mib_token)]
+    size: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+struct OrdinaryNestedLexicalSizeArgs {
+    #[command(flatten)]
+    inner: OrdinaryLexicalSizeArgs,
+}
+
+#[derive(Debug, Args, ClapMcp)]
+#[clap_mcp(args_metadata)]
+struct MetaNestedLexicalSizeArgs {
+    #[command(flatten)]
+    inner: MetaLexicalSizeArgs,
+}
+
+#[derive(Debug, Args)]
+struct OrdinaryGlobalLexicalSizeWithInspect {
+    #[command(flatten)]
+    size: OrdinaryGlobalLexicalSizeArgs,
+    #[command(subcommand)]
+    command: OrdinaryGlobalLexicalInspect,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum OrdinaryGlobalLexicalInspect {
+    Inspect,
+}
+
+#[derive(Debug, Args)]
+struct MetaGlobalLexicalSizeWithInspect {
+    #[command(flatten)]
+    size: MetaGlobalLexicalSizeArgs,
+    #[command(subcommand)]
+    command: MetaGlobalLexicalInspect,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum MetaGlobalLexicalInspect {
+    Inspect,
+}
+
+#[test]
+fn test_flatten_ordinary_local_size_vs_root_global_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_ord_local_global"]
+    #[command(name = "test-flat-ord-local-g", subcommand_required = true)]
+    struct TestFlatOrdLocalGlobal {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatOrdLocalGlobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatOrdLocalGlobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: OrdinaryLexicalSizeArgs,
+        },
+    }
+
+    fn run_flat_ord_local_global(_: TestFlatOrdLocalGlobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatOrdLocalGlobal::command(),
+        &["test-flat-ord-local-g", "measure", "--size", "8MiB"],
+        "ordinary flatten local --size must accept 8MiB against a root global integer",
+    );
+    let metadata = TestFlatOrdLocalGlobal::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestFlatOrdLocalGlobal::command,
+        &metadata,
+        "measure",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_flatten_ordinary_global_size_vs_root_global_integer_on_descendants() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_ord_global_global"]
+    #[command(name = "test-flat-ord-glob-g", subcommand_required = true)]
+    struct TestFlatOrdGlobalGlobal {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatOrdGlobalGlobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatOrdGlobalGlobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: OrdinaryGlobalLexicalSizeWithInspect,
+        },
+    }
+
+    fn run_flat_ord_global_global(_: TestFlatOrdGlobalGlobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatOrdGlobalGlobal::command(),
+        &[
+            "test-flat-ord-glob-g",
+            "measure",
+            "inspect",
+            "--size",
+            "8MiB",
+        ],
+        "ordinary flatten global --size must accept 8MiB on descendants",
+    );
+    let metadata = TestFlatOrdGlobalGlobal::clap_mcp_schema_metadata();
+    for tool in ["measure", "inspect"] {
+        assert_tool_arg_type_fresh_and_built(
+            TestFlatOrdGlobalGlobal::command,
+            &metadata,
+            tool,
+            "size",
+            "string",
+        );
+    }
+}
+
+#[test]
+fn test_flatten_ordinary_local_size_vs_root_nonglobal_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_ord_local_nonglobal"]
+    #[command(name = "test-flat-ord-local-ng", subcommand_required = true)]
+    struct TestFlatOrdLocalNonglobal {
+        #[arg(long)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatOrdLocalNonglobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatOrdLocalNonglobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: OrdinaryLexicalSizeArgs,
+        },
+    }
+
+    fn run_flat_ord_local_nonglobal(_: TestFlatOrdLocalNonglobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatOrdLocalNonglobal::command(),
+        &["test-flat-ord-local-ng", "measure", "--size", "8MiB"],
+        "ordinary flatten local --size must accept 8MiB against a root non-global integer",
+    );
+    let metadata = TestFlatOrdLocalNonglobal::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestFlatOrdLocalNonglobal::command,
+        &metadata,
+        "measure",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_flatten_ordinary_global_size_vs_root_nonglobal_integer_on_descendants() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_ord_global_nonglobal"]
+    #[command(name = "test-flat-ord-glob-ng", subcommand_required = true)]
+    struct TestFlatOrdGlobalNonglobal {
+        #[arg(long)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatOrdGlobalNonglobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatOrdGlobalNonglobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: OrdinaryGlobalLexicalSizeWithInspect,
+        },
+    }
+
+    fn run_flat_ord_global_nonglobal(_: TestFlatOrdGlobalNonglobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatOrdGlobalNonglobal::command(),
+        &[
+            "test-flat-ord-glob-ng",
+            "measure",
+            "inspect",
+            "--size",
+            "8MiB",
+        ],
+        "ordinary flatten global --size must accept 8MiB against a root non-global integer",
+    );
+    let metadata = TestFlatOrdGlobalNonglobal::clap_mcp_schema_metadata();
+    for tool in ["measure", "inspect"] {
+        assert_tool_arg_type_fresh_and_built(
+            TestFlatOrdGlobalNonglobal::command,
+            &metadata,
+            tool,
+            "size",
+            "string",
+        );
+    }
+}
+
+#[test]
+fn test_flatten_meta_local_size_vs_root_global_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_meta_local_global"]
+    #[command(name = "test-flat-meta-local-g", subcommand_required = true)]
+    struct TestFlatMetaLocalGlobal {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatMetaLocalGlobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatMetaLocalGlobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: MetaLexicalSizeArgs,
+        },
+    }
+
+    fn run_flat_meta_local_global(_: TestFlatMetaLocalGlobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatMetaLocalGlobal::command(),
+        &["test-flat-meta-local-g", "measure", "--size", "8MiB"],
+        "args_metadata flatten local --size must accept 8MiB against a root global integer",
+    );
+    let metadata = TestFlatMetaLocalGlobal::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestFlatMetaLocalGlobal::command,
+        &metadata,
+        "measure",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_flatten_meta_global_size_vs_root_global_integer_on_descendants() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_meta_global_global"]
+    #[command(name = "test-flat-meta-glob-g", subcommand_required = true)]
+    struct TestFlatMetaGlobalGlobal {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatMetaGlobalGlobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatMetaGlobalGlobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: MetaGlobalLexicalSizeWithInspect,
+        },
+    }
+
+    fn run_flat_meta_global_global(_: TestFlatMetaGlobalGlobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatMetaGlobalGlobal::command(),
+        &[
+            "test-flat-meta-glob-g",
+            "measure",
+            "inspect",
+            "--size",
+            "8MiB",
+        ],
+        "args_metadata flatten global --size must accept 8MiB on descendants",
+    );
+    let metadata = TestFlatMetaGlobalGlobal::clap_mcp_schema_metadata();
+    for tool in ["measure", "inspect"] {
+        assert_tool_arg_type_fresh_and_built(
+            TestFlatMetaGlobalGlobal::command,
+            &metadata,
+            tool,
+            "size",
+            "string",
+        );
+    }
+}
+
+#[test]
+fn test_flatten_meta_local_size_vs_root_nonglobal_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_meta_local_nonglobal"]
+    #[command(name = "test-flat-meta-local-ng", subcommand_required = true)]
+    struct TestFlatMetaLocalNonglobal {
+        #[arg(long)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatMetaLocalNonglobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatMetaLocalNonglobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: MetaLexicalSizeArgs,
+        },
+    }
+
+    fn run_flat_meta_local_nonglobal(_: TestFlatMetaLocalNonglobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatMetaLocalNonglobal::command(),
+        &["test-flat-meta-local-ng", "measure", "--size", "8MiB"],
+        "args_metadata flatten local --size must accept 8MiB against a root non-global integer",
+    );
+    let metadata = TestFlatMetaLocalNonglobal::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestFlatMetaLocalNonglobal::command,
+        &metadata,
+        "measure",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_flatten_meta_global_size_vs_root_nonglobal_integer_on_descendants() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_meta_global_nonglobal"]
+    #[command(name = "test-flat-meta-glob-ng", subcommand_required = true)]
+    struct TestFlatMetaGlobalNonglobal {
+        #[arg(long)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatMetaGlobalNonglobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatMetaGlobalNonglobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: MetaGlobalLexicalSizeWithInspect,
+        },
+    }
+
+    fn run_flat_meta_global_nonglobal(_: TestFlatMetaGlobalNonglobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatMetaGlobalNonglobal::command(),
+        &[
+            "test-flat-meta-glob-ng",
+            "measure",
+            "inspect",
+            "--size",
+            "8MiB",
+        ],
+        "args_metadata flatten global --size must accept 8MiB against a root non-global integer",
+    );
+    let metadata = TestFlatMetaGlobalNonglobal::clap_mcp_schema_metadata();
+    for tool in ["measure", "inspect"] {
+        assert_tool_arg_type_fresh_and_built(
+            TestFlatMetaGlobalNonglobal::command,
+            &metadata,
+            tool,
+            "size",
+            "string",
+        );
+    }
+}
+
+#[test]
+fn test_two_level_flatten_ordinary_size_vs_root_global_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_two_level_ord"]
+    #[command(name = "test-two-level-ord-g", subcommand_required = true)]
+    struct TestTwoLevelOrdGlobal {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: TwoLevelOrdGlobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum TwoLevelOrdGlobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: OrdinaryNestedLexicalSizeArgs,
+        },
+    }
+
+    fn run_two_level_ord(_: TestTwoLevelOrdGlobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestTwoLevelOrdGlobal::command(),
+        &["test-two-level-ord-g", "measure", "--size", "8MiB"],
+        "two-level ordinary flatten --size must accept 8MiB",
+    );
+    let metadata = TestTwoLevelOrdGlobal::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestTwoLevelOrdGlobal::command,
+        &metadata,
+        "measure",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_two_level_flatten_meta_size_vs_root_nonglobal_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_two_level_meta"]
+    #[command(name = "test-two-level-meta-ng", subcommand_required = true)]
+    struct TestTwoLevelMetaNonglobal {
+        #[arg(long)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: TwoLevelMetaNonglobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum TwoLevelMetaNonglobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: MetaNestedLexicalSizeArgs,
+        },
+    }
+
+    fn run_two_level_meta(_: TestTwoLevelMetaNonglobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestTwoLevelMetaNonglobal::command(),
+        &["test-two-level-meta-ng", "measure", "--size", "8MiB"],
+        "two-level args_metadata flatten --size must accept 8MiB against a root non-global integer",
+    );
+    let metadata = TestTwoLevelMetaNonglobal::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestTwoLevelMetaNonglobal::command,
+        &metadata,
+        "measure",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_hide_possible_values_on_inherited_global_is_not_ownership() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_hide_pv"]
+    #[command(name = "test-hide-pv-inherit", subcommand_required = true)]
+    struct TestHidePvInherit {
+        #[arg(long, global = true)]
+        workers: Option<u32>,
+        #[command(subcommand)]
+        command: HidePvInheritCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum HidePvInheritCmd {
+        Run,
+    }
+
+    fn run_hide_pv(_: TestHidePvInherit) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestHidePvInherit::clap_mcp_schema_metadata();
+    let mut cmd = TestHidePvInherit::command();
+    cmd.build();
+    cmd = cmd.mut_subcommand("run", |run| {
+        run.mut_arg("workers", |a| a.hide_possible_values(true))
+    });
+    assert_eq!(
+        tool_arg_json_type(&cmd, &metadata, "run", "workers").as_deref(),
+        Some("integer"),
+        "hide_possible_values on an inherited global is presentation, not ownership"
+    );
+}
+
+#[test]
+fn test_skip_flatten_lexical_size_is_not_advertised() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_skip_flat_size"]
+    #[command(name = "test-skip-flat-size", subcommand_required = true)]
+    enum TestSkipFlatSize {
+        Measure {
+            #[clap_mcp(skip)]
+            #[command(flatten)]
+            args: OrdinaryLexicalSizeArgs,
+            #[arg(long)]
+            label: String,
+        },
+    }
+
+    fn run_skip_flat_size(_: TestSkipFlatSize) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestSkipFlatSize::clap_mcp_schema_metadata();
+    for built in [false, true] {
+        let mut cmd = TestSkipFlatSize::command();
+        if built {
+            cmd.build();
+        }
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let measure = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "measure")
+            .expect("measure");
+        let props = measure
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("props");
+        assert!(
+            !props.contains_key("size"),
+            "built={built}: skipped flatten --size must not be advertised: {props:?}"
+        );
+        assert!(
+            props.contains_key("label"),
+            "built={built}: non-skipped --label must remain: {props:?}"
+        );
+    }
+}
+
+#[test]
+fn test_struct_root_flatten_lexical_size_is_string() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp_output_from = "run_struct_flat_size"]
+    #[command(name = "test-struct-flat-size")]
+    struct TestStructFlatSize {
+        #[command(flatten)]
+        args: OrdinaryLexicalSizeArgs,
+    }
+
+    fn run_struct_flat_size(_: TestStructFlatSize) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestStructFlatSize::command(),
+        &["test-struct-flat-size", "--size", "8MiB"],
+        "struct-root flatten lexical --size must accept 8MiB",
+    );
+    let metadata = TestStructFlatSize::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestStructFlatSize::command,
+        &metadata,
+        "test-struct-flat-size",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_imperative_declared_arg_id_blocks_parent_integer() {
+    let cmd = Command::new("test-imp-decl-size")
+        .disable_help_subcommand(true)
+        .arg(
+            Arg::new("size")
+                .long("size")
+                .global(true)
+                .value_parser(clap::value_parser!(u64)),
+        )
+        .subcommand(
+            Command::new("measure")
+                .arg(Arg::new("size").long("size").value_parser(parse_mib_token)),
+        );
+    let metadata = ClapMcpSchemaMetadata::default()
+        .with_arg_value_json_type("test-imp-decl-size", "size", "integer")
+        .with_declared_arg_id("measure", "size");
+
+    assert_clap_accepts(
+        cmd.clone(),
+        &["test-imp-decl-size", "measure", "--size", "8MiB"],
+        "imperative child lexical --size must accept 8MiB",
+    );
+    assert_tool_arg_type_fresh_and_built(|| cmd.clone(), &metadata, "measure", "size", "string");
+}
+
+#[test]
+fn test_imperative_empty_declaration_map_inherits_parent_global_integer() {
+    let cmd = Command::new("test-imp-inherit-workers")
+        .disable_help_subcommand(true)
+        .arg(
+            Arg::new("workers")
+                .long("workers")
+                .global(true)
+                .value_parser(clap::value_parser!(u32)),
+        )
+        .subcommand(Command::new("run"));
+    let metadata = ClapMcpSchemaMetadata::default().with_arg_value_json_type(
+        "test-imp-inherit-workers",
+        "workers",
+        "integer",
+    );
+    assert_tool_arg_type_fresh_and_built(|| cmd.clone(), &metadata, "run", "workers", "integer");
+}
+
+#[test]
+fn test_unnamed_struct_root_global_workers_integer_on_descendants() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_unnamed_workers"]
+    #[command(subcommand_required = true)]
+    struct TestUnnamedWorkersRoot {
+        #[arg(long, global = true)]
+        workers: Option<u32>,
+        #[command(subcommand)]
+        command: UnnamedWorkersTop,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum UnnamedWorkersTop {
+        Parent {
+            #[command(subcommand)]
+            command: UnnamedWorkersLeaf,
+        },
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum UnnamedWorkersLeaf {
+        Run,
+    }
+
+    fn run_unnamed_workers(_: TestUnnamedWorkersRoot) -> String {
+        "ok".into()
+    }
+
+    let live_root = TestUnnamedWorkersRoot::command().get_name().to_string();
+    assert_ne!(
+        live_root, "test-unnamed-workers-root",
+        "regression requires clap live name != Rust kebab: {live_root}"
+    );
+    let metadata = TestUnnamedWorkersRoot::clap_mcp_schema_metadata();
+    assert!(
+        metadata
+            .declared_arg_ids
+            .get(&live_root)
+            .is_some_and(|ids| ids.iter().any(|id| id == "workers")),
+        "direct declarations must key by live clap root ({live_root}): {:?}",
+        metadata.declared_arg_ids
+    );
+    assert_clap_accepts(
+        TestUnnamedWorkersRoot::command(),
+        &[&live_root, "parent", "run", "--workers", "4"],
+        "native clap must accept numeric --workers on the grandchild",
+    );
+    for tool in ["parent", "run"] {
+        assert_tool_arg_type_fresh_and_built(
+            TestUnnamedWorkersRoot::command,
+            &metadata,
+            tool,
+            "workers",
+            "integer",
+        );
+    }
+}
+
+#[test]
+fn test_imperative_root_global_integer_survives_two_subcommand_levels() {
+    let cmd = Command::new("test-imp-two-level-workers")
+        .disable_help_subcommand(true)
+        .arg(
+            Arg::new("workers")
+                .long("workers")
+                .global(true)
+                .value_parser(clap::value_parser!(u32)),
+        )
+        .subcommand(Command::new("parent").subcommand(Command::new("leaf")));
+    let metadata = ClapMcpSchemaMetadata::default().with_arg_value_json_type(
+        "test-imp-two-level-workers",
+        "workers",
+        "integer",
+    );
+    assert_clap_accepts(
+        cmd.clone(),
+        &[
+            "test-imp-two-level-workers",
+            "parent",
+            "leaf",
+            "--workers",
+            "4",
+        ],
+        "native clap must accept numeric --workers two levels down",
+    );
+    for tool in ["parent", "leaf"] {
+        assert_tool_arg_type_fresh_and_built(|| cmd.clone(), &metadata, tool, "workers", "integer");
+    }
+}
+
+#[test]
+fn test_imperative_child_local_size_does_not_inherit_root_integer() {
+    let cmd = Command::new("test-imp-local-size")
+        .disable_help_subcommand(true)
+        .arg(
+            Arg::new("size")
+                .long("size")
+                .global(true)
+                .value_parser(clap::value_parser!(u64)),
+        )
+        .subcommand(
+            Command::new("measure")
+                .arg(Arg::new("size").long("size").value_parser(parse_mib_token)),
+        );
+    let metadata = ClapMcpSchemaMetadata::default().with_arg_value_json_type(
+        "test-imp-local-size",
+        "size",
+        "integer",
+    );
+    assert_clap_accepts(
+        cmd.clone(),
+        &["test-imp-local-size", "measure", "--size", "8MiB"],
+        "child-local lexical --size must accept 8MiB without declared_arg_ids",
+    );
+    assert_tool_arg_type_fresh_and_built(|| cmd.clone(), &metadata, "measure", "size", "string");
+}
+
+#[test]
+fn test_imperative_child_global_lexical_override_uses_declared_arg_id() {
+    let cmd = Command::new("test-imp-global-size")
+        .disable_help_subcommand(true)
+        .arg(
+            Arg::new("size")
+                .long("size")
+                .global(true)
+                .value_parser(clap::value_parser!(u64)),
+        )
+        .subcommand(
+            Command::new("measure").arg(
+                Arg::new("size")
+                    .long("size")
+                    .global(true)
+                    .value_parser(parse_mib_token),
+            ),
+        );
+    let metadata = ClapMcpSchemaMetadata::default()
+        .with_arg_value_json_type("test-imp-global-size", "size", "integer")
+        .with_declared_arg_id("measure", "size");
+    assert_clap_accepts(
+        cmd.clone(),
+        &["test-imp-global-size", "measure", "--size", "8MiB"],
+        "child-global lexical --size must accept 8MiB",
+    );
+    assert_tool_arg_type_fresh_and_built(|| cmd.clone(), &metadata, "measure", "size", "string");
+}
+
+#[test]
+fn test_from_global_does_not_infer_integer_over_lexical_root() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_from_global_size"]
+    #[command(name = "test-from-global-size", subcommand_required = true)]
+    struct TestFromGlobalSize {
+        #[arg(long, global = true, value_parser = parse_mib_token)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FromGlobalSizeCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FromGlobalSizeCmd {
+        Measure {
+            #[arg(from_global)]
+            size: Option<u64>,
+        },
+        Inspect,
+    }
+
+    fn run_from_global_size(_: TestFromGlobalSize) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFromGlobalSize::command(),
+        &["test-from-global-size", "measure", "--size", "8MiB"],
+        "from_global must keep the root lexical parser that accepts 8MiB",
+    );
+    let metadata = TestFromGlobalSize::clap_mcp_schema_metadata();
+    assert!(
+        !metadata
+            .declared_arg_ids
+            .get("measure")
+            .is_some_and(|ids| ids.iter().any(|id| id == "size")),
+        "from_global must not count as a declaration: {:?}",
+        metadata.declared_arg_ids
+    );
+    for tool in ["measure", "inspect"] {
+        assert_tool_arg_type_fresh_and_built(
+            TestFromGlobalSize::command,
+            &metadata,
+            tool,
+            "size",
+            "string",
+        );
+    }
 }

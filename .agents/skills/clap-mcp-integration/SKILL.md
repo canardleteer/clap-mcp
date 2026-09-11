@@ -122,7 +122,7 @@ Swap `Cli::parse()` → `Cli::parse_or_serve_mcp()` and add `#[clap_mcp_output_f
 Match the **sem-tool** pattern when the CLI uses a struct root with required subcommand:
 
 1. Derive `ClapMcp` on **both** root struct and subcommand enum.
-2. Root: `#[clap_mcp(skip_root_when_subcommands)]` — leaf tools are subcommands, not the root.
+2. Root: `#[clap_mcp(skip_root_when_subcommands, leaves_only)]` — leaf tools only; not the clap root or intermediate parents.
 3. Root fields that are CLI-only (e.g. `-o`): `#[clap_mcp(skip)]`.
 4. Subcommand enum: `#[clap_mcp(reinvocation_safe, parallel_safe)]` + `output_from` / `output_type`.
 5. **Single dispatch:** `execute(cmd) -> Result<…>` shared by CLI and MCP; MCP `run` wraps with `AsStructured`.
@@ -216,6 +216,8 @@ Upstream: [tool-output.md](../../../docs/tool-output.md).
 
 Subprocess mode does not set `structuredContent` from return types; in-process `AsStructured` does. See the subprocess vs in-process table in [tool-output.md](../../../docs/tool-output.md). Do not advertise `outputSchema` for tools that stay on the default subprocess path.
 
+Prefer a concrete response struct or enum for `output_type`. Open types such as `serde_json::Value` often lack JSON Schema `"type": "object"`; clap-mcp sanitizes or omits those schemas so clients that require object schemas can still list tools, but typed structs remain clearer for agents.
+
 On Unix in-process tools, optional `ClapMcpServeOptions::capture_stdout` merges human stdout into text results (see [tool-output.md — capture_stdout](../../../docs/tool-output.md)). That redirects **process stdout during tool execution**, not the MCP transport. Custom transport I/O uses `ServeMcpBuilder::stdio_io`; see [logging.md — MCP transport I/O vs tool stdout](../../../docs/logging.md#mcp-transport-io-vs-tool-stdout).
 
 **Metadata checklist:**
@@ -288,13 +290,22 @@ cargo test   # default features still pass
 
 ---
 
+## Agent client pitfalls
+
+* Prefer concrete `JsonSchema` output types. Open schemas are sanitized to `"type": "object"` when possible; non-object typed schemas are omitted from `tools/list`.
+* After wiring `outputSchema`, smoke `tools/list` in the MCP client you ship against, not only a permissive harness.
+* Nested CLIs: use `#[clap_mcp(leaves_only)]` (and `skip_root_when_subcommands`) so `tools/list` is leaf-only. `schema_only` skips executor emit and does **not** hide intermediate tools.
+* Numeric clap parsers (`u16`, `i32`, `f64`, …) advertise JSON `"integer"` / `"number"`; agents may send JSON numbers on `tools/call`. Args with possible values stay string enums.
+
+---
+
 ## Phase 8 — Runtime smoke
 
 After compile succeeds:
 
 1. `cargo run --features mcp -- --help` — expect `--mcp`, `--export-skills` (and `--mcp-http` if `http` feature), unless the embedder path uses a custom entry (for example `myapp serve`).
 2. Start stdio MCP: `cargo run --features mcp -- --mcp` (or dist binary / custom `serve` subcommand).
-3. Send MCP `tools/list`; confirm leaf tool names match intent.
+3. Send MCP `tools/list`; confirm leaf tool names match intent and tools with `outputSchema` appear in the client.
 4. `tools/call` one read-only tool; confirm `structuredContent` or text.
 
 Use clap-mcp **client** example or project MCP tooling — not fabricated PASS results.
