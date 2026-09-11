@@ -478,6 +478,9 @@ Additive API (no migration required for existing embedders):
   [`ClapMcpSerializeTopic`](https://docs.rs/clap-mcp/latest/clap_mcp/trait.ClapMcpSerializeTopic.html)
   (`impl_serialize_topic_hash_eq!`, `impl_serialize_topic_serde_eq!`)
 * **`ClapMcpSchemaMetadata::serialize_topic_args`** for imperative typed topics
+* Nested `serialize_topic` in flattened `Args` still opts in on the helper with
+  `#[clap_mcp(args_metadata)]`. Repeating that attribute on the flatten field is
+  not required.
 
 When `parallel_safe = false`, global serialization is unchanged (topical
 metadata is ignored). See

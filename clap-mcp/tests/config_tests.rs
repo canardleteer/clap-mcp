@@ -1332,7 +1332,6 @@ enum TestNestedFlattenSerializeTopic {
     #[clap_mcp(serialized = "output")]
     Flush {
         #[command(flatten)]
-        #[clap_mcp(args_metadata)]
         args: FlushTopicArgs,
     },
 }
@@ -1355,7 +1354,6 @@ struct InnerTopicArgs {
 #[clap_mcp(args_metadata)]
 struct OuterTopicArgs {
     #[command(flatten)]
-    #[clap_mcp(args_metadata)]
     inner: InnerTopicArgs,
 }
 
@@ -1367,7 +1365,6 @@ enum TestTwoLevelFlattenSerializeTopic {
     #[clap_mcp(serialized = "topic")]
     Run {
         #[command(flatten)]
-        #[clap_mcp(args_metadata)]
         args: OuterTopicArgs,
     },
 }
@@ -1396,13 +1393,11 @@ enum TestSharedArgsSerializeTopic {
     #[clap_mcp(serialized = "key")]
     Alpha {
         #[command(flatten)]
-        #[clap_mcp(args_metadata)]
         shared: SharedTopicArgs,
     },
     #[clap_mcp(serialized = "key")]
     Beta {
         #[command(flatten)]
-        #[clap_mcp(args_metadata)]
         shared: SharedTopicArgs,
     },
 }
@@ -2723,6 +2718,176 @@ fn test_child_local_size_override_does_not_inherit_root_global_integer() {
             "built={built}: child lexical --size must not inherit root global integer: {props:?}"
         );
     }
+}
+
+#[test]
+fn test_child_global_size_override_does_not_inherit_root_integer_on_descendants() {
+    fn parse_mib(s: &str) -> Result<u64, String> {
+        s.strip_suffix("MiB")
+            .unwrap_or(s)
+            .parse()
+            .map_err(|e: std::num::ParseIntError| e.to_string())
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_global_size_override"]
+    #[command(name = "test-global-size-override", subcommand_required = true)]
+    struct TestGlobalSizeOverride {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: GlobalSizeOverrideCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum GlobalSizeOverrideCmd {
+        Measure {
+            #[arg(long, global = true, value_parser = parse_mib)]
+            size: Option<u64>,
+            #[command(subcommand)]
+            command: GlobalSizeOverrideLeaf,
+        },
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum GlobalSizeOverrideLeaf {
+        Inspect,
+    }
+
+    fn run_global_size_override(_: TestGlobalSizeOverride) -> String {
+        "ok".into()
+    }
+
+    assert!(
+        TestGlobalSizeOverride::command()
+            .try_get_matches_from([
+                "test-global-size-override",
+                "measure",
+                "inspect",
+                "--size",
+                "8MiB",
+            ])
+            .is_ok(),
+        "native clap must accept lexical --size on a child-declared global override"
+    );
+
+    let metadata = TestGlobalSizeOverride::clap_mcp_schema_metadata();
+    for built in [false, true] {
+        let mut cmd = TestGlobalSizeOverride::command();
+        if built {
+            cmd.build();
+        }
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        for name in ["measure", "inspect"] {
+            let tool = tools
+                .iter()
+                .find(|t| t.name.as_ref() == name)
+                .unwrap_or_else(|| panic!("missing tool {name}"));
+            let props = tool
+                .input_schema
+                .get("properties")
+                .and_then(|v| v.as_object())
+                .expect("props");
+            assert_eq!(
+                props
+                    .get("size")
+                    .and_then(|p| p.get("type"))
+                    .and_then(|t| t.as_str()),
+                Some("string"),
+                "built={built} {name}: child-declared global lexical --size must stay string: {props:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_type_level_flatten_serialize_topic_keeps_case_insensitive_lock_keys() {
+    #[derive(Debug, Clone)]
+    struct ResourceName(#[allow(dead_code)] String);
+
+    impl std::str::FromStr for ResourceName {
+        type Err = std::convert::Infallible;
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            Ok(Self(s.to_string()))
+        }
+    }
+
+    impl clap_mcp::ClapMcpSerializeTopic for ResourceName {
+        fn serialize_topic_segment(value: &serde_json::Value) -> Option<String> {
+            value.as_str().map(|s| s.to_ascii_lowercase())
+        }
+    }
+
+    #[derive(Debug, Args, ClapMcp)]
+    #[clap_mcp(args_metadata)]
+    struct ResourceArgs {
+        #[clap_mcp(serialize_topic)]
+        #[arg(long)]
+        name: ResourceName,
+    }
+
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = true, parallel_safe = true)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_type_level_topic"]
+    #[command(name = "test-type-level-topic", subcommand_required = true)]
+    enum TestTypeLevelTopic {
+        #[clap_mcp(serialized = "name")]
+        Fetch {
+            #[command(flatten)]
+            args: ResourceArgs,
+        },
+    }
+
+    fn run_type_level_topic(_: TestTypeLevelTopic) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestTypeLevelTopic::clap_mcp_schema_metadata();
+    let segment = metadata
+        .serialize_topic_args
+        .get("fetch")
+        .and_then(|m| m.get("name"))
+        .copied()
+        .expect("type-level args_metadata must forward serialize_topic without field attr");
+    assert_eq!(
+        segment(&serde_json::json!("ALICE")),
+        segment(&serde_json::json!("alice"))
+    );
+    assert_eq!(
+        segment(&serde_json::json!("artifact")),
+        segment(&serde_json::json!("ARTIFACT"))
+    );
+
+    let schema = schema_from_command_with_metadata(&TestTypeLevelTopic::command(), &metadata);
+    let tools = tools_from_schema_with_metadata(
+        &schema,
+        &ClapMcpConfig {
+            reinvocation_safe: true,
+            parallel_safe: true,
+            ..Default::default()
+        },
+        &metadata,
+    );
+    let fetch = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "fetch")
+        .expect("fetch");
+    let meta = fetch
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("clapMcp"))
+        .and_then(|v| v.as_object())
+        .expect("clapMcp meta");
+    assert_eq!(
+        meta.get("serializeTopicArgs").and_then(|v| v.as_array()),
+        Some(&vec![serde_json::json!("name")])
+    );
 }
 
 #[test]

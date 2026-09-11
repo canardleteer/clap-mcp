@@ -718,16 +718,10 @@ fn build_args_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
             let flat_ty = inner_type_if_option(&f.ty).unwrap_or(&f.ty).clone();
             nested_flatten_types.push(flat_ty.clone());
             flatten_merge_stmts.push(quote! {
-                <#flat_ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_serialize_topics(
-                    tool_name,
-                    target,
-                );
+                clap_mcp::merge_flatten_serialize_topics!(#flat_ty, tool_name, target);
             });
             flatten_json_type_merges.push(quote! {
-                <#flat_ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_arg_value_json_types(
-                    tool_name,
-                    target,
-                );
+                clap_mcp::merge_flatten_arg_value_json_types!(#flat_ty, tool_name, target);
             });
             continue;
         }
@@ -2278,6 +2272,27 @@ fn quote_arg_value_json_type_entries(
     quote! { #(#entries)* }
 }
 
+fn quote_declared_arg_id_entries(
+    map_ident: &syn::Ident,
+    declared_arg_ids: &std::collections::HashMap<String, Vec<String>>,
+) -> proc_macro2::TokenStream {
+    let entries = declared_arg_ids.iter().map(|(k, ids)| {
+        let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
+        let id_lits = ids.iter().map(|s| {
+            let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
+            quote! { #lit.to_string() }
+        });
+        quote! {
+            #map_ident
+                .declared_arg_ids
+                .entry(#k_lit.to_string())
+                .or_default()
+                .extend([#(#id_lits),*]);
+        }
+    });
+    quote! { #(#entries)* }
+}
+
 /// Emit flatten `merge_arg_value_json_types` calls.
 ///
 /// When `remap_live_root` is true and `cmd` equals the compile-time root name,
@@ -2300,18 +2315,20 @@ fn quote_flatten_arg_value_json_type_stmts<'a>(
                     let __clap_mcp_root = <#root_ty as ::clap::CommandFactory>::command()
                         .get_name()
                         .to_string();
-                    <#ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_arg_value_json_types(
+                    clap_mcp::merge_flatten_arg_value_json_types!(
+                        #ty,
                         &__clap_mcp_root,
-                        &mut #map_ident.arg_value_json_types,
+                        &mut #map_ident.arg_value_json_types
                     );
                 }
             }
         } else {
             let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
             quote! {
-                <#ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_arg_value_json_types(
+                clap_mcp::merge_flatten_arg_value_json_types!(
+                    #ty,
                     #cmd_lit,
-                    &mut #map_ident.arg_value_json_types,
+                    &mut #map_ident.arg_value_json_types
                 );
             }
         }
@@ -2346,6 +2363,8 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         hide_defaults.insert("*".to_string(), root_hide_defaults);
     }
     let mut requires_args: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut declared_arg_ids: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     let mut arg_value_json_types: std::collections::HashMap<
         String,
@@ -2482,16 +2501,12 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                     }
                     if field_has_command_flatten(&f.attrs) {
                         let flat_ty = inner_type_if_option(&f.ty).unwrap_or(&f.ty).clone();
-                        // `ClapMcpFlattenArgsTopics` exists only on Args with
-                        // `#[clap_mcp(args_metadata)]`. Opt in on the flatten field
-                        // only — do not require the trait because the variant uses
-                        // `serialized = "..."` on an unrelated local arg. Do not gate
-                        // on `flattened_type_kind` (relative paths like
-                        // `shared::Options` would silently skip).
-                        if has_clap_mcp_args_metadata(&f.attrs) {
-                            flatten_args_json_type_cmds.push((cmd_name.clone(), flat_ty.clone()));
-                            flatten_serialize_topic_cmds.push((cmd_name.clone(), flat_ty));
-                        }
+                        // Always emit optional merges. Helpers with type-level
+                        // `args_metadata` implement `ClapMcpFlattenArgsTopics`;
+                        // ordinary `clap::Args` no-op. Do not require field-level
+                        // `args_metadata` (that silently dropped serialize_topic).
+                        flatten_args_json_type_cmds.push((cmd_name.clone(), flat_ty.clone()));
+                        flatten_serialize_topic_cmds.push((cmd_name.clone(), flat_ty));
                     }
                     if has_clap_mcp_serialize_topic(&f.attrs) {
                         serialize_topic_bindings.push((
@@ -2506,6 +2521,14 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                             .entry(cmd_name.clone())
                             .or_default()
                             .push(req_id);
+                    }
+                    if !field_has_command_flatten(&f.attrs)
+                        && !field_has_command_subcommand(&f.attrs)
+                    {
+                        declared_arg_ids
+                            .entry(cmd_name.clone())
+                            .or_default()
+                            .push(arg_id.clone());
                     }
                     if let Err(e) = record_field_arg_value_json_type(
                         &mut arg_value_json_types,
@@ -2577,10 +2600,8 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 }
                 if field_has_command_flatten(&f.attrs) {
                     let flat_ty = inner_type_if_option(&f.ty).unwrap_or(&f.ty).clone();
-                    // Path-agnostic: trait bound is the gate, not `flattened_type_kind`.
-                    if has_clap_mcp_args_metadata(&f.attrs) {
-                        flatten_args_json_type_cmds.push((root_name.clone(), flat_ty));
-                    }
+                    flatten_args_json_type_cmds.push((root_name.clone(), flat_ty.clone()));
+                    flatten_serialize_topic_cmds.push((root_name.clone(), flat_ty));
                 }
                 if let Some(req) = get_clap_mcp_requires(&f.attrs) {
                     let req_id = if req.is_empty() { arg_id.clone() } else { req };
@@ -2588,6 +2609,12 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         .entry(root_name.clone())
                         .or_default()
                         .push(req_id);
+                }
+                if !field_has_command_flatten(&f.attrs) && !field_has_command_subcommand(&f.attrs) {
+                    declared_arg_ids
+                        .entry(root_name.clone())
+                        .or_default()
+                        .push(arg_id.clone());
                 }
                 if let Err(e) = record_field_arg_value_json_type(
                     &mut arg_value_json_types,
@@ -2644,6 +2671,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                         || !flatten_skip_entries.is_empty()
                         || !requires_args.is_empty()
                         || !arg_value_json_types.is_empty()
+                        || !declared_arg_ids.is_empty()
                         || !flatten_args_json_type_cmds.is_empty()
                         || !flatten_serialize_topic_cmds.is_empty()
                         || !task_tool_names.is_empty()
@@ -2736,6 +2764,10 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                 local.requires_args.entry(#k_lit.to_string()).or_default().extend([#(#vs),*]);
                             }
                         });
+                        let declared_arg_id_entries = quote_declared_arg_id_entries(
+                            &quote::format_ident!("local"),
+                            &declared_arg_ids,
+                        );
                         let arg_value_json_type_entries = quote_arg_value_json_type_entries(
                             &quote::format_ident!("local"),
                             &arg_value_json_types,
@@ -2774,17 +2806,17 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                             &flatten_skip_entries,
                             &quote::format_ident!("local"),
                         );
-                        let flatten_topic_stmts_local = flatten_serialize_topic_cmds.iter().map(
-                            |(cmd, ty)| {
+                        let flatten_topic_stmts_local =
+                            flatten_serialize_topic_cmds.iter().map(|(cmd, ty)| {
                                 let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
                                 quote! {
-                                    <#ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_serialize_topics(
+                                    clap_mcp::merge_flatten_serialize_topics!(
+                                        #ty,
                                         #cmd_lit,
-                                        &mut local.serialize_topic_args,
+                                        &mut local.serialize_topic_args
                                     );
                                 }
-                            },
-                        );
+                            });
                         let flatten_json_type_stmts_local = quote_flatten_arg_value_json_type_stmts(
                             &quote::format_ident!("local"),
                             &flatten_args_json_type_cmds,
@@ -2819,6 +2851,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     #(#hide_defaults_entries)*
                                     #(#flatten_skip_stmts_local)*
                                     #(#requires_args_entries)*
+                                    #declared_arg_id_entries
                                     #arg_value_json_type_entries
                                     #(#serialize_tools_entries)*
                                     #serialize_topic_entries
@@ -2933,6 +2966,8 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     });
     let enum_root_name = get_command_name(&input.attrs, name);
     let remap_live_root = matches!(&input.data, syn::Data::Struct(_));
+    let declared_arg_id_entries =
+        quote_declared_arg_id_entries(&quote::format_ident!("m"), &declared_arg_ids);
     let arg_value_json_type_entries = quote_arg_value_json_type_entries(
         &quote::format_ident!("m"),
         &arg_value_json_types,
@@ -2970,9 +3005,10 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let flatten_topic_stmts = flatten_serialize_topic_cmds.iter().map(|(cmd, ty)| {
         let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
         quote! {
-            <#ty as clap_mcp::ClapMcpFlattenArgsTopics>::merge_serialize_topics(
+            clap_mcp::merge_flatten_serialize_topics!(
+                #ty,
                 #cmd_lit,
-                &mut m.serialize_topic_args,
+                &mut m.serialize_topic_args
             );
         }
     });
@@ -3052,6 +3088,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 #(#hide_defaults_entries)*
                 #(#flatten_skip_stmts)*
                 #(#requires_args_entries)*
+                #declared_arg_id_entries
                 #arg_value_json_type_entries
                 #(#serialize_tools_entries)*
                 #serialize_topic_entries

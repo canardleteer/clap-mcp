@@ -456,21 +456,19 @@ type, or when you set `#[clap_mcp(input_type = "...")]` /
 `ClapMcpSchemaMetadata::with_arg_value_json_type`. Imperative `Command` builders
 must set numeric types with `with_arg_value_json_type`; derive inference does not
 apply to hand-built schemas. Flattened `Args` forward `input_type` / inferred
-types when the `Args` type uses `#[clap_mcp(args_metadata)]` and the flatten
-field repeats that attribute (or the variant already uses `serialize_topic`).
-Forwarding does not depend on how you spell the flattened type path
-(`shared::Options` and `crate::shared::Options` both work). On struct `Parser`
-roots without `#[command(name)]`, flatten merges key metadata under clap's live
-root name (same remap as direct fields). Typed argument metadata applies from
-the command that declared the argument; a child-declared global string `--id`
-does not inherit a root non-global integer `--id` after `Command::build()`.
-A child-local same-id arg (including an explicit custom `value_parser` such as
-lexical `8MiB`) does not inherit a parent global's typed metadata even when clap
-keeps the child's definition instead of propagating the global. Root globals
-still appear on descendant leaf tools that only inherit the copied global.
-Flatten numeric forward requires `#[clap_mcp(args_metadata)]` on the flatten
-field; ordinary flattened `Args` stay fine next to `serialized = "..."` on a
-local arg. Clap `hide` does not remove
+types and `serialize_topic` bindings when the helper type uses
+`#[clap_mcp(args_metadata)]`. The flatten field does not need to repeat that
+attribute. Ordinary flattened `Args` (no MCP metadata) stay fine next to
+`serialized = "..."` on a local arg. Forwarding does not depend on how you
+spell the flattened type path (`shared::Options` and `crate::shared::Options`
+both work). On struct `Parser` roots without `#[command(name)]`, flatten merges
+key metadata under clap's live root name (same remap as direct fields). Typed
+argument metadata applies from the command that declared the argument. A
+child-local same-id arg, global or not, including an explicit custom
+`value_parser` such as lexical `8MiB`, does not inherit a parent global's typed
+metadata. Descendants that inherit that child's global keep the child's type.
+Root globals still appear on descendant leaf tools that only inherit the copied
+root global. Clap `hide` does not remove
 MCP tools (use `#[clap_mcp(skip)]`). Clap's auto-generated `help` subcommand is
 omitted from the MCP catalog even when you pass an already-`build()`'d
 `Command`; keep an application `help` tool only with

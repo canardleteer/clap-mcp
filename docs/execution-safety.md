@@ -249,8 +249,9 @@ fields. See [Supported CLI shapes — Known limitations](supported-cli-shapes.md
 ### Nested `serialize_topic` in flattened `Args`
 
 Mark shared `Args` helpers with `#[clap_mcp(args_metadata)]` (same crate) and
-place `#[clap_mcp(serialize_topic)]` on fields inside the helper. Parent variants
-with `#[clap_mcp(serialized = "...")]` list arg ids from the flattened group.
+place `#[clap_mcp(serialize_topic)]` on fields inside the helper. The flatten
+field does not need to repeat `args_metadata`. Parent variants with
+`#[clap_mcp(serialized = "...")]` list arg ids from the flattened group.
 External `Args` crates need imperative `serialize_topic_args`. Skipped flattened
 groups stay CLI-only for MCP exposure.
 
