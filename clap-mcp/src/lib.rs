@@ -1250,9 +1250,10 @@ pub struct ClapMcpSchemaMetadata {
     /// Tool names whose per-tool `output_type` cannot be advertised after
     /// sanitization. These must not inherit [`Self::output_schema`].
     pub omit_tool_output_schemas: Vec<String>,
-    /// Per-command clap arg ids declared on that command by derive (not inherited
-    /// globals). Used so a child-local same-id field, including a custom
-    /// `value_parser`, does not inherit a parent global's JSON type.
+    /// Per-command clap arg ids declared on that command by derive (direct fields
+    /// and flattened `Args`, not inherited globals). Used so a child-local
+    /// same-id field, including a custom `value_parser`, does not inherit a
+    /// parent global's JSON type.
     pub declared_arg_ids: std::collections::HashMap<String, Vec<String>>,
     /// Per-command argument JSON Schema scalar types for MCP `inputSchema`
     /// (`"integer"`, `"number"`, or `"string"`). Keyed by command name
@@ -1634,6 +1635,70 @@ macro_rules! merge_flatten_arg_value_json_types {
         use $crate::FlattenTopicsYes as _;
         (&&$crate::FlattenTopicsWrap::<$ty>(::core::marker::PhantomData))
             .merge_arg_value_json_types($tool_name, $target);
+    }};
+}
+
+/// Wrapper for optional flatten declaration-id merges (autoref specialization).
+///
+/// Must be invoked with a **concrete** type (see [`merge_flatten_declared_arg_ids`]).
+#[doc(hidden)]
+pub struct FlattenDeclaredIdsWrap<T>(pub core::marker::PhantomData<T>);
+
+/// No-op when `T` does not implement [`clap::Args`] (for example a flattened
+/// [`clap::Subcommand`]).
+#[doc(hidden)]
+pub trait FlattenDeclaredIdsNoop {
+    fn merge_declared_arg_ids(
+        &self,
+        tool_name: &str,
+        target: &mut std::collections::HashMap<String, Vec<String>>,
+    ) {
+        let _ = (tool_name, target);
+    }
+}
+
+impl<T> FlattenDeclaredIdsNoop for FlattenDeclaredIdsWrap<T> {}
+
+/// Forwards when `T: clap::Args`.
+#[doc(hidden)]
+pub trait FlattenDeclaredIdsYes {
+    fn merge_declared_arg_ids(
+        &self,
+        tool_name: &str,
+        target: &mut std::collections::HashMap<String, Vec<String>>,
+    );
+}
+
+impl<T: clap::Args> FlattenDeclaredIdsYes for &FlattenDeclaredIdsWrap<T> {
+    fn merge_declared_arg_ids(
+        &self,
+        tool_name: &str,
+        target: &mut std::collections::HashMap<String, Vec<String>>,
+    ) {
+        let probe = T::augment_args(clap::Command::new("_clap_mcp_declared_probe"));
+        let collected: Vec<String> = probe
+            .get_arguments()
+            .map(|a| a.get_id().as_str().to_string())
+            .collect();
+        target
+            .entry(tool_name.to_string())
+            .or_default()
+            .extend(collected);
+    }
+}
+
+/// Records flattened `clap::Args` ids as local declarations for `$tool_name`.
+///
+/// Ordinary `Args` and `args_metadata` helpers both implement [`clap::Args`].
+/// Flattened [`clap::Subcommand`] types no-op.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! merge_flatten_declared_arg_ids {
+    ($ty:ty, $tool_name:expr, $target:expr) => {{
+        use $crate::FlattenDeclaredIdsNoop as _;
+        use $crate::FlattenDeclaredIdsYes as _;
+        (&&$crate::FlattenDeclaredIdsWrap::<$ty>(::core::marker::PhantomData))
+            .merge_declared_arg_ids($tool_name, $target);
     }};
 }
 
@@ -3581,43 +3646,22 @@ fn command_declares_arg(
         .is_some_and(|ids| ids.iter().any(|id| id == arg_id))
 }
 
-/// Public clap Debug that distinguishes a child declaration from a propagated clone.
-fn arg_declaration_signature(arg: &clap::Arg) -> String {
-    format!("{arg:?}")
+fn clap_arg_is_global(cmd: &Command, arg_id: &str) -> bool {
+    cmd.get_arguments()
+        .find(|a| a.get_id() == arg_id)
+        .is_some_and(|a| a.is_global_set())
 }
 
-/// True when `local` is clap's copy of a parent global (not a child redeclaration).
-fn is_propagated_global_copy(local: &clap::Arg, parent: &Command, arg_id: &str) -> bool {
-    let Some(parent_arg) = parent.get_arguments().find(|a| a.get_id() == arg_id) else {
-        return false;
-    };
-    parent_arg.is_global_set()
-        && arg_declaration_signature(local) == arg_declaration_signature(parent_arg)
-}
-
-/// Command that introduced `arg_id` along `path` (root → … → self).
-///
-/// After `Command::build()`, globals are copied onto descendants. Walk from self
-/// toward root. A child declaration (global or not) is an ownership boundary:
-/// clap skips propagating a parent global when the child already defines the
-/// same id. Descendants that received the child's clone inherit that child's
-/// metadata, not a farther ancestor's.
-fn defining_arg_owner<'a>(path: &[&'a Command], arg_id: &str) -> Option<&'a Command> {
-    for i in (0..path.len()).rev() {
-        let cmd = path[i];
-        let Some(local) = cmd.get_arguments().find(|a| a.get_id() == arg_id) else {
-            continue;
-        };
-        if i == 0 {
-            return Some(cmd);
-        }
-        let parent = path[i - 1];
-        if is_propagated_global_copy(local, parent, arg_id) {
-            continue;
-        }
-        return Some(cmd);
-    }
-    None
+fn ancestor_arg_value_json_type<'a>(
+    metadata: &'a ClapMcpSchemaMetadata,
+    ancestor_name: &str,
+    arg_id: &str,
+) -> Option<&'a str> {
+    metadata
+        .arg_value_json_types
+        .get(ancestor_name)
+        .and_then(|m| m.get(arg_id))
+        .map(String::as_str)
 }
 
 fn lookup_arg_value_json_type<'a>(
@@ -3642,35 +3686,43 @@ fn lookup_arg_value_json_type<'a>(
         return Some(ty);
     }
 
-    // Derive records every locally declared arg id. A child override (global or
-    // not) must not inherit a parent type; descendants inherit from the nearest
-    // declaring ancestor, not a farther same-id global.
+    // A local declaration (direct or flattened) owns this id. Same-id ancestors
+    // are not owners. Do not use clap Debug to guess ownership.
     if command_declares_arg(metadata, command_name, arg_id) {
         return None;
     }
-    for ancestor in path.iter().rev().skip(1) {
-        let ancestor_name = ancestor.get_name();
-        if !command_declares_arg(metadata, ancestor_name, arg_id) {
-            continue;
-        }
-        return metadata
-            .arg_value_json_types
-            .get(ancestor_name)
-            .and_then(|m| m.get(arg_id))
-            .map(String::as_str);
-    }
 
-    // Imperative trees have no derive declaration map. Fall back to clap shape.
-    let owner = defining_arg_owner(path, arg_id)?;
-    let owner_name = owner.get_name();
-    if owner_name == command_name {
+    let any_declared = !metadata.declared_arg_ids.is_empty();
+    if any_declared {
+        // Inherit only when this command's arg is a propagated global copy of
+        // an ancestor that declared a global with the same id. A non-global
+        // ancestor declaration does not own a descendant's --size.
+        let self_cmd = *path.last()?;
+        if !clap_arg_is_global(self_cmd, arg_id) {
+            return None;
+        }
+        for ancestor in path.iter().rev().skip(1) {
+            let ancestor_name = ancestor.get_name();
+            if !command_declares_arg(metadata, ancestor_name, arg_id) {
+                continue;
+            }
+            if !clap_arg_is_global(ancestor, arg_id) {
+                continue;
+            }
+            return ancestor_arg_value_json_type(metadata, ancestor_name, arg_id);
+        }
         return None;
     }
-    metadata
-        .arg_value_json_types
-        .get(owner_name)
-        .and_then(|m| m.get(arg_id))
-        .map(String::as_str)
+
+    // Imperative trees have no derive declaration map. Inherit only from a
+    // parent that actually set the arg global (307bc03 `is_global_set` shape).
+    for ancestor in path.iter().rev().skip(1) {
+        if !clap_arg_is_global(ancestor, arg_id) {
+            continue;
+        }
+        return ancestor_arg_value_json_type(metadata, ancestor.get_name(), arg_id);
+    }
+    None
 }
 
 fn apply_arg_value_json_type(arg: &mut ClapArg, ty: &str) {

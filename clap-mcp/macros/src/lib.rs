@@ -2335,6 +2335,48 @@ fn quote_flatten_arg_value_json_type_stmts<'a>(
     })
 }
 
+/// Emit flatten `merge_declared_arg_ids` calls.
+///
+/// When `remap_live_root` is true and `cmd` equals the compile-time root name,
+/// remaps to clap's live root via [`clap::CommandFactory`] (same as typed
+/// flatten merges).
+fn quote_flatten_declared_arg_id_stmts<'a>(
+    map_ident: &syn::Ident,
+    flatten_args_json_type_cmds: &'a [(String, syn::Type)],
+    root_ty: &syn::Ident,
+    compile_time_root: &str,
+    remap_live_root: bool,
+) -> impl Iterator<Item = proc_macro2::TokenStream> + 'a {
+    let map_ident = map_ident.clone();
+    let root_ty = root_ty.clone();
+    let compile_time_root = compile_time_root.to_string();
+    flatten_args_json_type_cmds.iter().map(move |(cmd, ty)| {
+        if remap_live_root && cmd == &compile_time_root {
+            quote! {
+                {
+                    let __clap_mcp_root = <#root_ty as ::clap::CommandFactory>::command()
+                        .get_name()
+                        .to_string();
+                    clap_mcp::merge_flatten_declared_arg_ids!(
+                        #ty,
+                        &__clap_mcp_root,
+                        &mut #map_ident.declared_arg_ids
+                    );
+                }
+            }
+        } else {
+            let cmd_lit = syn::LitStr::new(cmd, proc_macro2::Span::call_site());
+            quote! {
+                clap_mcp::merge_flatten_declared_arg_ids!(
+                    #ty,
+                    #cmd_lit,
+                    &mut #map_ident.declared_arg_ids
+                );
+            }
+        }
+    })
+}
+
 /// Builds the ClapMcpSchemaMetadataProvider impl from #[clap_mcp(skip)], #[clap_mcp(requires)], and #[clap_mcp(task)].
 fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
     let name = &input.ident;
@@ -2824,6 +2866,13 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                             &root_name,
                             true,
                         );
+                        let flatten_declared_id_stmts_local = quote_flatten_declared_arg_id_stmts(
+                            &quote::format_ident!("local"),
+                            &flatten_args_json_type_cmds,
+                            name,
+                            &root_name,
+                            true,
+                        );
                         let tool_annotations_entries_local =
                             tool_annotations.iter().map(|(k, ann)| {
                                 let k_lit = syn::LitStr::new(k, proc_macro2::Span::call_site());
@@ -2852,6 +2901,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                                     #(#flatten_skip_stmts_local)*
                                     #(#requires_args_entries)*
                                     #declared_arg_id_entries
+                                    #(#flatten_declared_id_stmts_local)*
                                     #arg_value_json_type_entries
                                     #(#serialize_tools_entries)*
                                     #serialize_topic_entries
@@ -3019,6 +3069,13 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
         &enum_root_name,
         remap_live_root,
     );
+    let flatten_declared_id_stmts = quote_flatten_declared_arg_id_stmts(
+        &quote::format_ident!("m"),
+        &flatten_args_json_type_cmds,
+        name,
+        &enum_root_name,
+        remap_live_root,
+    );
     let task_tool_names_lit = task_tool_names.iter().map(|s| {
         let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
         quote! { #lit.to_string() }
@@ -3089,6 +3146,7 @@ fn build_schema_metadata_impl(input: &DeriveInput) -> proc_macro2::TokenStream {
                 #(#flatten_skip_stmts)*
                 #(#requires_args_entries)*
                 #declared_arg_id_entries
+                #(#flatten_declared_id_stmts)*
                 #arg_value_json_type_entries
                 #(#serialize_tools_entries)*
                 #serialize_topic_entries

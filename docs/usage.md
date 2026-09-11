@@ -463,12 +463,15 @@ attribute. Ordinary flattened `Args` (no MCP metadata) stay fine next to
 spell the flattened type path (`shared::Options` and `crate::shared::Options`
 both work). On struct `Parser` roots without `#[command(name)]`, flatten merges
 key metadata under clap's live root name (same remap as direct fields). Typed
-argument metadata applies from the command that declared the argument. A
-child-local same-id arg, global or not, including an explicit custom
-`value_parser` such as lexical `8MiB`, does not inherit a parent global's typed
-metadata. Descendants that inherit that child's global keep the child's type.
-Root globals still appear on descendant leaf tools that only inherit the copied
-root global. Clap `hide` does not remove
+argument metadata applies from the command that owns the argument. Direct
+fields and flattened `Args` (ordinary helpers and `args_metadata`) count as
+declarations. A child-local same-id arg, global or not, including an explicit
+custom `value_parser` such as lexical `8MiB`, does not inherit a parent
+global's typed metadata. A non-global ancestor with the same id is not an
+owner. Descendants that inherit that child's global keep the child's type.
+Ownership is the declaration map plus whether clap copied a parent global,
+not clap Debug. Root globals still appear on descendant leaf tools that only
+inherit the copied root global. Clap `hide` does not remove
 MCP tools (use `#[clap_mcp(skip)]`). Clap's auto-generated `help` subcommand is
 omitted from the MCP catalog even when you pass an already-`build()`'d
 `Command`; keep an application `help` tool only with

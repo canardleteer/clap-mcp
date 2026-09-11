@@ -3245,3 +3245,740 @@ fn test_preserve_cli_argv_detection_for_normal_cli() {
         "tokens after -- must not count as clap-mcp entry flags"
     );
 }
+
+fn parse_mib_token(s: &str) -> Result<u64, String> {
+    s.strip_suffix("MiB")
+        .unwrap_or(s)
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())
+}
+
+fn tool_arg_json_type(
+    cmd: &Command,
+    metadata: &ClapMcpSchemaMetadata,
+    tool: &str,
+    arg: &str,
+) -> Option<String> {
+    let schema = schema_from_command_with_metadata(cmd, metadata);
+    let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), metadata);
+    let tool = tools.iter().find(|t| t.name.as_ref() == tool)?;
+    tool.input_schema
+        .get("properties")?
+        .as_object()?
+        .get(arg)?
+        .get("type")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn assert_clap_accepts(cmd: Command, argv: &[&str], msg: &str) {
+    assert!(
+        cmd.try_get_matches_from(argv).is_ok(),
+        "{msg}: argv={argv:?}"
+    );
+}
+
+fn assert_tool_arg_type_fresh_and_built(
+    make_cmd: impl Fn() -> Command,
+    metadata: &ClapMcpSchemaMetadata,
+    tool: &str,
+    arg: &str,
+    expected: &str,
+) {
+    for built in [false, true] {
+        let mut cmd = make_cmd();
+        if built {
+            cmd.build();
+        }
+        assert_eq!(
+            tool_arg_json_type(&cmd, metadata, tool, arg).as_deref(),
+            Some(expected),
+            "built={built} {tool}.{arg} must be {expected}"
+        );
+    }
+}
+
+#[derive(Debug, Args)]
+struct OrdinaryLexicalSizeArgs {
+    #[arg(long, value_parser = parse_mib_token)]
+    size: u64,
+}
+
+#[derive(Debug, Args)]
+struct OrdinaryGlobalLexicalSizeArgs {
+    #[arg(long, global = true, value_parser = parse_mib_token)]
+    size: Option<u64>,
+}
+
+#[derive(Debug, Args, ClapMcp)]
+#[clap_mcp(args_metadata)]
+struct MetaLexicalSizeArgs {
+    #[arg(long, value_parser = parse_mib_token)]
+    size: u64,
+}
+
+#[derive(Debug, Args, ClapMcp)]
+#[clap_mcp(args_metadata)]
+struct MetaGlobalLexicalSizeArgs {
+    #[arg(long, global = true, value_parser = parse_mib_token)]
+    size: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+struct OrdinaryNestedLexicalSizeArgs {
+    #[command(flatten)]
+    inner: OrdinaryLexicalSizeArgs,
+}
+
+#[derive(Debug, Args, ClapMcp)]
+#[clap_mcp(args_metadata)]
+struct MetaNestedLexicalSizeArgs {
+    #[command(flatten)]
+    inner: MetaLexicalSizeArgs,
+}
+
+#[derive(Debug, Args)]
+struct OrdinaryGlobalLexicalSizeWithInspect {
+    #[command(flatten)]
+    size: OrdinaryGlobalLexicalSizeArgs,
+    #[command(subcommand)]
+    command: OrdinaryGlobalLexicalInspect,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum OrdinaryGlobalLexicalInspect {
+    Inspect,
+}
+
+#[derive(Debug, Args)]
+struct MetaGlobalLexicalSizeWithInspect {
+    #[command(flatten)]
+    size: MetaGlobalLexicalSizeArgs,
+    #[command(subcommand)]
+    command: MetaGlobalLexicalInspect,
+}
+
+#[derive(Debug, Subcommand, ClapMcp)]
+#[clap_mcp(schema_only)]
+enum MetaGlobalLexicalInspect {
+    Inspect,
+}
+
+#[test]
+fn test_flatten_ordinary_local_size_vs_root_global_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_ord_local_global"]
+    #[command(name = "test-flat-ord-local-g", subcommand_required = true)]
+    struct TestFlatOrdLocalGlobal {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatOrdLocalGlobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatOrdLocalGlobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: OrdinaryLexicalSizeArgs,
+        },
+    }
+
+    fn run_flat_ord_local_global(_: TestFlatOrdLocalGlobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatOrdLocalGlobal::command(),
+        &["test-flat-ord-local-g", "measure", "--size", "8MiB"],
+        "ordinary flatten local --size must accept 8MiB against a root global integer",
+    );
+    let metadata = TestFlatOrdLocalGlobal::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestFlatOrdLocalGlobal::command,
+        &metadata,
+        "measure",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_flatten_ordinary_global_size_vs_root_global_integer_on_descendants() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_ord_global_global"]
+    #[command(name = "test-flat-ord-glob-g", subcommand_required = true)]
+    struct TestFlatOrdGlobalGlobal {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatOrdGlobalGlobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatOrdGlobalGlobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: OrdinaryGlobalLexicalSizeWithInspect,
+        },
+    }
+
+    fn run_flat_ord_global_global(_: TestFlatOrdGlobalGlobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatOrdGlobalGlobal::command(),
+        &[
+            "test-flat-ord-glob-g",
+            "measure",
+            "inspect",
+            "--size",
+            "8MiB",
+        ],
+        "ordinary flatten global --size must accept 8MiB on descendants",
+    );
+    let metadata = TestFlatOrdGlobalGlobal::clap_mcp_schema_metadata();
+    for tool in ["measure", "inspect"] {
+        assert_tool_arg_type_fresh_and_built(
+            TestFlatOrdGlobalGlobal::command,
+            &metadata,
+            tool,
+            "size",
+            "string",
+        );
+    }
+}
+
+#[test]
+fn test_flatten_ordinary_local_size_vs_root_nonglobal_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_ord_local_nonglobal"]
+    #[command(name = "test-flat-ord-local-ng", subcommand_required = true)]
+    struct TestFlatOrdLocalNonglobal {
+        #[arg(long)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatOrdLocalNonglobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatOrdLocalNonglobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: OrdinaryLexicalSizeArgs,
+        },
+    }
+
+    fn run_flat_ord_local_nonglobal(_: TestFlatOrdLocalNonglobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatOrdLocalNonglobal::command(),
+        &["test-flat-ord-local-ng", "measure", "--size", "8MiB"],
+        "ordinary flatten local --size must accept 8MiB against a root non-global integer",
+    );
+    let metadata = TestFlatOrdLocalNonglobal::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestFlatOrdLocalNonglobal::command,
+        &metadata,
+        "measure",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_flatten_ordinary_global_size_vs_root_nonglobal_integer_on_descendants() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_ord_global_nonglobal"]
+    #[command(name = "test-flat-ord-glob-ng", subcommand_required = true)]
+    struct TestFlatOrdGlobalNonglobal {
+        #[arg(long)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatOrdGlobalNonglobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatOrdGlobalNonglobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: OrdinaryGlobalLexicalSizeWithInspect,
+        },
+    }
+
+    fn run_flat_ord_global_nonglobal(_: TestFlatOrdGlobalNonglobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatOrdGlobalNonglobal::command(),
+        &[
+            "test-flat-ord-glob-ng",
+            "measure",
+            "inspect",
+            "--size",
+            "8MiB",
+        ],
+        "ordinary flatten global --size must accept 8MiB against a root non-global integer",
+    );
+    let metadata = TestFlatOrdGlobalNonglobal::clap_mcp_schema_metadata();
+    for tool in ["measure", "inspect"] {
+        assert_tool_arg_type_fresh_and_built(
+            TestFlatOrdGlobalNonglobal::command,
+            &metadata,
+            tool,
+            "size",
+            "string",
+        );
+    }
+}
+
+#[test]
+fn test_flatten_meta_local_size_vs_root_global_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_meta_local_global"]
+    #[command(name = "test-flat-meta-local-g", subcommand_required = true)]
+    struct TestFlatMetaLocalGlobal {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatMetaLocalGlobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatMetaLocalGlobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: MetaLexicalSizeArgs,
+        },
+    }
+
+    fn run_flat_meta_local_global(_: TestFlatMetaLocalGlobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatMetaLocalGlobal::command(),
+        &["test-flat-meta-local-g", "measure", "--size", "8MiB"],
+        "args_metadata flatten local --size must accept 8MiB against a root global integer",
+    );
+    let metadata = TestFlatMetaLocalGlobal::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestFlatMetaLocalGlobal::command,
+        &metadata,
+        "measure",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_flatten_meta_global_size_vs_root_global_integer_on_descendants() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_meta_global_global"]
+    #[command(name = "test-flat-meta-glob-g", subcommand_required = true)]
+    struct TestFlatMetaGlobalGlobal {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatMetaGlobalGlobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatMetaGlobalGlobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: MetaGlobalLexicalSizeWithInspect,
+        },
+    }
+
+    fn run_flat_meta_global_global(_: TestFlatMetaGlobalGlobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatMetaGlobalGlobal::command(),
+        &[
+            "test-flat-meta-glob-g",
+            "measure",
+            "inspect",
+            "--size",
+            "8MiB",
+        ],
+        "args_metadata flatten global --size must accept 8MiB on descendants",
+    );
+    let metadata = TestFlatMetaGlobalGlobal::clap_mcp_schema_metadata();
+    for tool in ["measure", "inspect"] {
+        assert_tool_arg_type_fresh_and_built(
+            TestFlatMetaGlobalGlobal::command,
+            &metadata,
+            tool,
+            "size",
+            "string",
+        );
+    }
+}
+
+#[test]
+fn test_flatten_meta_local_size_vs_root_nonglobal_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_meta_local_nonglobal"]
+    #[command(name = "test-flat-meta-local-ng", subcommand_required = true)]
+    struct TestFlatMetaLocalNonglobal {
+        #[arg(long)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatMetaLocalNonglobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatMetaLocalNonglobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: MetaLexicalSizeArgs,
+        },
+    }
+
+    fn run_flat_meta_local_nonglobal(_: TestFlatMetaLocalNonglobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatMetaLocalNonglobal::command(),
+        &["test-flat-meta-local-ng", "measure", "--size", "8MiB"],
+        "args_metadata flatten local --size must accept 8MiB against a root non-global integer",
+    );
+    let metadata = TestFlatMetaLocalNonglobal::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestFlatMetaLocalNonglobal::command,
+        &metadata,
+        "measure",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_flatten_meta_global_size_vs_root_nonglobal_integer_on_descendants() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_flat_meta_global_nonglobal"]
+    #[command(name = "test-flat-meta-glob-ng", subcommand_required = true)]
+    struct TestFlatMetaGlobalNonglobal {
+        #[arg(long)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: FlatMetaGlobalNonglobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum FlatMetaGlobalNonglobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: MetaGlobalLexicalSizeWithInspect,
+        },
+    }
+
+    fn run_flat_meta_global_nonglobal(_: TestFlatMetaGlobalNonglobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestFlatMetaGlobalNonglobal::command(),
+        &[
+            "test-flat-meta-glob-ng",
+            "measure",
+            "inspect",
+            "--size",
+            "8MiB",
+        ],
+        "args_metadata flatten global --size must accept 8MiB against a root non-global integer",
+    );
+    let metadata = TestFlatMetaGlobalNonglobal::clap_mcp_schema_metadata();
+    for tool in ["measure", "inspect"] {
+        assert_tool_arg_type_fresh_and_built(
+            TestFlatMetaGlobalNonglobal::command,
+            &metadata,
+            tool,
+            "size",
+            "string",
+        );
+    }
+}
+
+#[test]
+fn test_two_level_flatten_ordinary_size_vs_root_global_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_two_level_ord"]
+    #[command(name = "test-two-level-ord-g", subcommand_required = true)]
+    struct TestTwoLevelOrdGlobal {
+        #[arg(long, global = true)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: TwoLevelOrdGlobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum TwoLevelOrdGlobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: OrdinaryNestedLexicalSizeArgs,
+        },
+    }
+
+    fn run_two_level_ord(_: TestTwoLevelOrdGlobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestTwoLevelOrdGlobal::command(),
+        &["test-two-level-ord-g", "measure", "--size", "8MiB"],
+        "two-level ordinary flatten --size must accept 8MiB",
+    );
+    let metadata = TestTwoLevelOrdGlobal::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestTwoLevelOrdGlobal::command,
+        &metadata,
+        "measure",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_two_level_flatten_meta_size_vs_root_nonglobal_integer() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_two_level_meta"]
+    #[command(name = "test-two-level-meta-ng", subcommand_required = true)]
+    struct TestTwoLevelMetaNonglobal {
+        #[arg(long)]
+        size: Option<u64>,
+        #[command(subcommand)]
+        command: TwoLevelMetaNonglobalCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum TwoLevelMetaNonglobalCmd {
+        Measure {
+            #[command(flatten)]
+            args: MetaNestedLexicalSizeArgs,
+        },
+    }
+
+    fn run_two_level_meta(_: TestTwoLevelMetaNonglobal) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestTwoLevelMetaNonglobal::command(),
+        &["test-two-level-meta-ng", "measure", "--size", "8MiB"],
+        "two-level args_metadata flatten --size must accept 8MiB against a root non-global integer",
+    );
+    let metadata = TestTwoLevelMetaNonglobal::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestTwoLevelMetaNonglobal::command,
+        &metadata,
+        "measure",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_hide_possible_values_on_inherited_global_is_not_ownership() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_hide_pv"]
+    #[command(name = "test-hide-pv-inherit", subcommand_required = true)]
+    struct TestHidePvInherit {
+        #[arg(long, global = true)]
+        workers: Option<u32>,
+        #[command(subcommand)]
+        command: HidePvInheritCmd,
+    }
+
+    #[derive(Debug, Subcommand, ClapMcp)]
+    #[clap_mcp(schema_only)]
+    enum HidePvInheritCmd {
+        Run,
+    }
+
+    fn run_hide_pv(_: TestHidePvInherit) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestHidePvInherit::clap_mcp_schema_metadata();
+    let mut cmd = TestHidePvInherit::command();
+    cmd.build();
+    cmd = cmd.mut_subcommand("run", |run| {
+        run.mut_arg("workers", |a| a.hide_possible_values(true))
+    });
+    assert_eq!(
+        tool_arg_json_type(&cmd, &metadata, "run", "workers").as_deref(),
+        Some("integer"),
+        "hide_possible_values on an inherited global is presentation, not ownership"
+    );
+}
+
+#[test]
+fn test_skip_flatten_lexical_size_is_not_advertised() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp(skip_root_when_subcommands)]
+    #[clap_mcp_output_from = "run_skip_flat_size"]
+    #[command(name = "test-skip-flat-size", subcommand_required = true)]
+    enum TestSkipFlatSize {
+        Measure {
+            #[clap_mcp(skip)]
+            #[command(flatten)]
+            args: OrdinaryLexicalSizeArgs,
+            #[arg(long)]
+            label: String,
+        },
+    }
+
+    fn run_skip_flat_size(_: TestSkipFlatSize) -> String {
+        "ok".into()
+    }
+
+    let metadata = TestSkipFlatSize::clap_mcp_schema_metadata();
+    for built in [false, true] {
+        let mut cmd = TestSkipFlatSize::command();
+        if built {
+            cmd.build();
+        }
+        let schema = schema_from_command_with_metadata(&cmd, &metadata);
+        let tools = tools_from_schema_with_metadata(&schema, &ClapMcpConfig::default(), &metadata);
+        let measure = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "measure")
+            .expect("measure");
+        let props = measure
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("props");
+        assert!(
+            !props.contains_key("size"),
+            "built={built}: skipped flatten --size must not be advertised: {props:?}"
+        );
+        assert!(
+            props.contains_key("label"),
+            "built={built}: non-skipped --label must remain: {props:?}"
+        );
+    }
+}
+
+#[test]
+fn test_struct_root_flatten_lexical_size_is_string() {
+    #[derive(Debug, Parser, ClapMcp)]
+    #[clap_mcp(reinvocation_safe = false, parallel_safe = false)]
+    #[clap_mcp_output_from = "run_struct_flat_size"]
+    #[command(name = "test-struct-flat-size")]
+    struct TestStructFlatSize {
+        #[command(flatten)]
+        args: OrdinaryLexicalSizeArgs,
+    }
+
+    fn run_struct_flat_size(_: TestStructFlatSize) -> String {
+        "ok".into()
+    }
+
+    assert_clap_accepts(
+        TestStructFlatSize::command(),
+        &["test-struct-flat-size", "--size", "8MiB"],
+        "struct-root flatten lexical --size must accept 8MiB",
+    );
+    let metadata = TestStructFlatSize::clap_mcp_schema_metadata();
+    assert_tool_arg_type_fresh_and_built(
+        TestStructFlatSize::command,
+        &metadata,
+        "test-struct-flat-size",
+        "size",
+        "string",
+    );
+}
+
+#[test]
+fn test_imperative_declared_arg_id_blocks_parent_integer() {
+    let cmd = Command::new("test-imp-decl-size")
+        .disable_help_subcommand(true)
+        .arg(
+            Arg::new("size")
+                .long("size")
+                .global(true)
+                .value_parser(clap::value_parser!(u64)),
+        )
+        .subcommand(
+            Command::new("measure")
+                .arg(Arg::new("size").long("size").value_parser(parse_mib_token)),
+        );
+    let mut metadata = ClapMcpSchemaMetadata::default().with_arg_value_json_type(
+        "test-imp-decl-size",
+        "size",
+        "integer",
+    );
+    metadata
+        .declared_arg_ids
+        .insert("measure".into(), vec!["size".into()]);
+
+    assert_clap_accepts(
+        cmd.clone(),
+        &["test-imp-decl-size", "measure", "--size", "8MiB"],
+        "imperative child lexical --size must accept 8MiB",
+    );
+    assert_tool_arg_type_fresh_and_built(|| cmd.clone(), &metadata, "measure", "size", "string");
+}
+
+#[test]
+fn test_imperative_empty_declaration_map_inherits_parent_global_integer() {
+    let cmd = Command::new("test-imp-inherit-workers")
+        .disable_help_subcommand(true)
+        .arg(
+            Arg::new("workers")
+                .long("workers")
+                .global(true)
+                .value_parser(clap::value_parser!(u32)),
+        )
+        .subcommand(Command::new("run"));
+    let metadata = ClapMcpSchemaMetadata::default().with_arg_value_json_type(
+        "test-imp-inherit-workers",
+        "workers",
+        "integer",
+    );
+    assert_tool_arg_type_fresh_and_built(|| cmd.clone(), &metadata, "run", "workers", "integer");
+}
